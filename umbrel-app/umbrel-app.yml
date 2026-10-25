@@ -1,15 +1,23 @@
-manifestVersion: "1"
+manifestVersion: 1
 id: tunnel-wg
-name: "Tunnel WG"
-tagline: "Expone servicios de Umbrel a través de un VPS vía WireGuard"
-icon: ""
-category: "Networking"
+name: Tunnel WG
+tagline: Expón servicios de Umbrel a través de tu VPS con WireGuard
+icon: https://raw.githubusercontent.com/tunnel-wg/tunnel-wg/main/umbrel-app/images/icon.svg
+category: Networking
 version: "1.0.0"
 port: 8081
 description: >-
-  Crea un túnel WireGuard entre tu Umbrel y un VPS para exponer
-  servicios como Bitcoin Core, Electrs, Mempool, y más.
-developer: "tunnel-wg"
-website: ""
+  Crea un túnel WireGuard entre tu Umbrel y un VPS con IP fija. La app detecta
+  las aplicaciones instaladas y los servicios de UmbrelOS, y te permite abrir
+  sus puertos en el VPS desde la interfaz. La API del VPS solo es accesible a
+  través del túnel y está protegida con un token.
+developer: tunnel-wg
+website: https://github.com/tunnel-wg/tunnel-wg
 dependencies: []
-tor: false
+repo: https://github.com/tunnel-wg/tunnel-wg
+support: https://github.com/tunnel-wg/tunnel-wg/issues
+gallery: []
+releaseNotes: >-
+  Primera versión: detección automática de apps, emparejamiento tw1, proxy TCP
+  local y apertura/cierre de puertos en el VPS.
+torOnly: false

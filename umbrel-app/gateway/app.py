@@ -1,380 +1,525 @@
+"""tunnel-wg - gateway de Umbrel.
+
+Expone servicios de Umbrel a través de un VPS con WireGuard. La app detecta
+contenedores y servicios, deja elegir qué puertos abrir y sincroniza los
+forwards con la API del VPS.
 """
-tunnel-wg Gateway (Umbrel side)
-- Auto-detects Umbrel services from exports.sh
-- Manages HAProxy config for forwarding
-- Web dashboard for configuration
-"""
+
+from __future__ import annotations
+
+import base64
 import json
 import os
-import re
-import subprocess
-import sys
+import threading
+import time
+import urllib.parse
 import uuid
-from pathlib import Path
-from flask import Flask, jsonify, request, render_template
 
-app = Flask(__name__)
+from flask import Flask, jsonify, render_template, request
 
-CONFIG_DIR = Path("/data/config")
-WG_DIR = Path("/data/wireguard")
-UMBREL_APP_DATA = Path("/umbrel-app-data")
-HAPROXY_CFG = Path("/etc/haproxy/haproxy.cfg")
+import detect
+import proxy
+import state
+import sync
+import wireguard
+from vps import VPSClient, VPSError
 
-CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-WG_DIR.mkdir(parents=True, exist_ok=True)
+VERSION = os.environ.get("APP_VERSION", "1.0.0")
+RESERVED_PUBLIC_PORTS = {22}
 
-FORWARDS_FILE = CONFIG_DIR / "forwards.json"
-SETTINGS_FILE = CONFIG_DIR / "settings.json"
+app = Flask(__name__, static_folder="static", template_folder="templates")
+STARTED = time.time()
 
-
-def load_json(path, default=None):
-    if path.exists():
-        return json.loads(path.read_text())
-    return default or []
-
-def save_json(path, data):
-    path.write_text(json.dumps(data, indent=2))
-
-def load_forwards():
-    return load_json(FORWARDS_FILE, [])
-
-def save_forwards(forwards):
-    save_json(FORWARDS_FILE, forwards)
-
-def load_settings():
-    return load_json(SETTINGS_FILE, {})
-
-def save_settings(settings):
-    save_json(SETTINGS_FILE, settings)
+_detect_lock = threading.Lock()
+_detect_cache: dict = {"at": 0.0, "services": []}
+_sync_lock = threading.Lock()
+_last_sync: dict = {"ok": False, "errors": ["sin sincronizar"], "at": 0}
 
 
-APP_PORT_MAP = {
-    "bitcoin": {
-        "services": [
-            {"name": "Bitcoin P2P",  "container": "bitcoin_bitcoind_1",
-             "ip_var": "APP_BITCOIN_NODE_IP", "port_var": "APP_BITCOIN_P2P_PORT", "default_port": 8333},
-            {"name": "Bitcoin RPC",  "container": "bitcoin_bitcoind_1",
-             "ip_var": "APP_BITCOIN_NODE_IP", "port_var": "APP_BITCOIN_RPC_PORT", "default_port": 8332},
-            {"name": "Bitcoin UI",   "container": "bitcoin_app_1",
-             "ip_var": "APP_BITCOIN_NODE_IP", "port_var": None, "default_port": 3000},
-        ]
-    },
-    "electrs": {
-        "services": [
-            {"name": "Electrs (Electrum)", "container": "electrs_electrs_1",
-             "ip_var": "APP_ELECTRS_NODE_IP", "port_var": "APP_ELECTRS_NODE_PORT", "default_port": 50001},
-            {"name": "Electrs Web",         "container": "electrs_app_1",
-             "ip_var": "APP_ELECTRS_IP", "port_var": None, "default_port": 3006},
-        ]
-    },
-    "mempool": {
-        "services": [
-            {"name": "Mempool Web",  "container": "mempool_web_1",
-             "ip_var": "APP_MEMPOOL_IP", "port_var": "APP_MEMPOOL_PORT", "default_port": 3006},
-            {"name": "Mempool API",  "container": "mempool_api_1",
-             "ip_var": "APP_MEMPOOL_API_IP", "port_var": None, "default_port": 8999},
-        ]
-    },
-    "lightning": {
-        "services": [
-            {"name": "LND gRPC",  "container": "lightning_lnd_1",
-             "ip_var": "APP_LIGHTNING_NODE_IP", "port_var": None, "default_port": 10009},
-            {"name": "LND REST",  "container": "lightning_lnd_1",
-             "ip_var": "APP_LIGHTNING_NODE_IP", "port_var": None, "default_port": 8080},
-        ]
-    },
-}
+def detect_cached(force: bool = False) -> list[dict]:
+    now = time.time()
+    with _detect_lock:
+        if force or now - _detect_cache["at"] > 15:
+            _detect_cache["services"] = detect.detect_services()
+            _detect_cache["at"] = now
+        return list(_detect_cache["services"])
 
-def detect_services():
-    detected = []
-    exports_pattern = re.compile(
-        r'export\s+(\w+)=["\']?(.*?)["\']?\s*(?:#|$)',
-        re.MULTILINE)
 
-    if not UMBREL_APP_DATA.exists():
-        return detected
+def sync_now() -> dict:
+    global _last_sync
+    with _sync_lock:
+        with state.LOCK:
+            config = state.load()
+            try:
+                result = sync.sync(config)
+            except Exception as exc:  # noqa: BLE001 - se devuelve al usuario
+                result = {
+                    "ok": False,
+                    "created": 0,
+                    "updated": 0,
+                    "deleted": 0,
+                    "errors": [f"error inesperado: {exc}"],
+                    "vps_status": None,
+                    "at": time.time(),
+                }
+            state.save(config)
+            _last_sync = result
+            return result
 
+
+def decode_pair(code: str) -> dict:
+    code = (code or "").strip()
+    if not code.startswith("tw1."):
+        raise ValueError("el código debe empezar por tw1.")
+    raw = code[4:]
+    padded = raw + "=" * ((4 - len(raw) % 4) % 4)
     try:
-        app_dirs = sorted(UMBREL_APP_DATA.iterdir())
-    except OSError:
-        return detected
+        data = base64.urlsafe_b64decode(padded.encode("ascii"))
+        payload = json.loads(data)
+    except (ValueError, json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ValueError(f"código de emparejamiento inválido: {exc}") from exc
+    if payload.get("v") != 1:
+        raise ValueError("versión de emparejamiento no soportada")
+    api = str(payload.get("api") or "")
+    parsed = urllib.parse.urlparse(api)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("el código contiene una API inválida")
+    if not str(payload.get("token") or "").strip():
+        raise ValueError("el código no contiene token")
+    return payload
 
-    for app_dir in app_dirs:
-        if not app_dir.is_dir():
+
+def validate_public_port(port: int) -> None:
+    if not (1 <= port <= 65535):
+        raise ValueError("el puerto público debe estar entre 1 y 65535")
+    if port in RESERVED_PUBLIC_PORTS:
+        raise ValueError("el puerto 22 es el SSH del VPS; elige otro (por ejemplo 2222)")
+
+
+def allocate_tunnel_port(config: dict) -> int:
+    used = {int(e.get("tunnel_port", 0)) for e in config.get("exposures", [])}
+    settings = config.get("settings") or {}
+    start = int(settings.get("tunnel_port_start", 20000))
+    end = int(settings.get("tunnel_port_end", 29999))
+    for port in range(start, end + 1):
+        if port not in used:
+            return port
+    raise ValueError("no quedan puertos internos libres")
+
+
+def public_port_in_use(config: dict, port: int, ignore_id: str | None = None) -> bool:
+    for exposure in config.get("exposures", []):
+        if exposure.get("id") == ignore_id:
             continue
-        exports_file = app_dir / "exports.sh"
-        manifest_file = app_dir / "umbrel-app.yml"
-
-        if not exports_file.exists():
-            continue
-
-        app_name = app_dir.name
-        if manifest_file.exists():
-            for line in manifest_file.read_text().splitlines():
-                if line.startswith("name:"):
-                    app_name = line.split(":", 1)[1].strip().strip('"').strip("'")
-                    break
-
-        exports = {}
-        for match in exports_pattern.finditer(exports_file.read_text()):
-            exports[match.group(1)] = match.group(2)
-
-        app_id = app_dir.name
-        if app_id in APP_PORT_MAP:
-            for svc in APP_PORT_MAP[app_id]["services"]:
-                ip = exports.get(svc["ip_var"], "")
-                port = svc["default_port"]
-                if svc["port_var"] and svc["port_var"] in exports:
-                    try:
-                        port = int(exports[svc["port_var"]])
-                    except ValueError:
-                        pass
-
-                if ip:
-                    detected.append({
-                        "id": f"{app_id}_{svc['container']}",
-                        "app": app_name,
-                        "name": svc["name"],
-                        "container": svc["container"],
-                        "ip": ip,
-                        "port": port,
-                    })
-
-    return detected
+        if int(exposure.get("public_port", 0)) == port:
+            return True
+    return False
 
 
-def generate_haproxy_config(forwards):
-    lines = [
-        "global",
-        "    daemon",
-        "    stats socket /var/run/haproxy.sock mode 600",
-        "",
-        "defaults",
-        "    mode tcp",
-        "    timeout connect 5000ms",
-        "    timeout client 50000ms",
-        "    timeout server 50000ms",
-        "",
-    ]
-
-    for i, fwd in enumerate(forwards):
-        if not fwd.get("enabled", True):
-            continue
-        name = re.sub(r'[^a-zA-Z0-9_]', '_', fwd.get("name", f"svc_{i}"))
-        lines += [
-            f"frontend f_{name}",
-            f"    bind {fwd.get('wg_ip', '10.0.0.2')}:{fwd['tun_port']}",
-            f"    default_backend b_{name}",
-            "",
-            f"backend b_{name}",
-            f"    server s_{name} {fwd['target_host']}:{fwd['target_port']}",
-            "",
-        ]
-
-    return "\n".join(lines)
-
-def reload_haproxy():
-    forwards = load_forwards()
-    config = generate_haproxy_config(forwards)
-    HAPROXY_CFG.write_text(config)
-
-    check = subprocess.run(
-        ["haproxy", "-c", "-f", str(HAPROXY_CFG)],
-        capture_output=True, text=True, timeout=10
-    )
-    if check.returncode != 0:
-        print(f"[!] haproxy config invalid: {check.stderr}", flush=True)
-        return
-
-    pid_file = Path("/var/run/haproxy.pid")
-    old_pid = ""
-    if pid_file.exists():
-        old_pid = pid_file.read_text().strip()
-
-    try:
-        cmd = ["haproxy", "-f", str(HAPROXY_CFG), "-p", str(pid_file)]
-        if old_pid:
-            cmd += ["-sf", old_pid]
-        subprocess.run(cmd, check=False, timeout=10,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    except Exception:
-        pass
+def service_by_id(service_id: str) -> dict | None:
+    for svc in detect_cached():
+        if svc["id"] == service_id:
+            return svc
+    return None
 
 
-def ensure_policy_routing():
-    """Route replies for tunnel-originated connections back via wg0."""
-    wg_ip = get_wg_status().get("local_ip")
-    if not wg_ip:
-        return
-    subprocess.run(
-        ["ip", "route", "replace", "default", "via", "10.0.0.1",
-         "dev", "wg0", "table", "200"],
-        check=False, capture_output=True)
-    rules = subprocess.run(
-        ["ip", "rule", "show"], capture_output=True, text=True, timeout=5
-    ).stdout
-    if f"from {wg_ip} lookup 200" not in rules:
-        subprocess.run(
-            ["ip", "rule", "add", "from", wg_ip, "lookup", "200"],
-            check=False, capture_output=True)
-
-
-def get_wg_status():
-    try:
-        result = subprocess.run(
-            ["wg", "show", "wg0", "dump"],
-            capture_output=True, text=True, timeout=5
-        )
-        if result.returncode != 0:
-            return {"connected": False, "error": "wg0 not found"}
-
-        lines = result.stdout.strip().split("\n")
-        if len(lines) < 2:
-            return {"connected": False, "error": "no peers"}
-
-        ip_result = subprocess.run(
-            ["ip", "-4", "addr", "show", "wg0"],
-            capture_output=True, text=True, timeout=5
-        )
-        local_ip = ""
-        ip_match = re.search(r'inet\s+(\d+\.\d+\.\d+\.\d+)', ip_result.stdout)
-        if ip_match:
-            local_ip = ip_match.group(1)
-
-        peer_info = lines[1].split("\t")
-        connected = len(peer_info) >= 5 and peer_info[4] != "0"
-
-        return {
-            "connected": connected,
-            "local_ip": local_ip,
-            "peer": peer_info[0] if len(peer_info) > 0 else "",
-            "endpoint": peer_info[2] if len(peer_info) > 2 else "",
-            "latest_handshake": peer_info[4] if len(peer_info) > 4 else "",
-            "transfer_rx": peer_info[6] if len(peer_info) > 6 else "0",
-            "transfer_tx": peer_info[7] if len(peer_info) > 7 else "0",
-        }
-    except Exception as e:
-        return {"connected": False, "error": str(e)}
-
-def apply_wireguard_config(config_text):
-    wg_conf = WG_DIR / "wg0.conf"
-    wg_conf.write_text(config_text)
-    Path("/etc/wireguard/wg0.conf").write_text(config_text)
-
-    try:
-        subprocess.run(["wg-quick", "down", "wg0"], check=False, timeout=10)
-        subprocess.run(["wg-quick", "up", "/etc/wireguard/wg0.conf"],
-                       check=True, timeout=10)
-        ensure_policy_routing()
-        return True, "WireGuard config applied"
-    except subprocess.CalledProcessError as e:
-        return False, f"Failed to apply config: {e.stderr.decode() if e.stderr else 'unknown error'}"
-
-
-@app.route("/")
-def index():
-    return render_template("index.html")
-
-@app.route("/api/status")
-def status():
-    return jsonify({
-        "wg": get_wg_status(),
-        "forwards": len(load_forwards()),
-        "services_detected": len(detect_services()),
-    })
-
-@app.route("/api/services")
-def services():
-    return jsonify(detect_services())
-
-@app.route("/api/forwards", methods=["GET"])
-def list_forwards():
-    return jsonify(load_forwards())
-
-@app.route("/api/forwards", methods=["POST"])
-def create_forward():
-    data = request.json
-    if not data:
-        return jsonify({"error": "no data"}), 400
-
-    forwards = load_forwards()
-    if any(f["tun_port"] == data["tun_port"] for f in forwards):
-        return jsonify({"error": f"Port {data['tun_port']} already mapped"}), 400
-
-    fwd = {
-        "id": uuid.uuid4().hex[:8],
-        "name": data.get("name", "unnamed"),
-        "target_host": data.get("target_host", ""),
-        "target_port": data.get("target_port", 0),
-        "tun_port": data.get("tun_port", 0),
-        "wg_ip": data.get("wg_ip", "10.0.0.2"),
-        "enabled": data.get("enabled", True),
+def exposure_view(exposure: dict) -> dict:
+    return {
+        **exposure,
+        "vps_name": sync.vps_name(exposure),
+        "sync_ok": not exposure.get("sync_error"),
     }
-    forwards.append(fwd)
-    save_forwards(forwards)
-    reload_haproxy()
-    return jsonify(fwd)
 
-@app.route("/api/forwards/<fwd_id>", methods=["DELETE"])
-def delete_forward(fwd_id):
-    forwards = load_forwards()
-    forwards = [f for f in forwards if f["id"] != fwd_id]
-    save_forwards(forwards)
-    reload_haproxy()
+
+@app.get("/")
+def index():
+    return render_template("index.html", version=VERSION)
+
+
+@app.get("/api/health")
+def health():
+    return jsonify({"ok": True, "version": VERSION})
+
+
+@app.get("/api/status")
+def status():
+    config = state.load()
+    wg = wireguard.status()
+    return jsonify(
+        {
+            "version": VERSION,
+            "uptime": int(time.time() - STARTED),
+            "paired": state.paired(config),
+            "vps": {
+                "api": (config.get("vps") or {}).get("api", ""),
+                "endpoint": (config.get("vps") or {}).get("endpoint", ""),
+                "server_pubkey": (config.get("vps") or {}).get("server_pubkey", ""),
+            },
+            "wg": wg,
+            "exposures": len(config.get("exposures", [])),
+            "exposures_enabled": sum(1 for e in config.get("exposures", []) if e.get("enabled", True)),
+            "services": len(detect_cached()),
+            "last_sync": _last_sync,
+        }
+    )
+
+
+@app.get("/api/services")
+def services():
+    config = state.load()
+    by_service = {
+        (e.get("service_id"), e.get("target_port")): e
+        for e in config.get("exposures", [])
+    }
+    result = []
+    for svc in detect_cached():
+        item = dict(svc)
+        exposure = by_service.get((svc["id"], svc["target_port"]))
+        item["exposed"] = exposure is not None
+        item["exposure_enabled"] = bool(exposure.get("enabled", True)) if exposure else False
+        item["default_public_port"] = 2222 if svc["target_port"] == 22 else svc["target_port"]
+        result.append(item)
+    return jsonify(result)
+
+
+@app.post("/api/services/refresh")
+def refresh_services():
+    return jsonify(detect_cached(force=True))
+
+
+@app.get("/api/exposures")
+def list_exposures():
+    config = state.load()
+    return jsonify([exposure_view(e) for e in config.get("exposures", [])])
+
+
+@app.post("/api/exposures")
+def create_exposure():
+    body = request.get_json(silent=True) or {}
+    service = service_by_id(str(body.get("service_id") or ""))
+    if not service:
+        return jsonify({"error": "servicio no encontrado; refresca la lista"}), 404
+
+    try:
+        public_port = int(body.get("public_port") or service["target_port"])
+    except (TypeError, ValueError):
+        return jsonify({"error": "puerto público inválido"}), 400
+    try:
+        validate_public_port(public_port)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    with state.LOCK:
+        config = state.load()
+        if public_port_in_use(config, public_port):
+            return jsonify({"error": f"el puerto público {public_port} ya está asignado"}), 409
+        exposure = {
+            "id": uuid.uuid4().hex[:12],
+            "service_id": service["id"],
+            "name": body.get("name") or f"{service['app']} - {service['name']}",
+            "app": service["app"],
+            "service": service["name"],
+            "target_ip": service["target_ip"],
+            "target_port": service["target_port"],
+            "tunnel_ip": (config.get("vps") or {}).get("umbrel_ip") or "10.0.0.2",
+            "public_port": public_port,
+            "tunnel_port": allocate_tunnel_port(config),
+            "protocol": "tcp",
+            "enabled": True,
+            "sensitive": service["sensitive"],
+            "vps_forward_id": None,
+            "vps_name": "",
+            "sync_error": "",
+            "last_sync": 0,
+        }
+        config.setdefault("exposures", []).append(exposure)
+        state.save(config)
+
+    result = sync_now()
+    current = state.load()
+    saved = state.find_exposure(current, exposure["id"])
+    return jsonify({"exposure": exposure_view(saved or exposure), "sync": result}), 201
+
+
+@app.patch("/api/exposures/<exposure_id>")
+def update_exposure(exposure_id: str):
+    body = request.get_json(silent=True) or {}
+    with state.LOCK:
+        config = state.load()
+        exposure = state.find_exposure(config, exposure_id)
+        if not exposure:
+            return jsonify({"error": "exposición no encontrada"}), 404
+
+        if "public_port" in body:
+            try:
+                public_port = int(body["public_port"])
+                validate_public_port(public_port)
+            except (TypeError, ValueError) as exc:
+                return jsonify({"error": str(exc)}), 400
+            if public_port_in_use(config, public_port, ignore_id=exposure_id):
+                return jsonify({"error": f"el puerto público {public_port} ya está asignado"}), 409
+            exposure["public_port"] = public_port
+        if "enabled" in body:
+            exposure["enabled"] = bool(body["enabled"])
+        if "name" in body and str(body["name"]).strip():
+            exposure["name"] = str(body["name"]).strip()[:80]
+        exposure["vps_name"] = sync.vps_name(exposure)
+        state.save(config)
+
+    result = sync_now()
+    current = state.load()
+    saved = state.find_exposure(current, exposure_id)
+    return jsonify({"exposure": exposure_view(saved or {}), "sync": result})
+
+
+@app.delete("/api/exposures/<exposure_id>")
+def delete_exposure(exposure_id: str):
+    with state.LOCK:
+        config = state.load()
+        exposure = state.find_exposure(config, exposure_id)
+        if not exposure:
+            return jsonify({"error": "exposición no encontrada"}), 404
+        forward_id = exposure.get("vps_forward_id")
+        if forward_id and state.paired(config):
+            vps = config.get("vps") or {}
+            try:
+                VPSClient(vps["api"], vps["token"]).delete_forward(forward_id)
+            except VPSError as exc:
+                return jsonify({"error": f"no se pudo cerrar el puerto en el VPS: {exc}"}), 502
+        config["exposures"] = [e for e in config["exposures"] if e.get("id") != exposure_id]
+        state.save(config)
+
+    result = sync_now()
+    return jsonify({"ok": True, "sync": result})
+
+
+@app.post("/api/sync")
+def sync_route():
+    return jsonify(sync_now())
+
+
+@app.post("/api/pair")
+def pair():
+    body = request.get_json(silent=True) or {}
+    try:
+        payload = decode_pair(str(body.get("code") or ""))
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    api = str(payload["api"]).rstrip("/")
+    token = str(payload["token"]).strip()
+    with state.LOCK:
+        config = state.load()
+        config["vps"] = {
+            "api": api,
+            "token": token,
+            "endpoint": str(payload.get("endpoint") or ""),
+            "server_pubkey": str(payload.get("server_pubkey") or ""),
+            "umbrel_ip": str(payload.get("umbrel_ip") or "10.0.0.2"),
+        }
+        state.save(config)
+
+    if not payload.get("wg"):
+        # Manual pairing: the VPS does not know our public key yet, so the
+        # tunnel cannot work until the user completes the manual form.
+        return jsonify(
+            {
+                "ok": False,
+                "paired": True,
+                "manual": True,
+                "wg": "emparejamiento guardado. Ahora configura WireGuard en la pestaña Conexión.",
+                "sync": {
+                    "ok": False,
+                    "errors": ["WireGuard aún no configurado"],
+                    "at": time.time(),
+                },
+            }
+        )
+
+    try:
+        wireguard.save_config(str(payload["wg"]))
+        wg_ok, wg_message = wireguard.apply_saved()
+    except wireguard.WireGuardError as exc:
+        return jsonify({"error": f"configuración de WireGuard inválida: {exc}"}), 400
+
+    try:
+        vps_status = VPSClient(api, token).status()
+    except VPSError as exc:
+        return (
+            jsonify(
+                {
+                    "error": f"emparejamiento guardado, pero la API del VPS no responde: {exc}",
+                    "paired": True,
+                    "wg": wg_message,
+                }
+            ),
+            502,
+        )
+
+    result = sync_now() if wg_ok else {"ok": False, "errors": [wg_message], "at": time.time()}
+    return jsonify(
+        {
+            "ok": wg_ok,
+            "paired": True,
+            "wg": wg_message,
+            "vps": {
+                "version": vps_status.get("version"),
+                "peers_connected": vps_status.get("peers_connected"),
+            },
+            "sync": result,
+        }
+    )
+
+
+@app.post("/api/unpair")
+def unpair():
+    with state.LOCK:
+        config = state.load()
+        sync.remove_all(config)
+        config["vps"] = {}
+        for exposure in config.get("exposures", []):
+            exposure["vps_forward_id"] = None
+            exposure["sync_error"] = ""
+        state.save(config)
+    proxy.stop()
+    wireguard.remove()
     return jsonify({"ok": True})
 
-@app.route("/api/forwards/<fwd_id>", methods=["PATCH"])
-def update_forward(fwd_id):
-    data = request.json
-    forwards = load_forwards()
-    for f in forwards:
-        if f["id"] == fwd_id:
-            for key in ["name", "target_host", "target_port", "tun_port", "enabled", "wg_ip"]:
-                if key in data:
-                    f[key] = data[key]
-            save_forwards(forwards)
-            reload_haproxy()
-            return jsonify(f)
-    return jsonify({"error": "not found"}), 404
 
-@app.route("/api/wg-config", methods=["GET", "POST"])
-def wg_config():
-    if request.method == "POST":
-        data = request.json
-        if data and data.get("generate"):
-            result = subprocess.run(["wg", "genkey"], capture_output=True, text=True, timeout=5)
-            privkey = result.stdout.strip()
-            pub_result = subprocess.run(["wg", "pubkey"], input=privkey, capture_output=True, text=True, timeout=5)
-            pubkey = pub_result.stdout.strip()
-            return jsonify({"pubkey": pubkey, "privkey": privkey})
-        if not data or "config" not in data:
-            return jsonify({"error": "no config provided"}), 400
-        success, msg = apply_wireguard_config(data["config"])
-        return jsonify({"ok": success, "message": msg})
+@app.get("/api/wireguard")
+def get_wireguard():
+    return jsonify(
+        {
+            "config": wireguard.config_text(),
+            "status": wireguard.status(),
+            "address": wireguard.address(),
+        }
+    )
 
-    wg_conf = WG_DIR / "wg0.conf"
-    if wg_conf.exists():
-        return jsonify({"config": wg_conf.read_text()})
-    return jsonify({"config": ""})
 
-@app.route("/api/settings", methods=["GET", "POST"])
-def settings():
-    if request.method == "POST":
-        data = request.json
-        save_settings(data)
-        return jsonify({"ok": True})
-    return jsonify(load_settings())
+@app.post("/api/wireguard/manual")
+def manual_wireguard():
+    body = request.get_json(silent=True) or {}
+    config = state.load()
+    vps = config.get("vps") or {}
+    endpoint = str(body.get("endpoint") or vps.get("endpoint") or "")
+    server_pubkey = str(body.get("server_pubkey") or vps.get("server_pubkey") or "")
+    client_ip = str(body.get("client_ip") or vps.get("umbrel_ip") or "10.0.0.2")
+    if not endpoint or not server_pubkey:
+        return jsonify({"error": "faltan endpoint y clave pública del servidor"}), 400
+    if ":" not in endpoint:
+        endpoint = f"{endpoint}:51820"
+
+    try:
+        private, public = wireguard.generate_keypair()
+        text = wireguard.build_config(private, client_ip, server_pubkey, endpoint)
+        wireguard.save_config(text)
+        ok, message = wireguard.apply_saved()
+    except wireguard.WireGuardError as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(
+        {
+            "public_key": public,
+            "config": text,
+            "applied": ok,
+            "message": message,
+            "instructions": (
+                "Añade esta clave pública al VPS: "
+                f"tunnel-wg peer add --name umbrel --ip {client_ip} --pubkey {public}"
+            ),
+        }
+    )
+
+
+@app.post("/api/wireguard/apply")
+def apply_wireguard():
+    body = request.get_json(silent=True) or {}
+    text = str(body.get("config") or "")
+    try:
+        wireguard.save_config(text)
+        ok, message = wireguard.apply_saved()
+    except wireguard.WireGuardError as exc:
+        return jsonify({"error": str(exc)}), 400
+    result = sync_now() if ok else {"ok": False, "errors": [message], "at": time.time()}
+    return jsonify({"ok": ok, "message": message, "sync": result})
+
+
+@app.get("/api/settings")
+def get_settings():
+    config = state.load()
+    vps = config.get("vps") or {}
+    return jsonify(
+        {
+            "api": vps.get("api", ""),
+            "token_set": bool(vps.get("token")),
+            "endpoint": vps.get("endpoint", ""),
+            "settings": config.get("settings", {}),
+        }
+    )
+
+
+@app.post("/api/settings")
+def update_settings():
+    body = request.get_json(silent=True) or {}
+    with state.LOCK:
+        config = state.load()
+        vps = config.setdefault("vps", {})
+        if "api" in body:
+            api = str(body["api"]).strip().rstrip("/")
+            if api and urllib.parse.urlparse(api).scheme not in {"http", "https"}:
+                return jsonify({"error": "la API debe ser http(s)://..."}), 400
+            vps["api"] = api
+        if body.get("token"):
+            vps["token"] = str(body["token"]).strip()
+        if "endpoint" in body:
+            vps["endpoint"] = str(body["endpoint"]).strip()
+        if "sync_interval" in body:
+            try:
+                interval = int(body["sync_interval"])
+            except (TypeError, ValueError):
+                return jsonify({"error": "intervalo inválido"}), 400
+            if not (10 <= interval <= 3600):
+                return jsonify({"error": "el intervalo debe estar entre 10 y 3600 segundos"}), 400
+            config.setdefault("settings", {})["sync_interval"] = interval
+        state.save(config)
+    return jsonify({"ok": True})
+
+
+@app.errorhandler(VPSError)
+def handle_vps_error(exc: VPSError):
+    return jsonify({"error": str(exc)}), 502
+
+
+def background_sync() -> None:
+    while True:
+        config = state.load()
+        interval = int((config.get("settings") or {}).get("sync_interval", 30))
+        time.sleep(max(10, interval))
+        config = state.load()
+        if state.paired(config):
+            try:
+                sync_now()
+            except Exception:  # noqa: BLE001 - el hilo no debe morir
+                pass
+
+
+def startup() -> None:
+    config = state.load()
+    if wireguard.config_text():
+        ok, message = wireguard.apply_saved()
+        if not ok:
+            app.logger.warning("WireGuard no arrancó: %s", message)
+    if state.paired(config) and wireguard.config_text():
+        try:
+            sync_now()
+        except Exception as exc:  # noqa: BLE001
+            app.logger.warning("sincronización inicial falló: %s", exc)
+    else:
+        proxy.stop()
 
 
 if __name__ == "__main__":
-    port = 8081
-    debug = False
-    args = iter(sys.argv[1:])
-    for arg in args:
-        if arg == "--port":
-            port = int(next(args))
-        if arg == "--debug":
-            debug = True
-    ensure_policy_routing()
-    reload_haproxy()
-    app.run(host="0.0.0.0", port=port, debug=debug)
+    startup()
+    threading.Thread(target=background_sync, daemon=True).start()
+    app.run(host="0.0.0.0", port=8081, threaded=True)

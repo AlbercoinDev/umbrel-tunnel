@@ -1,0 +1,26 @@
+[Unit]
+Description=tunnel-wg nftables firewall
+Documentation=https://github.com/tunnel-wg/tunnel-wg
+After=network-pre.target wg-quick@wg0.service
+Wants=wg-quick@wg0.service
+Before=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/sbin/nft delete table inet tunnel_wg
+ExecStart=/usr/sbin/nft -f /etc/tunnel-wg/rules.nft
+ExecReload=-/usr/sbin/nft delete table inet tunnel_wg
+ExecReload=/usr/sbin/nft -f /etc/tunnel-wg/rules.nft
+ExecStop=-/usr/sbin/nft delete table inet tunnel_wg
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ReadOnlyPaths=/etc/tunnel-wg
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

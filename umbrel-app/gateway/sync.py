@@ -1,0 +1,171 @@
+"""Sincronización declarativa entre las exposiciones de Umbrel y el VPS.
+
+El VPS es quien abre los puertos públicos (DNAT). La app de Umbrel guarda lo
+que el usuario quiere exponer y reconcilia: crea, actualiza y elimina forwards
+en la API del VPS, y reconfigura HAProxy en el lado de Umbrel.
+"""
+
+from __future__ import annotations
+
+import re
+import time
+
+import proxy
+import wireguard
+from vps import VPSClient, VPSError
+
+NAME_PREFIX = "umbrel:"
+
+
+def _slug(value: str) -> str:
+    cleaned = re.sub(r"[^a-zA-Z0-9_.-]+", "-", value or "").strip("-")
+    return cleaned[:32] or "servicio"
+
+
+def vps_name(exposure: dict) -> str:
+    if exposure.get("vps_name"):
+        return exposure["vps_name"]
+    unique = str(exposure.get("id", ""))[:6] or "000000"
+    return f"{NAME_PREFIX}{_slug(exposure.get('name', 'servicio'))}:{unique}"[:64]
+
+
+def payload(exposure: dict) -> dict:
+    # The VPS always DNATs to the Umbrel peer (10.0.0.2 by default), never to
+    # the app container IP: HAProxy on the Umbrel side does the last hop.
+    return {
+        "name": vps_name(exposure),
+        "public_port": int(exposure["public_port"]),
+        "target_ip": exposure.get("tunnel_ip") or "10.0.0.2",
+        "target_port": int(exposure["tunnel_port"]),
+        "protocol": "tcp",
+        "enabled": True,
+    }
+
+
+def _same(remote: dict, desired: dict) -> bool:
+    return (
+        int(remote.get("public_port", 0)) == desired["public_port"]
+        and remote.get("target_ip") == desired["target_ip"]
+        and int(remote.get("target_port", 0)) == desired["target_port"]
+        and (remote.get("protocol") or "tcp") == desired["protocol"]
+        and bool(remote.get("enabled", True)) is True
+    )
+
+
+def remove_all(config: dict) -> None:
+    """Elimina del VPS todos los forwards creados por esta app."""
+    vps = config.get("vps") or {}
+    if not (vps.get("api") and vps.get("token")):
+        return
+    try:
+        client = VPSClient(vps["api"], vps["token"])
+        for forward in client.list_forwards():
+            if str(forward.get("name", "")).startswith(NAME_PREFIX):
+                client.delete_forward(forward["id"])
+    except VPSError:
+        pass
+
+
+def sync(config: dict) -> dict:
+    result = {
+        "ok": False,
+        "created": 0,
+        "updated": 0,
+        "deleted": 0,
+        "errors": [],
+        "vps_status": None,
+        "at": time.time(),
+    }
+    vps = config.get("vps") or {}
+    if not (vps.get("api") and vps.get("token")):
+        result["errors"].append("no emparejado con un VPS")
+        _apply_proxy(config, result)
+        return result
+
+    client = VPSClient(vps["api"], vps["token"])
+    try:
+        remote = client.list_forwards()
+        result["vps_status"] = client.status()
+    except VPSError as exc:
+        result["errors"].append(str(exc))
+        _apply_proxy(config, result)
+        return result
+
+    by_id = {str(f.get("id")): f for f in remote}
+    by_name = {str(f.get("name")): f for f in remote}
+    desired_names: set[str] = set()
+    # Remote forwards already handled by an exposure. The cleanup pass must not
+    # touch them again: a disabled exposure is deleted here, and an updated
+    # forward keeps its id even if its name changed.
+    handled_ids: set[str] = set()
+
+    for exposure in config.get("exposures", []):
+        exposure["vps_name"] = vps_name(exposure)
+        if not exposure.get("enabled", True):
+            forward_id = str(exposure.get("vps_forward_id") or "")
+            if forward_id:
+                handled_ids.add(forward_id)
+            if forward_id and forward_id in by_id:
+                try:
+                    client.delete_forward(forward_id)
+                    result["deleted"] += 1
+                except VPSError as exc:
+                    exposure["sync_error"] = str(exc)
+                    result["errors"].append(f"{exposure.get('name')}: {exc}")
+                    exposure["last_sync"] = time.time()
+                    continue
+            exposure["vps_forward_id"] = None
+            exposure["sync_error"] = ""
+            exposure["last_sync"] = time.time()
+            continue
+
+        desired = payload(exposure)
+        desired_names.add(desired["name"])
+        current = by_id.get(str(exposure.get("vps_forward_id") or "")) or by_name.get(desired["name"])
+        if current is not None:
+            handled_ids.add(str(current.get("id")))
+        try:
+            if current is None:
+                created = client.create_forward(desired)
+                exposure["vps_forward_id"] = created.get("id")
+                result["created"] += 1
+            else:
+                exposure["vps_forward_id"] = current.get("id")
+                if not _same(current, desired):
+                    client.update_forward(current["id"], desired)
+                    result["updated"] += 1
+            exposure["sync_error"] = ""
+        except VPSError as exc:
+            exposure["sync_error"] = str(exc)
+            result["errors"].append(f"{exposure.get('name')}: {exc}")
+        exposure["last_sync"] = time.time()
+
+    # Borra forwards nuestros que ya no corresponden a ninguna exposición.
+    for forward in remote:
+        forward_id = str(forward.get("id", ""))
+        name = str(forward.get("name", ""))
+        if forward_id in handled_ids:
+            continue
+        if not name.startswith(NAME_PREFIX) or name in desired_names:
+            continue
+        try:
+            client.delete_forward(forward_id)
+            result["deleted"] += 1
+        except VPSError as exc:
+            result["errors"].append(f"limpieza {name}: {exc}")
+
+    _apply_proxy(config, result)
+    result["ok"] = not result["errors"]
+    return result
+
+
+def _apply_proxy(config: dict, result: dict) -> None:
+    enabled = [e for e in config.get("exposures", []) if e.get("enabled", True)]
+    if not enabled:
+        proxy.stop()
+        return
+    bind_ip = wireguard.address() or "10.0.0.2"
+    try:
+        proxy.apply(enabled, bind_ip)
+    except proxy.ProxyError as exc:
+        result["errors"].append(f"proxy local: {exc}")

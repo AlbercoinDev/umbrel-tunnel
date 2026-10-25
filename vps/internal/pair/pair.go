@@ -1,0 +1,89 @@
+// Package pair implements the tw1 pairing code shared with the Umbrel app.
+package pair
+
+import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/url"
+	"strings"
+)
+
+// Prefix identifies a tunnel-wg pairing code.
+const Prefix = "tw1."
+
+// Pairing is the payload embedded in a tw1 code.
+type Pairing struct {
+	V            int    `json:"v"`
+	API          string `json:"api"`
+	Token        string `json:"token"`
+	WG           string `json:"wg,omitempty"`
+	Endpoint     string `json:"endpoint,omitempty"`
+	ServerPubKey string `json:"server_pubkey,omitempty"`
+	UmbrelIP     string `json:"umbrel_ip,omitempty"`
+}
+
+// Encode serializes a pairing payload.
+func Encode(p Pairing) (string, error) {
+	if err := p.validate(); err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(p)
+	if err != nil {
+		return "", err
+	}
+	return Prefix + base64.RawURLEncoding.EncodeToString(data), nil
+}
+
+// Decode parses a tw1 code.
+func Decode(code string) (Pairing, error) {
+	code = strings.TrimSpace(code)
+	if !strings.HasPrefix(code, Prefix) {
+		return Pairing{}, fmt.Errorf("código inválido: debe empezar por %q", Prefix)
+	}
+	data, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(code, Prefix))
+	if err != nil {
+		return Pairing{}, fmt.Errorf("código inválido: %w", err)
+	}
+	var p Pairing
+	if err := json.Unmarshal(data, &p); err != nil {
+		return Pairing{}, fmt.Errorf("código inválido: %w", err)
+	}
+	if err := p.validate(); err != nil {
+		return Pairing{}, err
+	}
+	return p, nil
+}
+
+func (p Pairing) validate() error {
+	if p.V != 1 {
+		return fmt.Errorf("versión de emparejamiento no soportada: %d", p.V)
+	}
+	u, err := url.Parse(p.API)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return fmt.Errorf("api inválida: %q", p.API)
+	}
+	if strings.TrimSpace(p.Token) == "" {
+		return fmt.Errorf("token vacío")
+	}
+	return nil
+}
+
+// Block renders a human-friendly pairing summary.
+func Block(p Pairing) string {
+	var b strings.Builder
+	b.WriteString("--- tunnel-wg: emparejamiento ---\n")
+	fmt.Fprintf(&b, "API:    %s\n", p.API)
+	fmt.Fprintf(&b, "Token:  %s\n", p.Token)
+	if p.Endpoint != "" {
+		fmt.Fprintf(&b, "VPS:    %s\n", p.Endpoint)
+	}
+	if p.ServerPubKey != "" {
+		fmt.Fprintf(&b, "Clave:  %s\n", p.ServerPubKey)
+	}
+	if code, err := Encode(p); err == nil {
+		fmt.Fprintf(&b, "Código: %s\n", code)
+	}
+	b.WriteString("---------------------------------\n")
+	return b.String()
+}

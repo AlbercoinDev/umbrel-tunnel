@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>tunnel-wg</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>tunnel-wg <span class="muted">VPS</span></h1>
+  <span id="version" class="muted"></span>
+</header>
+
+<main>
+  <section id="login" class="card">
+    <h2>Acceso</h2>
+    <p class="muted">Pega el token de <code>/etc/tunnel-wg/token</code>. Se guarda solo en esta pestaña.</p>
+    <form id="login-form" class="row">
+      <input id="token" type="password" placeholder="token" autocomplete="off" required>
+      <button type="submit">Entrar</button>
+    </form>
+    <p id="login-error" class="error" hidden></p>
+  </section>
+
+  <div id="panel" hidden>
+    <section class="card">
+      <h2>Estado</h2>
+      <div class="grid">
+        <div><span class="muted">WireGuard</span><strong id="wg-running">—</strong></div>
+        <div><span class="muted">Peers</span><strong id="peers-count">—</strong></div>
+        <div><span class="muted">Conectados</span><strong id="peers-connected">—</strong></div>
+        <div><span class="muted">Puertos</span><strong id="forwards-count">—</strong></div>
+        <div><span class="muted">API</span><strong id="api-listen">—</strong></div>
+        <div><span class="muted">Uptime</span><strong id="uptime">—</strong></div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>Peers</h2>
+      <table>
+        <thead><tr><th>Nombre</th><th>IP</th><th>Estado</th><th>Handshake</th><th></th></tr></thead>
+        <tbody id="peers-body"></tbody>
+      </table>
+      <form id="peer-form" class="row wrap">
+        <input name="name" placeholder="nombre" required>
+        <input name="allowed_ip" placeholder="10.0.0.2" required>
+        <input name="public_key" placeholder="public key (opcional: se genera)" size="46">
+        <button type="submit">Añadir peer</button>
+      </form>
+      <p id="peer-msg" class="msg" hidden></p>
+    </section>
+
+    <section class="card">
+      <h2>Puertos públicos</h2>
+      <table>
+        <thead><tr><th>Nombre</th><th>Público</th><th>Destino</th><th>Activo</th><th></th></tr></thead>
+        <tbody id="forwards-body"></tbody>
+      </table>
+      <form id="forward-form" class="row wrap">
+        <input name="name" placeholder="nombre" required>
+        <input name="public_port" type="number" min="1" max="65535" placeholder="público" required>
+        <select name="target_ip" id="target-ip"></select>
+        <input name="target_port" type="number" min="1" max="65535" placeholder="destino" required>
+        <button type="submit">Abrir puerto</button>
+      </form>
+      <p id="forward-msg" class="msg" hidden></p>
+    </section>
+
+    <section class="card">
+      <h2>Token</h2>
+      <p class="muted">Rotar el token invalida el que usa la app de Umbrel. Tendrás que volver a emparejar.</p>
+      <button id="rotate" class="danger">Rotar token</button>
+      <p id="token-msg" class="msg" hidden></p>
+    </section>
+  </div>
+</main>
+
+<script src="/app.js"></script>
+</body>
+</html>

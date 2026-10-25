@@ -1,26 +1,26 @@
-FROM alpine:3.19
+FROM alpine:3.20
 
+# wg-quick is a bash script, so bash is required (Alpine's /bin/sh is ash).
 RUN apk add --no-cache \
-    wireguard-tools \
-    haproxy \
     python3 \
-    py3-pip \
     py3-flask \
-    py3-netifaces \
-    bind-tools \
-    iproute2 \
-    iptables \
-    openrc
+    bash \
+    haproxy \
+    wireguard-tools \
+    iproute2
 
 WORKDIR /app
 
-COPY requirements.txt .
-RUN pip3 install --no-cache-dir -r requirements.txt
+COPY app.py catalog.py detect.py docker_api.py proxy.py state.py sync.py vps.py wireguard.py ./
+COPY templates ./templates
+COPY static ./static
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-COPY app.py .
-COPY templates templates/
+EXPOSE 8081
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8081/api/health >/dev/null || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]

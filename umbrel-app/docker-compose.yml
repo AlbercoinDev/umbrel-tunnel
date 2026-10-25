@@ -1,21 +1,66 @@
 services:
   app_proxy:
+    # Umbreld >= 1.x implements app_proxy in-process and removes this service
+    # from the runtime compose file; the image is kept for older UmbrelOS.
     image: getumbrel/app-proxy:1.0.0
     environment:
       APP_HOST: gateway
       APP_PORT: 8081
-    depends_on: [gateway]
+    depends_on:
+      - gateway
+    networks:
+      - default
+    restart: unless-stopped
+
+  socket-proxy:
+    image: tecnativa/docker-socket-proxy:0.2.0
+    environment:
+      # Read-only container listing/inspection is all the gateway needs.
+      CONTAINERS: "1"
+      POST: "0"
+      EXEC: "0"
+      IMAGES: "0"
+      VOLUMES: "0"
+      BUILD: "0"
+      COMMIT: "0"
+      CONFIGS: "0"
+      DISTRIBUTION: "0"
+      NODES: "0"
+      PLUGINS: "0"
+      SERVICES: "0"
+      SESSION: "0"
+      SWARM: "0"
+      SYSTEM: "0"
+      TASKS: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - socketnet
+    restart: unless-stopped
 
   gateway:
     build: ./gateway
     cap_add:
       - NET_ADMIN
-      - SYS_MODULE
-    devices:
-      - /dev/net/tun
     volumes:
       - ${APP_DATA_DIR}/data:/data
       - ${UMBREL_ROOT:-/home/umbrel/umbrel}/app-data:/umbrel-app-data:ro
     environment:
       - TZ=UTC
+      - DOCKER_HOST=tcp://socket-proxy:2375
+      - UMBREL_APP_DATA=/umbrel-app-data
+      - UMBREL_NETWORK=${UMBREL_NETWORK:-umbrel_main_network}
+      - APP_VERSION=1.0.0
+    depends_on:
+      - socket-proxy
+    networks:
+      - default
+      - socketnet
     restart: unless-stopped
+
+networks:
+  default:
+    name: ${UMBREL_NETWORK:-umbrel_main_network}
+    external: true
+  socketnet:
+    internal: true
