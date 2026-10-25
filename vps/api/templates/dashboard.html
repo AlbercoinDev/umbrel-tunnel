@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>tunnel-wg Server</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; }
+.container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+header { background: #1e293b; padding: 16px 24px; border-radius: 12px; margin-bottom: 24px; display: flex; justify-content: space-between; align-items: center; }
+header h1 { font-size: 1.5rem; color: #38bdf8; }
+.status-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+.status-dot.online { background: #22c55e; }
+.status-dot.offline { background: #ef4444; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.card { background: #1e293b; border-radius: 12px; padding: 20px; }
+.card h2 { font-size: 1.1rem; margin-bottom: 16px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #334155; font-size: 0.9rem; }
+th { color: #64748b; font-weight: 500; }
+.btn { padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; transition: all 0.2s; }
+.btn-primary { background: #38bdf8; color: #0f172a; }
+.btn-danger { background: #ef4444; color: white; }
+.btn-sm { padding: 4px 10px; font-size: 0.8rem; }
+.btn:hover { opacity: 0.85; }
+.badge { padding: 2px 8px; border-radius: 4px; font-size: 0.75rem; font-weight: 600; }
+.badge-public { background: #22c55e; color: #052e16; }
+.badge-auth { background: #f59e0b; color: #451a03; }
+.badge-ip { background: #6366f1; color: #1e1b4b; }
+input, select { background: #334155; border: 1px solid #475569; color: #e2e8f0; padding: 8px 12px; border-radius: 6px; width: 100%; font-size: 0.9rem; }
+input:focus, select:focus { outline: 2px solid #38bdf8; border-color: transparent; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px; }
+.form-row.three { grid-template-columns: 1fr 1fr 1fr; }
+label { display: block; font-size: 0.8rem; color: #94a3b8; margin-bottom: 4px; }
+.full-width { grid-column: span 2; }
+.empty-state { text-align: center; padding: 40px 20px; color: #64748b; }
+.modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); display: flex; justify-content: center; align-items: center; z-index: 100; }
+.modal { background: #1e293b; border-radius: 12px; padding: 24px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; }
+.modal h2 { margin-bottom: 16px; }
+pre { background: #0f172a; padding: 16px; border-radius: 8px; overflow-x: auto; font-size: 0.8rem; margin: 12px 0; }
+.toggle { position: relative; display: inline-block; width: 40px; height: 22px; }
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: #475569; border-radius: 22px; transition: 0.3s; }
+.toggle .slider:before { content: ""; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: white; border-radius: 50%; transition: 0.3s; }
+.toggle input:checked + .slider { background: #38bdf8; }
+.toggle input:checked + .slider:before { transform: translateX(18px); }
+</style>
+</head>
+<body>
+<div id="app" class="container">
+  <header>
+    <h1>🔀 tunnel-wg Server</h1>
+    <div>
+      <span class="status-dot" :class="status.wg_running ? 'online' : 'offline'"></span>
+      {{ status.peers_connected || 0 }} / {{ status.peers_total || 0 }} peers connected
+    </div>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Peers (Umbrel instances)</h2>
+      <table v-if="peers.length">
+        <tr><th>Name</th><th>IP</th><th>Actions</th></tr>
+        <tr v-for="peer in peers" :key="peer.id">
+          <td>{{ peer.name }}</td>
+          <td><code>{{ peer.allowed_ip }}</code></td>
+          <td>
+            <button class="btn btn-sm btn-primary" @click="showPeerConfig(peer)">Config</button>
+            <button class="btn btn-sm btn-danger" @click="deletePeer(peer.id)">Delete</button>
+          </td>
+        </tr>
+      </table>
+      <div v-else class="empty-state">No peers configured</div>
+      <button class="btn btn-primary" style="margin-top:12px" @click="showAddPeer = true">+ Add Peer</button>
+    </div>
+
+    <div class="card">
+      <h2>Port Forwards</h2>
+      <table v-if="forwards.length">
+        <tr><th>Service</th><th>Public Port</th><th>Target</th><th>Auth</th><th>On</th><th></th></tr>
+        <tr v-for="fwd in forwards" :key="fwd.id">
+          <td>{{ fwd.name }}</td>
+          <td><code>:{{ fwd.dport }}</code></td>
+          <td><code>{{ fwd.target_ip }}:{{ fwd.target_port }}</code></td>
+          <td>
+            <span :class="'badge badge-' + fwd.auth_mode">{{ fwd.auth_mode }}</span>
+          </td>
+          <td>
+            <label class="toggle">
+              <input type="checkbox" :checked="fwd.enabled" @change="toggleForward(fwd)">
+              <span class="slider"></span>
+            </label>
+          </td>
+          <td><button class="btn btn-sm btn-danger" @click="deleteForward(fwd.id)">✕</button></td>
+        </tr>
+      </table>
+      <div v-else class="empty-state">No port forwards configured</div>
+      <button class="btn btn-primary" style="margin-top:12px" @click="showAddForward = true">+ Add Forward</button>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" v-if="showAddPeer" @click.self="showAddPeer = false">
+    <div class="modal">
+      <h2>Add Peer (Umbrel)</h2>
+      <div class="form-row">
+        <div><label>Name</label><input v-model="newPeer.name" placeholder="my-umbrel"></div>
+        <div><label>Allowed IP</label><input v-model="newPeer.allowed_ip" placeholder="10.0.0.2"></div>
+      </div>
+      <div class="form-row full-width">
+        <div><label>Public Key (from Umbrel)</label><input v-model="newPeer.public_key" placeholder="Umbrel's WireGuard public key"></div>
+      </div>
+      <div style="margin-top:16px; display:flex; gap:8px; justify-content:flex-end">
+        <button class="btn btn-primary" @click="addPeer">Save</button>
+        <button class="btn" style="background:#475569" @click="showAddPeer = false">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" v-if="configPeer" @click.self="configPeer = null">
+    <div class="modal">
+      <h2>WireGuard Config: {{ configPeer.name }}</h2>
+      <p style="margin-bottom:8px; color:#94a3b8">Copy this config into the Umbrel app:</p>
+      <pre>{{ peerConfigText }}</pre>
+      <button class="btn btn-primary" @click="copyConfig">Copy to Clipboard</button>
+      <button class="btn" style="background:#475569; margin-left:8px" @click="configPeer = null">Close</button>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" v-if="showAddForward" @click.self="showAddForward = false">
+    <div class="modal">
+      <h2>Add Port Forward</h2>
+      <div class="form-row three">
+        <div><label>Service Name</label><input v-model="newFwd.name" placeholder="Mempool"></div>
+        <div><label>Public Port</label><input type="number" v-model.number="newFwd.dport" placeholder="3006"></div>
+        <div><label>Target Port</label><input type="number" v-model.number="newFwd.target_port" placeholder="3006"></div>
+      </div>
+      <div class="form-row">
+        <div class="full-width"><label>Target IP (Umbrel's WG IP)</label><input v-model="newFwd.target_ip" placeholder="10.0.0.2"></div>
+      </div>
+      <div class="form-row">
+        <div><label>Auth Mode</label>
+          <select v-model="newFwd.auth_mode">
+            <option value="none">None (Public)</option>
+            <option value="auth">Basic Auth</option>
+            <option value="ip">IP Restriction</option>
+          </select>
+        </div>
+      </div>
+      <div style="margin-top:16px; display:flex; gap:8px; justify-content:flex-end">
+        <button class="btn btn-primary" @click="addForward">Save</button>
+        <button class="btn" style="background:#475569" @click="showAddForward = false">Cancel</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>

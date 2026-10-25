@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tunnel WG — Umbrel</title>
+<script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; }
+.container { max-width: 1100px; margin: 0 auto; padding: 16px; }
+header { background: #1e293b; padding: 16px 20px; border-radius: 10px; margin-bottom: 16px; display: flex; justify-content: space-between; align-items: center; }
+header h1 { font-size: 1.3rem; color: #38bdf8; }
+.card { background: #1e293b; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+.card h2 { font-size: 1rem; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; }
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.flex-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+.status-dot.online { background: #22c55e; }
+.status-dot.offline { background: #ef4444; }
+.status-dot.unknown { background: #f59e0b; }
+table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+th, td { padding: 8px 6px; border-bottom: 1px solid #334155; text-align: left; }
+th { color: #64748b; font-weight: 500; }
+.btn { padding: 6px 14px; border: none; border-radius: 6px; cursor: pointer; font-size: 0.85rem; transition: 0.2s; }
+.btn-primary { background: #38bdf8; color: #0f172a; }
+.btn-success { background: #22c55e; color: white; }
+.btn-danger { background: #ef4444; color: white; }
+.btn-sm { padding: 4px 10px; font-size: 0.8rem; }
+.btn:hover { opacity: 0.85; }
+input, select, textarea { background: #334155; border: 1px solid #475569; color: #e2e8f0; padding: 8px 12px; border-radius: 6px; width: 100%; font-size: 0.9rem; }
+input:focus, select:focus, textarea:focus { outline: 2px solid #38bdf8; border-color: transparent; }
+textarea { font-family: monospace; font-size: 0.8rem; }
+.form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.form-row.three { grid-template-columns: 1fr 1fr 1fr; }
+.form-row.full { grid-template-columns: 1fr; }
+label { display: block; font-size: 0.8rem; color: #94a3b8; margin-bottom: 4px; }
+code { background: #0f172a; padding: 2px 6px; border-radius: 4px; font-size: 0.8rem; color: #38bdf8; }
+pre { background: #0f172a; padding: 12px; border-radius: 6px; overflow-x: auto; font-size: 0.78rem; }
+.empty-state { text-align: center; padding: 30px; color: #64748b; }
+.badge { padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+.badge-active { background: #22c55e22; color: #22c55e; border: 1px solid #22c55e; }
+.badge-inactive { background: #ef444422; color: #ef4444; border: 1px solid #ef4444; }
+.service-chip { background: #334155; padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: 0.2s; border: 1px solid transparent; }
+.service-chip:hover { border-color: #38bdf8; }
+.service-chip.selected { border-color: #38bdf8; background: #1e3a5f; }
+.service-chip .svc-name { font-weight: 600; font-size: 0.9rem; }
+.service-chip .svc-detail { font-size: 0.75rem; color: #94a3b8; }
+.tabs { display: flex; gap: 4px; margin-bottom: 16px; }
+.tab { padding: 8px 16px; border-radius: 6px 6px 0 0; cursor: pointer; background: #334155; color: #94a3b8; font-size: 0.85rem; }
+.tab.active { background: #1e293b; color: #38bdf8; border-bottom: 2px solid #38bdf8; }
+</style>
+</head>
+<body>
+<div id="app" class="container">
+  <header>
+    <h1>🔀 Tunnel WG</h1>
+    <div class="flex-row">
+      <span class="status-dot" :class="wgStatusClass"></span>
+      <span>{{ wgStatus.connected ? 'Connected' : 'Disconnected' }}</span>
+      <span v-if="wgStatus.local_ip">| <code>{{ wgStatus.local_ip }}</code></span>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <div class="tab" :class="{ active: tab === 'tunnel' }" @click="tab='tunnel'">Tunnel</div>
+    <div class="tab" :class="{ active: tab === 'forwards' }" @click="tab='forwards'">Forwards</div>
+    <div class="tab" :class="{ active: tab === 'services' }" @click="tab='services'">Auto-detect</div>
+    <div class="tab" :class="{ active: tab === 'config' }" @click="tab='config'">WG Config</div>
+  </div>
+
+  <div v-if="tab === 'tunnel'">
+    <div class="grid-2">
+      <div class="card">
+        <h2>WireGuard Status</h2>
+        <table>
+          <tr><td>Status</td><td>{{ wgStatus.connected ? '✅ Connected' : '❌ Disconnected' }}</td></tr>
+          <tr><td>Local IP</td><td><code>{{ wgStatus.local_ip || '—' }}</code></td></tr>
+          <tr><td>Peer Endpoint</td><td><code>{{ wgStatus.endpoint || '—' }}</code></td></tr>
+          <tr><td>Latest Handshake</td><td>{{ wgStatus.latest_handshake || '—' }}</td></tr>
+          <tr><td>Received</td><td>{{ formatBytes(wgStatus.transfer_rx) }}</td></tr>
+          <tr><td>Sent</td><td>{{ formatBytes(wgStatus.transfer_tx) }}</td></tr>
+        </table>
+      </div>
+      <div class="card">
+        <h2>Forwarding Summary</h2>
+        <table>
+          <tr><td>Active Forwards</td><td>{{ forwards.filter(f => f.enabled).length }}</td></tr>
+          <tr><td>Total Forwards</td><td>{{ forwards.length }}</td></tr>
+          <tr><td>Services Detected</td><td>{{ detectedServices.length }}</td></tr>
+        </table>
+        <div v-if="wgStatus.connected && forwards.length === 0" style="margin-top:12px; color:#f59e0b; font-size:0.85rem;">
+          ⚠ Tunnel is up but no forwards configured. Go to "Forwards" tab.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="tab === 'forwards'">
+    <div class="card">
+      <h2>Port Forwards (HAProxy)</h2>
+      <table v-if="forwards.length">
+        <tr><th>Service</th><th>Tun Port</th><th>Target</th><th>Status</th><th></th></tr>
+        <tr v-for="fwd in forwards" :key="fwd.id">
+          <td>{{ fwd.name }}</td>
+          <td><code>{{ fwd.wg_ip }}:{{ fwd.tun_port }}</code></td>
+          <td><code>{{ fwd.target_host }}:{{ fwd.target_port }}</code></td>
+          <td><span :class="'badge badge-' + (fwd.enabled ? 'active' : 'inactive')">{{ fwd.enabled ? 'active' : 'paused' }}</span></td>
+          <td>
+            <button class="btn btn-sm btn-primary" @click="editForward(fwd)">✎</button>
+            <button class="btn btn-sm btn-danger" @click="deleteForward(fwd.id)">✕</button>
+          </td>
+        </tr>
+      </table>
+      <div v-else class="empty-state">No forwards configured</div>
+      <button class="btn btn-primary" style="margin-top:12px" @click="openAddForward()">+ Add Forward</button>
+    </div>
+
+    <div class="card" v-if="showForwardForm">
+      <h2>{{ editingForward ? 'Edit' : 'Add' }} Forward</h2>
+      <div class="form-row three">
+        <div><label>Service Name</label><input v-model="forwardForm.name" placeholder="Mempool"></div>
+        <div><label>Tunnel Port</label><input type="number" v-model.number="forwardForm.tun_port" placeholder="3006"></div>
+        <div><label>Target Port</label><input type="number" v-model.number="forwardForm.target_port" placeholder="3006"></div>
+      </div>
+      <div class="form-row full">
+        <div><label>Target Host (container name or IP)</label><input v-model="forwardForm.target_host" placeholder="mempool_web_1"></div>
+      </div>
+      <div class="flex-row" style="justify-content:flex-end; margin-top:12px">
+        <button class="btn btn-success" @click="saveForward()">{{ editingForward ? 'Update' : 'Save' }}</button>
+        <button class="btn" style="background:#475569" @click="showForwardForm = false">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="tab === 'services'">
+    <div class="card">
+      <h2>Detected Umbrel Services</h2>
+      <p style="color:#94a3b8; margin-bottom:12px; font-size:0.85rem">
+        Services auto-detected from other Umbrel apps' exports. Click one to add a forward.
+      </p>
+      <div style="display:flex; flex-wrap:wrap; gap:8px" v-if="detectedServices.length">
+        <div v-for="svc in detectedServices" :key="svc.id"
+             class="service-chip"
+             @click="addForwardFromService(svc)">
+          <div class="svc-name">{{ svc.app }} — {{ svc.name }}</div>
+          <div class="svc-detail">{{ svc.container }} : {{ svc.port }}</div>
+        </div>
+      </div>
+      <div v-else class="empty-state">
+        <p>No services detected. Make sure other Umbrel apps (bitcoin, electrs, mempool) are installed.</p>
+        <button class="btn btn-primary" style="margin-top:8px" @click="refreshServices">Refresh</button>
+      </div>
+    </div>
+  </div>
+
+  <div v-if="tab === 'config'">
+    <div class="card">
+      <h2>WireGuard Configuration</h2>
+      <p style="color:#94a3b8; margin-bottom:8px; font-size:0.85rem">
+        Paste the config from the VPS dashboard here. Generate a key pair first:
+      </p>
+      <div class="flex-row" style="margin-bottom:12px">
+        <button class="btn btn-primary" @click="generateKey">Generate Keys</button>
+        <span v-if="generatedPubkey" style="font-size:0.85rem">
+          Public key: <code>{{ generatedPubkey }}</code>
+          <button class="btn btn-sm btn-primary" @click="copyPubkey">Copy</button>
+        </span>
+      </div>
+      <div class="form-row full">
+        <div><label>WireGuard Config (wg0.conf format)</label>
+          <textarea rows="12" v-model="wgConfigText" style="font-family:monospace;font-size:0.8rem"></textarea>
+        </div>
+      </div>
+      <button class="btn btn-success" @click="saveWGConfig">Apply Config</button>
+      <span v-if="wgConfigMsg" style="margin-left:12px; font-size:0.85rem; color:#22c55e">{{ wgConfigMsg }}</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const { createApp, ref, computed, onMounted } = Vue;
+
+createApp({
+  setup() {
+    const tab = ref('tunnel');
+    const wgStatus = ref({});
+    const forwards = ref([]);
+    const detectedServices = ref([]);
+    const wgConfigText = ref('');
+    const wgConfigMsg = ref('');
+    const generatedPubkey = ref('');
+    const showForwardForm = ref(false);
+    const editingForward = ref(null);
+    const forwardForm = ref({ name: '', tun_port: 3006, target_host: '', target_port: 3006 });
+
+    const wgStatusClass = computed(() => {
+      if (wgStatus.value.connected) return 'online';
+      if (wgStatus.value.error) return 'offline';
+      return 'unknown';
+    });
+
+    async function api(path, opts = {}) {
+      const res = await fetch(path, {
+        headers: { 'Content-Type': 'application/json' },
+        ...opts,
+      });
+      if (!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
+
+    async function loadData() {
+      try {
+        const statusData = await api('/api/status');
+        wgStatus.value = statusData.wg || {};
+        forwards.value = await api('/api/forwards');
+      } catch (e) { console.error('loadData error:', e); }
+    }
+
+    async function refreshServices() {
+      detectedServices.value = await api('/api/services');
+    }
+
+    function openAddForward() {
+      editingForward.value = null;
+      forwardForm.value = { name: '', tun_port: 3006, target_host: '', target_port: 3006 };
+      showForwardForm.value = true;
+    }
+
+    function editForward(fwd) {
+      editingForward.value = fwd;
+      forwardForm.value = { name: fwd.name, tun_port: fwd.tun_port, target_host: fwd.target_host, target_port: fwd.target_port };
+      showForwardForm.value = true;
+    }
+
+    async function saveForward() {
+      if (editingForward.value) {
+        await api(`/api/forwards/${editingForward.value.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify(forwardForm.value),
+        });
+      } else {
+        await api('/api/forwards', {
+          method: 'POST',
+          body: JSON.stringify(forwardForm.value),
+        });
+      }
+      showForwardForm.value = false;
+      forwards.value = await api('/api/forwards');
+    }
+
+    async function deleteForward(id) {
+      if (!confirm('Delete this forward?')) return;
+      await api(`/api/forwards/${id}`, { method: 'DELETE' });
+      forwards.value = await api('/api/forwards');
+    }
+
+    function addForwardFromService(svc) {
+      forwardForm.value = {
+        name: `${svc.app} ${svc.name}`,
+        tun_port: svc.port,
+        target_host: svc.container,
+        target_port: svc.port,
+      };
+      editingForward.value = null;
+      showForwardForm.value = true;
+      tab.value = 'forwards';
+    }
+
+    async function loadWGConfig() {
+      const data = await api('/api/wg-config');
+      wgConfigText.value = data.config || '';
+    }
+
+    async function saveWGConfig() {
+      const result = await api('/api/wg-config', {
+        method: 'POST',
+        body: JSON.stringify({ config: wgConfigText.value }),
+      });
+      wgConfigMsg.value = result.message;
+      setTimeout(() => wgConfigMsg.value = '', 5000);
+      await loadData();
+    }
+
+    async function generateKey() {
+      const resp = await api('/api/wg-config', {
+        method: 'POST',
+        body: JSON.stringify({ generate: true }),
+      });
+      if (resp.pubkey) generatedPubkey.value = resp.pubkey;
+    }
+
+    function copyPubkey() {
+      navigator.clipboard.writeText(generatedPubkey.value);
+    }
+
+    function formatBytes(bytes) {
+      if (!bytes || bytes === '0') return '0 B';
+      const n = parseInt(bytes);
+      if (isNaN(n)) return bytes;
+      const units = ['B', 'KB', 'MB', 'GB'];
+      let i = 0;
+      let val = n;
+      while (val >= 1024 && i < units.length - 1) {
+        val /= 1024; i++;
+      }
+      return val.toFixed(1) + ' ' + units[i];
+    }
+
+    onMounted(async () => {
+      await loadData();
+      await loadWGConfig();
+      await refreshServices();
+      setInterval(loadData, 10000);
+    });
+
+    return {
+      tab, wgStatus, wgStatusClass, forwards, detectedServices,
+      wgConfigText, wgConfigMsg, generatedPubkey,
+      showForwardForm, editingForward, forwardForm,
+      openAddForward, editForward, saveForward, deleteForward,
+      addForwardFromService, refreshServices,
+      loadWGConfig, saveWGConfig, generateKey, copyPubkey,
+      formatBytes,
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>

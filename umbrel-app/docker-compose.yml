@@ -1,0 +1,21 @@
+services:
+  app_proxy:
+    image: getumbrel/app-proxy:1.0.0
+    environment:
+      APP_HOST: gateway
+      APP_PORT: 8081
+    depends_on: [gateway]
+
+  gateway:
+    build: ./gateway
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun
+    volumes:
+      - ${APP_DATA_DIR}/data:/data
+      - ${UMBREL_ROOT:-/home/umbrel/umbrel}/app-data:/umbrel-app-data:ro
+    environment:
+      - TZ=UTC
+    restart: unless-stopped

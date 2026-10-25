@@ -1,0 +1,15 @@
+manifestVersion: "1"
+id: tunnel-wg
+name: "Tunnel WG"
+tagline: "Expone servicios de Umbrel a través de un VPS vía WireGuard"
+icon: ""
+category: "Networking"
+version: "1.0.0"
+port: 8081
+description: >-
+  Crea un túnel WireGuard entre tu Umbrel y un VPS para exponer
+  servicios como Bitcoin Core, Electrs, Mempool, y más.
+developer: "tunnel-wg"
+website: ""
+dependencies: []
+tor: false
