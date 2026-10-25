@@ -10,8 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"tunnel-wg/internal/config"
-	"tunnel-wg/internal/fsutil"
+	"umbrel-tunnel/internal/config"
+	"umbrel-tunnel/internal/fsutil"
 )
 
 // Peer is a WireGuard client allowed to use the tunnel.

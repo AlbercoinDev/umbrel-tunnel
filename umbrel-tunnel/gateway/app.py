@@ -1,4 +1,4 @@
-"""tunnel-wg - gateway de Umbrel.
+"""umbrel-tunnel - gateway de Umbrel.
 
 Expone servicios de Umbrel a través de un VPS con WireGuard. La app detecta
 contenedores y servicios, deja elegir qué puertos abrir y sincroniza los
@@ -69,8 +69,8 @@ def sync_now() -> dict:
 
 def decode_pair(code: str) -> dict:
     code = (code or "").strip()
-    if not code.startswith("tw1."):
-        raise ValueError("el código debe empezar por tw1.")
+    if not code.startswith("ut1."):
+        raise ValueError("el código debe empezar por ut1.")
     raw = code[4:]
     padded = raw + "=" * ((4 - len(raw) % 4) % 4)
     try:
@@ -426,7 +426,7 @@ def manual_wireguard():
             "message": message,
             "instructions": (
                 "Añade esta clave pública al VPS: "
-                f"tunnel-wg peer add --name umbrel --ip {client_ip} --pubkey {public}"
+                f"umbrel-tunnel peer add --name umbrel --ip {client_ip} --pubkey {public}"
             ),
         }
     )

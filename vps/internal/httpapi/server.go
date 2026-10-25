@@ -11,13 +11,13 @@ import (
 	"sync"
 	"time"
 
-	"tunnel-wg/internal/config"
-	"tunnel-wg/internal/execx"
-	"tunnel-wg/internal/pair"
-	"tunnel-wg/internal/service"
-	"tunnel-wg/internal/state"
-	"tunnel-wg/internal/webui"
-	"tunnel-wg/internal/wireguard"
+	"umbrel-tunnel/internal/config"
+	"umbrel-tunnel/internal/execx"
+	"umbrel-tunnel/internal/pair"
+	"umbrel-tunnel/internal/service"
+	"umbrel-tunnel/internal/state"
+	"umbrel-tunnel/internal/webui"
+	"umbrel-tunnel/internal/wireguard"
 )
 
 // Server is the HTTP control plane.
@@ -84,7 +84,7 @@ func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
 		const prefix = "Bearer "
 		if !strings.HasPrefix(header, prefix) ||
 			subtle.ConstantTimeCompare([]byte(strings.TrimSpace(strings.TrimPrefix(header, prefix))), []byte(token)) != 1 {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="tunnel-wg"`)
+			w.Header().Set("WWW-Authenticate", `Bearer realm="umbrel-tunnel"`)
 			writeError(w, http.StatusUnauthorized, "token inválido")
 			return
 		}

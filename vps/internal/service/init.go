@@ -9,14 +9,14 @@ import (
 	"strconv"
 	"strings"
 
-	"tunnel-wg/internal/config"
-	"tunnel-wg/internal/execx"
-	"tunnel-wg/internal/fsutil"
-	"tunnel-wg/internal/pair"
-	"tunnel-wg/internal/state"
+	"umbrel-tunnel/internal/config"
+	"umbrel-tunnel/internal/execx"
+	"umbrel-tunnel/internal/fsutil"
+	"umbrel-tunnel/internal/pair"
+	"umbrel-tunnel/internal/state"
 )
 
-// InitOptions controls `tunnel-wg init`.
+// InitOptions controls `umbrel-tunnel init`.
 type InitOptions struct {
 	Endpoint     string
 	Token        string

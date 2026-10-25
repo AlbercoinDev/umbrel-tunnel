@@ -11,10 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"tunnel-wg/internal/config"
-	"tunnel-wg/internal/execx"
-	"tunnel-wg/internal/service"
-	"tunnel-wg/internal/state"
+	"umbrel-tunnel/internal/config"
+	"umbrel-tunnel/internal/execx"
+	"umbrel-tunnel/internal/service"
+	"umbrel-tunnel/internal/state"
 )
 
 type harness struct {

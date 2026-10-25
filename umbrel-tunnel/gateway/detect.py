@@ -21,9 +21,9 @@ from docker_api import DockerClient, DockerError
 
 APP_DATA = Path(os.environ.get("UMBREL_APP_DATA", "/umbrel-app-data"))
 NETWORK = os.environ.get("UMBREL_NETWORK", "umbrel_main_network")
-HOST_SERVICES = os.environ.get("TUNNEL_WG_HOST_SERVICES", "1") not in {"0", "false", "no"}
+HOST_SERVICES = os.environ.get("UMBREL_TUNNEL_HOST_SERVICES", "1") not in {"0", "false", "no"}
 
-IGNORED_PROJECTS = {"tunnel-wg", "app_proxy", "app-proxy", "socket-proxy"}
+IGNORED_PROJECTS = {"umbrel-tunnel", "app_proxy", "app-proxy", "socket-proxy"}
 IGNORED_PORTS = {2375, 8081}
 EXPORT_RE = re.compile(r"""^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)=["']?([^"'\n]*)["']?""", re.MULTILINE)
 IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")

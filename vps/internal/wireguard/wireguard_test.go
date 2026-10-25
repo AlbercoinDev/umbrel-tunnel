@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"tunnel-wg/internal/config"
-	"tunnel-wg/internal/execx"
-	"tunnel-wg/internal/state"
+	"umbrel-tunnel/internal/config"
+	"umbrel-tunnel/internal/execx"
+	"umbrel-tunnel/internal/state"
 )
 
 func TestStatusParsesDump(t *testing.T) {
@@ -54,7 +54,7 @@ func TestServerConfigIncludesPeers(t *testing.T) {
 	out := m.ServerConfig("priv", []state.Peer{
 		{Name: "umbrel", PublicKey: "pub", AllowedIP: "10.0.0.2"},
 	})
-	for _, want := range []string{"# Managed by tunnel-wg", "Address = 10.0.0.1/24", "PublicKey = pub", "AllowedIPs = 10.0.0.2/32"} {
+	for _, want := range []string{"# Managed by umbrel-tunnel", "Address = 10.0.0.1/24", "PublicKey = pub", "AllowedIPs = 10.0.0.2/32"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("falta %q en:\n%s", want, out)
 		}

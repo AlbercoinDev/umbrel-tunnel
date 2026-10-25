@@ -9,10 +9,10 @@ import (
 	"strings"
 	"time"
 
-	"tunnel-wg/internal/config"
-	"tunnel-wg/internal/execx"
-	"tunnel-wg/internal/fsutil"
-	"tunnel-wg/internal/state"
+	"umbrel-tunnel/internal/config"
+	"umbrel-tunnel/internal/execx"
+	"umbrel-tunnel/internal/fsutil"
+	"umbrel-tunnel/internal/state"
 )
 
 // Manager owns the server-side WireGuard configuration.
@@ -66,7 +66,7 @@ func (m *Manager) AddressCIDR(ip string) string {
 // ServerConfig renders /etc/wireguard/wg0.conf.
 func (m *Manager) ServerConfig(privateKey string, peers []state.Peer) string {
 	var b strings.Builder
-	b.WriteString("# Managed by tunnel-wg - no editar a mano\n")
+	b.WriteString("# Managed by umbrel-tunnel - no editar a mano\n")
 	b.WriteString("[Interface]\n")
 	fmt.Fprintf(&b, "Address = %s\n", m.AddressCIDR(m.cfg.ServerIP))
 	fmt.Fprintf(&b, "PrivateKey = %s\n", privateKey)

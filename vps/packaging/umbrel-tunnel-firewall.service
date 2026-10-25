@@ -1,0 +1,26 @@
+[Unit]
+Description=umbrel-tunnel nftables firewall
+Documentation=https://github.com/umbrel-tunnel/umbrel-tunnel
+After=network-pre.target wg-quick@wg0.service
+Wants=wg-quick@wg0.service
+Before=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStartPre=-/usr/sbin/nft delete table inet umbrel_tunnel
+ExecStart=/usr/sbin/nft -f /etc/umbrel-tunnel/rules.nft
+ExecReload=-/usr/sbin/nft delete table inet umbrel_tunnel
+ExecReload=/usr/sbin/nft -f /etc/umbrel-tunnel/rules.nft
+ExecStop=-/usr/sbin/nft delete table inet umbrel_tunnel
+NoNewPrivileges=yes
+ProtectHome=yes
+ProtectSystem=strict
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ReadOnlyPaths=/etc/umbrel-tunnel
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
+
+[Install]
+WantedBy=multi-user.target

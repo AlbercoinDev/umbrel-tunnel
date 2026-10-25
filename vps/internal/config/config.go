@@ -16,10 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"tunnel-wg/internal/fsutil"
+	"umbrel-tunnel/internal/fsutil"
 )
 
-// Paths are the directories used by tunnel-wg. They can be overridden with
+// Paths are the directories used by umbrel-tunnel. They can be overridden with
 // environment variables, which makes integration tests possible.
 type Paths struct {
 	Etc       string
@@ -38,10 +38,10 @@ func envOr(key, fallback string) string {
 // DefaultPaths returns the production paths (or test overrides).
 func DefaultPaths() Paths {
 	return Paths{
-		Etc:       envOr("TUNNEL_WG_ETC", "/etc/tunnel-wg"),
-		State:     envOr("TUNNEL_WG_STATE", "/var/lib/tunnel-wg"),
-		WireGuard: envOr("TUNNEL_WG_WIREGUARD", "/etc/wireguard"),
-		Run:       envOr("TUNNEL_WG_RUN", "/run/tunnel-wg"),
+		Etc:       envOr("UMBREL_TUNNEL_ETC", "/etc/umbrel-tunnel"),
+		State:     envOr("UMBREL_TUNNEL_STATE", "/var/lib/umbrel-tunnel"),
+		WireGuard: envOr("UMBREL_TUNNEL_WIREGUARD", "/etc/wireguard"),
+		Run:       envOr("UMBREL_TUNNEL_RUN", "/run/umbrel-tunnel"),
 	}
 }
 
@@ -245,7 +245,7 @@ func DetectPublicIP(ctx context.Context) (string, error) {
 			lastErr = err
 			continue
 		}
-		req.Header.Set("User-Agent", "tunnel-wg")
+		req.Header.Set("User-Agent", "umbrel-tunnel")
 		resp, err := client.Do(req)
 		if err != nil {
 			lastErr = err

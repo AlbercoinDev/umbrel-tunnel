@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"tunnel-wg/internal/config"
-	"tunnel-wg/internal/fsutil"
+	"umbrel-tunnel/internal/config"
+	"umbrel-tunnel/internal/fsutil"
 )
 
 func testPaths(t *testing.T) config.Paths {
@@ -32,10 +32,10 @@ func seed(t *testing.T, paths config.Paths) {
 		paths.ClientKeyFile(): "client-key\n",
 		paths.ServerKeyFile(): "server-key\n",
 		paths.ServerPubFile(): "server-pub\n",
-		paths.RulesFile():     "table inet tunnel_wg {}\n",
+		paths.RulesFile():     "table inet umbrel_tunnel {}\n",
 		paths.PeersFile():     "[]\n",
 		paths.ForwardsFile():  "[]\n",
-		paths.WGConfFile():    "# Managed by tunnel-wg\n",
+		paths.WGConfFile():    "# Managed by umbrel-tunnel\n",
 	}
 	for path, content := range files {
 		if err := fsutil.WriteString(path, content, 0o600); err != nil {

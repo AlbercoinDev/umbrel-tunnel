@@ -1,4 +1,4 @@
-// Command tunnel-wg is the VPS control plane and administration CLI.
+// Command umbrel-tunnel is the VPS control plane and administration CLI.
 package main
 
 import (
@@ -16,16 +16,16 @@ import (
 	"text/tabwriter"
 	"time"
 
-	"tunnel-wg/internal/backup"
-	"tunnel-wg/internal/config"
-	"tunnel-wg/internal/doctor"
-	"tunnel-wg/internal/execx"
-	"tunnel-wg/internal/fsutil"
-	"tunnel-wg/internal/httpapi"
-	"tunnel-wg/internal/pair"
-	"tunnel-wg/internal/service"
-	"tunnel-wg/internal/state"
-	"tunnel-wg/internal/update"
+	"umbrel-tunnel/internal/backup"
+	"umbrel-tunnel/internal/config"
+	"umbrel-tunnel/internal/doctor"
+	"umbrel-tunnel/internal/execx"
+	"umbrel-tunnel/internal/fsutil"
+	"umbrel-tunnel/internal/httpapi"
+	"umbrel-tunnel/internal/pair"
+	"umbrel-tunnel/internal/service"
+	"umbrel-tunnel/internal/state"
+	"umbrel-tunnel/internal/update"
 )
 
 var version = "dev"
@@ -79,10 +79,10 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprint(os.Stderr, `tunnel-wg - plano de control del VPS
+	fmt.Fprint(os.Stderr, `umbrel-tunnel - plano de control del VPS
 
 Uso:
-  tunnel-wg <comando> [opciones]
+  umbrel-tunnel <comando> [opciones]
 
 Comandos:
   serve                         arranca la API (lo usa systemd)
@@ -112,7 +112,7 @@ func cmdServe(ctx context.Context, args []string) error {
 
 	svc, err := service.Open(paths(), runner())
 	if err != nil {
-		return fmt.Errorf("%w (ejecuta `tunnel-wg init`)", err)
+		return fmt.Errorf("%w (ejecuta `umbrel-tunnel init`)", err)
 	}
 	if *listen != "" {
 		svc.Cfg.APIListen = *listen
@@ -140,7 +140,7 @@ func cmdServe(ctx context.Context, args []string) error {
 		_ = srv.Shutdown(shutdownCtx)
 	}()
 
-	log.Printf("tunnel-wg %s escuchando en %s", version, svc.Cfg.APIListen)
+	log.Printf("umbrel-tunnel %s escuchando en %s", version, svc.Cfg.APIListen)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		return err
 	}
@@ -196,7 +196,7 @@ func printPairing(p pair.Pairing) {
 		fmt.Println("\nWireGuard (pegar en la app de Umbrel):")
 		fmt.Println(p.WG)
 	} else {
-		fmt.Println("\nModo manual: usa `tunnel-wg peer add` con la clave pública de Umbrel.")
+		fmt.Println("\nModo manual: usa `umbrel-tunnel peer add` con la clave pública de Umbrel.")
 	}
 }
 
@@ -273,7 +273,7 @@ func cmdPair(ctx context.Context, args []string) error {
 
 func cmdPeer(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("uso: tunnel-wg peer list|add|rm|config")
+		return fmt.Errorf("uso: umbrel-tunnel peer list|add|rm|config")
 	}
 	svc, err := service.Open(paths(), runner())
 	if err != nil {
@@ -338,7 +338,7 @@ func cmdPeer(ctx context.Context, args []string) error {
 
 	case "rm":
 		if len(args) < 2 {
-			return fmt.Errorf("uso: tunnel-wg peer rm <id>")
+			return fmt.Errorf("uso: umbrel-tunnel peer rm <id>")
 		}
 		removed, ok, err := svc.Store.RemovePeer(args[1])
 		if err != nil {
@@ -356,7 +356,7 @@ func cmdPeer(ctx context.Context, args []string) error {
 
 	case "config":
 		if len(args) < 2 {
-			return fmt.Errorf("uso: tunnel-wg peer config <id>")
+			return fmt.Errorf("uso: umbrel-tunnel peer config <id>")
 		}
 		peer, ok := svc.Store.PeerByID(args[1])
 		if !ok {
@@ -378,7 +378,7 @@ func cmdPeer(ctx context.Context, args []string) error {
 
 func cmdForward(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("uso: tunnel-wg forward list|add|rm|enable|disable")
+		return fmt.Errorf("uso: umbrel-tunnel forward list|add|rm|enable|disable")
 	}
 	svc, err := service.Open(paths(), runner())
 	if err != nil {
@@ -443,7 +443,7 @@ func cmdForward(ctx context.Context, args []string) error {
 
 	case "rm":
 		if len(args) < 2 {
-			return fmt.Errorf("uso: tunnel-wg forward rm <id>")
+			return fmt.Errorf("uso: umbrel-tunnel forward rm <id>")
 		}
 		removed, ok, err := svc.Store.RemoveForward(args[1])
 		if err != nil {
@@ -461,7 +461,7 @@ func cmdForward(ctx context.Context, args []string) error {
 
 	case "enable", "disable":
 		if len(args) < 2 {
-			return fmt.Errorf("uso: tunnel-wg forward %s <id>", args[0])
+			return fmt.Errorf("uso: umbrel-tunnel forward %s <id>", args[0])
 		}
 		enabled := args[0] == "enable"
 		updated, err := svc.Store.UpdateForward(args[1], func(f *state.Forward) error {
@@ -482,7 +482,7 @@ func cmdForward(ctx context.Context, args []string) error {
 
 func cmdToken(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("uso: tunnel-wg token show|rotate")
+		return fmt.Errorf("uso: umbrel-tunnel token show|rotate")
 	}
 	p := paths()
 	switch args[0] {
@@ -554,7 +554,7 @@ func cmdBackup(args []string) error {
 		return err
 	}
 	if *output == "" {
-		*output = "tunnel-wg-backup-" + time.Now().Format("20060102-150405") + ".tar.gz"
+		*output = "umbrel-tunnel-backup-" + time.Now().Format("20060102-150405") + ".tar.gz"
 	}
 	file, err := os.OpenFile(*output, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -587,7 +587,7 @@ func cmdRestore(args []string) error {
 	if err := backup.Restore(file, paths(), *force); err != nil {
 		return err
 	}
-	fmt.Println("Copia restaurada. Reinicia: systemctl restart tunnel-wg wg-quick@wg0 tunnel-wg-firewall")
+	fmt.Println("Copia restaurada. Reinicia: systemctl restart umbrel-tunnel wg-quick@wg0 umbrel-tunnel-firewall")
 	return nil
 }
 
@@ -599,13 +599,13 @@ func cmdUninstall(ctx context.Context, args []string) error {
 	}
 	run := runner()
 
-	_, _ = run.Run(ctx, "systemctl", "disable", "--now", "tunnel-wg", "tunnel-wg-firewall", "wg-quick@wg0")
-	_, _ = run.Run(ctx, "nft", "delete", "table", "inet", "tunnel_wg")
+	_, _ = run.Run(ctx, "systemctl", "disable", "--now", "umbrel-tunnel", "umbrel-tunnel-firewall", "wg-quick@wg0")
+	_, _ = run.Run(ctx, "nft", "delete", "table", "inet", "umbrel_tunnel")
 
 	for _, path := range []string{
-		"/etc/systemd/system/tunnel-wg.service",
-		"/etc/systemd/system/tunnel-wg-firewall.service",
-		"/etc/tmpfiles.d/tunnel-wg.conf",
+		"/etc/systemd/system/umbrel-tunnel.service",
+		"/etc/systemd/system/umbrel-tunnel-firewall.service",
+		"/etc/tmpfiles.d/umbrel-tunnel.conf",
 	} {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			return err
@@ -613,21 +613,21 @@ func cmdUninstall(ctx context.Context, args []string) error {
 	}
 	_, _ = run.Run(ctx, "systemctl", "daemon-reload")
 
-	if data, err := os.ReadFile("/etc/wireguard/wg0.conf"); err == nil && strings.Contains(string(data), "Managed by tunnel-wg") {
+	if data, err := os.ReadFile("/etc/wireguard/wg0.conf"); err == nil && strings.Contains(string(data), "Managed by umbrel-tunnel") {
 		_ = os.Remove("/etc/wireguard/wg0.conf")
 	}
 
 	if *purge {
-		_ = os.RemoveAll("/etc/tunnel-wg")
-		_ = os.RemoveAll("/var/lib/tunnel-wg")
-		_ = os.RemoveAll("/run/tunnel-wg")
+		_ = os.RemoveAll("/etc/umbrel-tunnel")
+		_ = os.RemoveAll("/var/lib/umbrel-tunnel")
+		_ = os.RemoveAll("/run/umbrel-tunnel")
 	}
 
 	exe, _ := os.Executable()
 	_ = os.Remove(exe)
-	fmt.Println("tunnel-wg desinstalado.")
+	fmt.Println("umbrel-tunnel desinstalado.")
 	if !*purge {
-		fmt.Println("Se conservaron /etc/tunnel-wg y /var/lib/tunnel-wg (usa --purge para borrarlos).")
+		fmt.Println("Se conservaron /etc/umbrel-tunnel y /var/lib/umbrel-tunnel (usa --purge para borrarlos).")
 	}
 	return nil
 }

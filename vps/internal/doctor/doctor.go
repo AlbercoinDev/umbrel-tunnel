@@ -1,4 +1,4 @@
-// Package doctor checks the health of a tunnel-wg installation.
+// Package doctor checks the health of a umbrel-tunnel installation.
 package doctor
 
 import (
@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"tunnel-wg/internal/execx"
-	"tunnel-wg/internal/service"
+	"umbrel-tunnel/internal/execx"
+	"umbrel-tunnel/internal/service"
 )
 
 // Check is a single diagnostic result.
@@ -84,10 +84,10 @@ func Run(ctx context.Context, svc *service.Service, run execx.Runner, version st
 		r.add("interfaz", "ok", svc.Cfg.Interface)
 	}
 
-	if _, err := run.Run(ctx, "nft", "list", "table", "inet", "tunnel_wg"); err != nil {
-		r.add("nftables", "fail", "tabla inet tunnel_wg ausente")
+	if _, err := run.Run(ctx, "nft", "list", "table", "inet", "umbrel_tunnel"); err != nil {
+		r.add("nftables", "fail", "tabla inet umbrel_tunnel ausente")
 	} else {
-		r.add("nftables", "ok", "inet tunnel_wg")
+		r.add("nftables", "ok", "inet umbrel_tunnel")
 	}
 
 	if data, err := os.ReadFile("/proc/sys/net/ipv4/ip_forward"); err == nil {
@@ -106,7 +106,7 @@ func Run(ctx context.Context, svc *service.Service, run execx.Runner, version st
 		r.add("peers", "ok", fmt.Sprintf("%d", len(svc.Store.Peers())))
 	}
 
-	if out, err := run.Run(ctx, "systemctl", "is-active", "tunnel-wg"); err != nil {
+	if out, err := run.Run(ctx, "systemctl", "is-active", "umbrel-tunnel"); err != nil {
 		r.add("servicio", "warn", strings.TrimSpace(string(out)))
 	} else {
 		r.add("servicio", "ok", strings.TrimSpace(string(out)))

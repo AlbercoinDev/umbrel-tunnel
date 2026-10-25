@@ -1,4 +1,4 @@
-// Package pair implements the tw1 pairing code shared with the Umbrel app.
+// Package pair implements the ut1 pairing code shared with the Umbrel app.
 package pair
 
 import (
@@ -9,10 +9,10 @@ import (
 	"strings"
 )
 
-// Prefix identifies a tunnel-wg pairing code.
-const Prefix = "tw1."
+// Prefix identifies a umbrel-tunnel pairing code.
+const Prefix = "ut1."
 
-// Pairing is the payload embedded in a tw1 code.
+// Pairing is the payload embedded in a ut1 code.
 type Pairing struct {
 	V            int    `json:"v"`
 	API          string `json:"api"`
@@ -35,7 +35,7 @@ func Encode(p Pairing) (string, error) {
 	return Prefix + base64.RawURLEncoding.EncodeToString(data), nil
 }
 
-// Decode parses a tw1 code.
+// Decode parses a ut1 code.
 func Decode(code string) (Pairing, error) {
 	code = strings.TrimSpace(code)
 	if !strings.HasPrefix(code, Prefix) {
@@ -72,7 +72,7 @@ func (p Pairing) validate() error {
 // Block renders a human-friendly pairing summary.
 func Block(p Pairing) string {
 	var b strings.Builder
-	b.WriteString("--- tunnel-wg: emparejamiento ---\n")
+	b.WriteString("--- umbrel-tunnel: emparejamiento ---\n")
 	fmt.Fprintf(&b, "API:    %s\n", p.API)
 	fmt.Fprintf(&b, "Token:  %s\n", p.Token)
 	if p.Endpoint != "" {

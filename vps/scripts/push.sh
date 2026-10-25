@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build the tunnel-wg release, copy it to a VPS over SSH and run the installer.
+# Build the umbrel-tunnel release, copy it to a VPS over SSH and run the installer.
 #
 # Usage:
 #   ./scripts/push.sh root@203.0.113.10 [options]
@@ -167,7 +167,7 @@ main() {
 
   build_dist
 
-  local tarball="$ROOT_DIR/dist/tunnel-wg-${VERSION}-linux-${ARCH}.tar.gz"
+  local tarball="$ROOT_DIR/dist/umbrel-tunnel-${VERSION}-linux-${ARCH}.tar.gz"
   [[ -f "$tarball" ]] || die "no existe $tarball"
   local remote_tar="/tmp/$(basename "$tarball")"
 
@@ -193,7 +193,7 @@ dir="$(mktemp -d)"
 cleanup() { rm -rf "$dir"; }
 trap cleanup EXIT
 tar -xzf "$TARBALL" -C "$dir"
-cd "$dir"/tunnel-wg-*
+cd "$dir"/umbrel-tunnel-*
 if [[ "$(id -u)" -eq 0 ]]; then
   ./install.sh $INSTALL_ARGS
 else
@@ -202,7 +202,7 @@ fi
 REMOTE
 
   remote "rm -f $(printf '%q' "$remote_tar")" 2>/dev/null || true
-  log "hecho. El código de emparejamiento aparece arriba y queda en /root/tunnel-wg-pairing.txt del VPS."
+  log "hecho. El código de emparejamiento aparece arriba y queda en /root/umbrel-tunnel-pairing.txt del VPS."
 }
 
 main "$@"

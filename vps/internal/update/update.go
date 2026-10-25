@@ -13,7 +13,7 @@ import (
 	"strings"
 	"time"
 
-	"tunnel-wg/internal/execx"
+	"umbrel-tunnel/internal/execx"
 )
 
 const maxBinarySize = 100 << 20
@@ -63,7 +63,7 @@ func Apply(ctx context.Context, source, wantSHA string, restart bool, run execx.
 		return "", err
 	}
 	dir := filepath.Dir(exe)
-	tmp := filepath.Join(dir, ".tunnel-wg.new")
+	tmp := filepath.Join(dir, ".umbrel-tunnel.new")
 	if err := os.WriteFile(tmp, data, 0o755); err != nil {
 		return "", fmt.Errorf("escribir %s: %w", tmp, err)
 	}
@@ -73,7 +73,7 @@ func Apply(ctx context.Context, source, wantSHA string, restart bool, run execx.
 	}
 
 	if restart {
-		if _, err := run.Run(ctx, "systemctl", "restart", "tunnel-wg"); err != nil {
+		if _, err := run.Run(ctx, "systemctl", "restart", "umbrel-tunnel"); err != nil {
 			return exe, fmt.Errorf("binario actualizado pero el reinicio falló: %w", err)
 		}
 	}
@@ -87,7 +87,7 @@ func download(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("User-Agent", "tunnel-wg")
+	req.Header.Set("User-Agent", "umbrel-tunnel")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err

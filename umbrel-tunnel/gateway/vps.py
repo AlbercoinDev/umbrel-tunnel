@@ -1,4 +1,4 @@
-"""Cliente de la API de tunnel-wg en el VPS (siempre a través del túnel)."""
+"""Cliente de la API de umbrel-tunnel en el VPS (siempre a través del túnel)."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ class VPSClient:
         headers = {
             "Authorization": f"Bearer {self.token}",
             "Accept": "application/json",
-            "User-Agent": "tunnel-wg-umbrel",
+            "User-Agent": "umbrel-tunnel-umbrel",
         }
         if payload is not None:
             data = json.dumps(payload).encode("utf-8")

@@ -8,12 +8,12 @@ import (
 	"os"
 	"strings"
 
-	"tunnel-wg/internal/config"
-	"tunnel-wg/internal/execx"
-	"tunnel-wg/internal/firewall"
-	"tunnel-wg/internal/pair"
-	"tunnel-wg/internal/state"
-	"tunnel-wg/internal/wireguard"
+	"umbrel-tunnel/internal/config"
+	"umbrel-tunnel/internal/execx"
+	"umbrel-tunnel/internal/firewall"
+	"umbrel-tunnel/internal/pair"
+	"umbrel-tunnel/internal/state"
+	"umbrel-tunnel/internal/wireguard"
 )
 
 // Service bundles the managers used by the CLI and the HTTP API.
@@ -116,7 +116,7 @@ func (s *Service) APIURL() string {
 	return "http://" + net.JoinHostPort(s.Cfg.ServerIP, fmt.Sprintf("%d", port))
 }
 
-// Pairing builds the tw1 payload for the Umbrel app.
+// Pairing builds the ut1 payload for the Umbrel app.
 func (s *Service) Pairing() (pair.Pairing, error) {
 	token, err := s.Paths.LoadToken()
 	if err != nil {

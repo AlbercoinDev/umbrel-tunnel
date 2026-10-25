@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 GO ?= go
-BIN := tunnel-wg
+BIN := umbrel-tunnel
 VERSION := $(shell tr -d ' \n' < VERSION)
 DIST := dist
 LDFLAGS := -s -w -X main.version=$(VERSION)
@@ -12,7 +12,7 @@ BINS := $(DIST)/$(BIN)-linux-amd64 $(DIST)/$(BIN)-linux-arm64
 all: build
 
 build:
-	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/$(BIN) ./cmd/tunnel-wg
+	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $(DIST)/$(BIN) ./cmd/umbrel-tunnel
 
 test:
 	$(GO) test ./...
@@ -27,11 +27,11 @@ check: fmt vet test
 
 $(DIST)/$(BIN)-linux-amd64:
 	@mkdir -p $(DIST)
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $@ ./cmd/tunnel-wg
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 $(GO) build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $@ ./cmd/umbrel-tunnel
 
 $(DIST)/$(BIN)-linux-arm64:
 	@mkdir -p $(DIST)
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $@ ./cmd/tunnel-wg
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO) build $(GOFLAGS) -ldflags '$(LDFLAGS)' -o $@ ./cmd/umbrel-tunnel
 
 tarballs: $(BINS)
 	@for arch in amd64 arm64; do \

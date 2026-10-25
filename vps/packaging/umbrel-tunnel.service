@@ -1,13 +1,13 @@
 [Unit]
-Description=tunnel-wg control plane
-Documentation=https://github.com/tunnel-wg/tunnel-wg
-After=network-online.target wg-quick@wg0.service tunnel-wg-firewall.service
+Description=umbrel-tunnel control plane
+Documentation=https://github.com/umbrel-tunnel/umbrel-tunnel
+After=network-online.target wg-quick@wg0.service umbrel-tunnel-firewall.service
 Wants=network-online.target
-Requires=wg-quick@wg0.service tunnel-wg-firewall.service
+Requires=wg-quick@wg0.service umbrel-tunnel-firewall.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/tunnel-wg serve
+ExecStart=/usr/local/bin/umbrel-tunnel serve
 Restart=on-failure
 RestartSec=3s
 TimeoutStopSec=10s
@@ -30,7 +30,7 @@ LockPersonality=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
-ReadWritePaths=/etc/tunnel-wg /var/lib/tunnel-wg /run/tunnel-wg /etc/wireguard
+ReadWritePaths=/etc/umbrel-tunnel /var/lib/umbrel-tunnel /run/umbrel-tunnel /etc/wireguard
 
 # Small footprint.
 MemoryHigh=48M

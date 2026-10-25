@@ -7,8 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"tunnel-wg/internal/config"
-	"tunnel-wg/internal/execx"
+	"umbrel-tunnel/internal/config"
+	"umbrel-tunnel/internal/execx"
 )
 
 func testPaths(t *testing.T) config.Paths {

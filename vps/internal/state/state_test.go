@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"tunnel-wg/internal/config"
+	"umbrel-tunnel/internal/config"
 )
 
 func testPaths(t *testing.T) config.Paths {

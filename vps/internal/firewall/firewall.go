@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"strings"
 
-	"tunnel-wg/internal/config"
-	"tunnel-wg/internal/execx"
-	"tunnel-wg/internal/fsutil"
-	"tunnel-wg/internal/state"
+	"umbrel-tunnel/internal/config"
+	"umbrel-tunnel/internal/execx"
+	"umbrel-tunnel/internal/fsutil"
+	"umbrel-tunnel/internal/state"
 )
 
-// Manager owns the `inet tunnel_wg` nftables table.
+// Manager owns the `inet umbrel_tunnel` nftables table.
 type Manager struct {
 	paths config.Paths
 	cfg   config.Config
@@ -25,11 +25,11 @@ func New(paths config.Paths, cfg config.Config, run execx.Runner) *Manager {
 }
 
 // Rules renders the complete ruleset. It is deterministic so it can be
-// persisted to /etc/tunnel-wg/rules.nft and restored at boot.
+// persisted to /etc/umbrel-tunnel/rules.nft and restored at boot.
 func (m *Manager) Rules(forwards []state.Forward) string {
 	var b strings.Builder
-	b.WriteString("# Managed by tunnel-wg - no editar a mano\n")
-	b.WriteString("table inet tunnel_wg {\n")
+	b.WriteString("# Managed by umbrel-tunnel - no editar a mano\n")
+	b.WriteString("table inet umbrel_tunnel {\n")
 
 	b.WriteString("    chain input {\n")
 	b.WriteString("        type filter hook input priority filter; policy accept;\n")
@@ -90,7 +90,7 @@ func (m *Manager) Apply(ctx context.Context, forwards []state.Forward) error {
 		return fmt.Errorf("validar nftables: %w", err)
 	}
 	// The table may not exist yet; ignore that error.
-	_, _ = m.run.Run(ctx, "nft", "delete", "table", "inet", "tunnel_wg")
+	_, _ = m.run.Run(ctx, "nft", "delete", "table", "inet", "umbrel_tunnel")
 	if _, err := m.run.Run(ctx, "nft", "-f", m.paths.RulesFile()); err != nil {
 		return fmt.Errorf("aplicar nftables: %w", err)
 	}
@@ -99,6 +99,6 @@ func (m *Manager) Apply(ctx context.Context, forwards []state.Forward) error {
 
 // Delete removes the table (used by uninstall).
 func (m *Manager) Delete(ctx context.Context) error {
-	_, err := m.run.Run(ctx, "nft", "delete", "table", "inet", "tunnel_wg")
+	_, err := m.run.Run(ctx, "nft", "delete", "table", "inet", "umbrel_tunnel")
 	return err
 }

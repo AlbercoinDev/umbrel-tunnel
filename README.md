@@ -1,4 +1,4 @@
-# tunnel-wg
+# umbrel-tunnel
 
 Expón servicios de tu Umbrel a través de un VPS con IP fija usando un túnel
 WireGuard. La app de Umbrel detecta las aplicaciones instaladas y los servicios
@@ -16,7 +16,7 @@ Internet ──► VPS (IP fija) ──► wg0 ──► Umbrel ──► app/co
 - **Umbrel**: app con gateway en Flask, `docker-socket-proxy` para detectar
   contenedores, HAProxy para el proxy TCP local y `wg-quick` para el túnel.
 - **Sin DDNS ni QR**: el VPS tiene IP fija y el emparejamiento es un código
-  `tw1.…` que se pega en la app.
+  `ut1.…` que se pega en la app.
 
 ## Requisitos
 
@@ -31,7 +31,7 @@ Internet ──► VPS (IP fija) ──► wg0 ──► Umbrel ──► app/co
 **Umbrel**
 
 - UmbrelOS con Docker.
-- La app se instala como cualquier app de Umbrel (carpeta `umbrel-app/`).
+- La app se instala como cualquier app de Umbrel (carpeta `umbrel-tunnel/`).
 
 ## Instalación del VPS
 
@@ -59,10 +59,10 @@ escribirla. Opciones útiles:
 ```bash
 cd vps
 make dist
-scp dist/tunnel-wg-1.0.0-linux-amd64.tar.gz root@203.0.113.10:/tmp/
+scp dist/umbrel-tunnel-1.0.0-linux-amd64.tar.gz root@203.0.113.10:/tmp/
 ssh root@203.0.113.10
-tar -xzf /tmp/tunnel-wg-1.0.0-linux-amd64.tar.gz -C /tmp
-cd /tmp/tunnel-wg-1.0.0-linux-amd64
+tar -xzf /tmp/umbrel-tunnel-1.0.0-linux-amd64.tar.gz -C /tmp
+cd /tmp/umbrel-tunnel-1.0.0-linux-amd64
 sudo ./install.sh --endpoint 203.0.113.10
 ```
 
@@ -70,19 +70,19 @@ sudo ./install.sh --endpoint 203.0.113.10
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/<OWNER>/<REPO>/main/vps/install.sh \
-  | sudo bash -s -- --binary https://github.com/<OWNER>/<REPO>/releases/latest/download/tunnel-wg-linux-amd64
+  | sudo bash -s -- --binary https://github.com/<OWNER>/<REPO>/releases/latest/download/umbrel-tunnel-linux-amd64
 ```
 
 ### Qué hace el instalador
 
 1. Comprueba sistema, arquitectura, systemd, Internet, RAM/disco y puertos.
 2. Instala solo lo que falta (`wireguard`, `wireguard-tools`, `nftables`, etc.).
-3. Copia el binario a `/usr/local/bin/tunnel-wg`.
-4. Instala las unidades `wg-quick@wg0`, `tunnel-wg-firewall` y `tunnel-wg`.
+3. Copia el binario a `/usr/local/bin/umbrel-tunnel`.
+4. Instala las unidades `wg-quick@wg0`, `umbrel-tunnel-firewall` y `umbrel-tunnel`.
 5. Crea claves, token, configuración y el peer de Umbrel.
 6. Verifica que la API responde en `10.0.0.1:8080` y que escucha solo en el túnel.
 7. Imprime el código de emparejamiento y lo guarda en
-   `/root/tunnel-wg-pairing.txt` (permisos `600`).
+   `/root/umbrel-tunnel-pairing.txt` (permisos `600`).
 
 Opciones principales:
 
@@ -105,10 +105,10 @@ existentes salvo que uses `--force`.
 
 ## Emparejar Umbrel
 
-1. Instala la app `tunnel-wg` en Umbrel.
-2. En el VPS ejecuta `tunnel-wg pair` (o usa el código que imprimió el
+1. Instala la app `umbrel-tunnel` en Umbrel.
+2. En el VPS ejecuta `umbrel-tunnel pair` (o usa el código que imprimió el
    instalador).
-3. Abre la app, pestaña **Conexión**, pega el código `tw1.…` y pulsa
+3. Abre la app, pestaña **Conexión**, pega el código `ut1.…` y pulsa
    **Emparejar**.
 
 El código incluye la URL de la API (`http://10.0.0.1:8080`), el token, la
@@ -120,14 +120,14 @@ Si prefieres no usar el código, o quieres regenerar claves:
 
 ```bash
 # En el VPS, sin clave de Umbrel:
-tunnel-wg init --endpoint 203.0.113.10 --umbrel-pubkey "<CLAVE_PUBLICA_UMBREL>"
+umbrel-tunnel init --endpoint 203.0.113.10 --umbrel-pubkey "<CLAVE_PUBLICA_UMBREL>"
 
 # O añade un peer después:
-tunnel-wg peer add --name umbrel --ip 10.0.0.2 --pubkey "<CLAVE_PUBLICA_UMBREL>"
+umbrel-tunnel peer add --name umbrel --ip 10.0.0.2 --pubkey "<CLAVE_PUBLICA_UMBREL>"
 ```
 
 En la app, pestaña **Conexión → Emparejamiento manual**: introduce endpoint y
-clave pública del servidor (`tunnel-wg pair -json` los muestra), genera la clave
+clave pública del servidor (`umbrel-tunnel pair -json` los muestra), genera la clave
 del cliente y añade al VPS la clave pública que imprime la app. También puedes
 pegar una configuración `[Interface]/[Peer]` completa y aplicarla.
 
@@ -153,25 +153,25 @@ algo y cada `sync_interval` segundos (30 por defecto).
 ## CLI del VPS
 
 ```bash
-tunnel-wg serve                      # API (lo arranca systemd)
-tunnel-wg init [opciones]            # configuración, claves, token y peer
-tunnel-wg pair [--json] [--new] [--rotate-token]
-tunnel-wg peer list
-tunnel-wg peer add --name N --ip 10.0.0.3 [--pubkey KEY]
-tunnel-wg peer rm <id>
-tunnel-wg peer config <id>
-tunnel-wg forward list
-tunnel-wg forward add --name web --public-port 8080 --target-ip 10.0.0.2 \
+umbrel-tunnel serve                      # API (lo arranca systemd)
+umbrel-tunnel init [opciones]            # configuración, claves, token y peer
+umbrel-tunnel pair [--json] [--new] [--rotate-token]
+umbrel-tunnel peer list
+umbrel-tunnel peer add --name N --ip 10.0.0.3 [--pubkey KEY]
+umbrel-tunnel peer rm <id>
+umbrel-tunnel peer config <id>
+umbrel-tunnel forward list
+umbrel-tunnel forward add --name web --public-port 8080 --target-ip 10.0.0.2 \
   --target-port 20000 [--protocol tcp|udp] [--disabled]
-tunnel-wg forward rm <id>
-tunnel-wg forward enable|disable <id>
-tunnel-wg token show|rotate
-tunnel-wg doctor [--json]
-tunnel-wg update --from URL|PATH [--sha256 HEX] [--no-restart]
-tunnel-wg backup [--output FILE]
-tunnel-wg restore --from FILE [--force]
-tunnel-wg uninstall [--purge]
-tunnel-wg version
+umbrel-tunnel forward rm <id>
+umbrel-tunnel forward enable|disable <id>
+umbrel-tunnel token show|rotate
+umbrel-tunnel doctor [--json]
+umbrel-tunnel update --from URL|PATH [--sha256 HEX] [--no-restart]
+umbrel-tunnel backup [--output FILE]
+umbrel-tunnel restore --from FILE [--force]
+umbrel-tunnel uninstall [--purge]
+umbrel-tunnel version
 ```
 
 La CLI es útil para abrir puertos **UDP** (la app de Umbrel solo gestiona TCP)
@@ -208,7 +208,7 @@ Un forward usa `public_port` (el antiguo `dport` se migra al leer el estado):
 ### Panel web del VPS
 
 Desde un equipo conectado al túnel abre `http://10.0.0.1:8080`. La página pide
-el token (`tunnel-wg token show`) y lo guarda solo en `sessionStorage`; no hay
+el token (`umbrel-tunnel token show`) y lo guarda solo en `sessionStorage`; no hay
 formulario de login persistente ni cookie. Permite ver estado, peers,
 handshakes, abrir/cerrar forwards y rotar el token. Los assets estáticos
 (`/`, `/app.js`, `/style.css`) no contienen secretos, pero todas las llamadas a
@@ -218,8 +218,8 @@ handshakes, abrir/cerrar forwards y rotar el token. Los assets estáticos
 
 - La API solo escucha en `wg0` (`10.0.0.1:8080`); nftables acepta `8080` por el
   túnel y descarta el resto.
-- Token Bearer en `/etc/tunnel-wg/token` (`600`), rotable con
-  `tunnel-wg token rotate` o desde la app.
+- Token Bearer en `/etc/umbrel-tunnel/token` (`600`), rotable con
+  `umbrel-tunnel token rotate` o desde la app.
 - `wg0.conf`, claves y estado con permisos `600`/`700`.
 - systemd endurecido: `NoNewPrivileges`, `ProtectSystem=strict`,
   `ProtectHome`, `RestrictNamespaces`, solo `CAP_NET_ADMIN`/`CAP_NET_RAW`,
@@ -243,10 +243,10 @@ handshakes, abrir/cerrar forwards y rotar el token. Los assets estáticos
 
 Rutas:
 
-- `/etc/tunnel-wg/` — `config.json`, `token`, claves, `rules.nft`
-- `/var/lib/tunnel-wg/` — `peers.json`, `forwards.json`
+- `/etc/umbrel-tunnel/` — `config.json`, `token`, claves, `rules.nft`
+- `/var/lib/umbrel-tunnel/` — `peers.json`, `forwards.json`
 - `/etc/wireguard/wg0.conf`
-- `/run/tunnel-wg/`
+- `/run/umbrel-tunnel/`
 
 Si usas `ufw` o `firewalld`, el instalador avisa: además de nftables necesitas
 permitir el puerto WireGuard y el tráfico enrutado hacia `wg0`.
@@ -254,11 +254,11 @@ permitir el puerto WireGuard y el tráfico enrutado hacia `wg0`.
 ## Diagnóstico
 
 ```bash
-sudo tunnel-wg doctor
-systemctl status tunnel-wg tunnel-wg-firewall wg-quick@wg0
-journalctl -u tunnel-wg -n 100 --no-pager
+sudo umbrel-tunnel doctor
+systemctl status umbrel-tunnel umbrel-tunnel-firewall wg-quick@wg0
+journalctl -u umbrel-tunnel -n 100 --no-pager
 sudo wg show
-sudo nft list table inet tunnel_wg
+sudo nft list table inet umbrel_tunnel
 curl -fsS http://10.0.0.1:8080/health
 ```
 
@@ -273,14 +273,14 @@ necesita `NET_ADMIN`; no usa `/dev/net/tun` ni carga módulos.
 
 ```bash
 # Actualizar el binario desde una URL o ruta local
-sudo tunnel-wg update --from https://…/tunnel-wg-linux-amd64 --sha256 <hex>
+sudo umbrel-tunnel update --from https://…/umbrel-tunnel-linux-amd64 --sha256 <hex>
 
 # Copia de seguridad (configuración, claves y estado)
-sudo tunnel-wg backup --output /root/tunnel-wg-backup.tar.gz
-sudo tunnel-wg restore --from /root/tunnel-wg-backup.tar.gz --force
+sudo umbrel-tunnel backup --output /root/umbrel-tunnel-backup.tar.gz
+sudo umbrel-tunnel restore --from /root/umbrel-tunnel-backup.tar.gz --force
 
 # Desinstalar
-sudo ./install.sh --uninstall          # conserva /etc/tunnel-wg y /var/lib/tunnel-wg
+sudo ./install.sh --uninstall          # conserva /etc/umbrel-tunnel y /var/lib/umbrel-tunnel
 sudo ./install.sh --uninstall --purge  # borra también configuración y estado
 ```
 
@@ -298,7 +298,7 @@ make dist          # binarios + tarballs + SHA256SUMS en vps/dist/
 
 ```bash
 # App de Umbrel
-cd umbrel-app
+cd umbrel-tunnel
 python3 -m py_compile gateway/*.py
 # Sin Docker local no se puede probar el runtime completo; requiere Umbrel real.
 ```
@@ -310,31 +310,31 @@ Variables de entorno útiles en el gateway:
 | `DOCKER_HOST` | `tcp://socket-proxy:2375` | API de Docker |
 | `UMBREL_APP_DATA` | `/umbrel-app-data` | manifests/exports de apps |
 | `UMBREL_NETWORK` | `umbrel_main_network` | red compartida de Umbrel |
-| `TUNNEL_WG_HOST_SERVICES` | `1` | detectar SSH/panel del host |
+| `UMBREL_TUNNEL_HOST_SERVICES` | `1` | detectar SSH/panel del host |
 | `APP_VERSION` | `1.0.0` | versión mostrada |
 
 ## Limitaciones actuales
 
 - El proxy local de Umbrel solo gestiona **TCP**. Para UDP usa
-  `tunnel-wg forward add --protocol udp` en el VPS.
+  `umbrel-tunnel forward add --protocol udp` en el VPS.
 - La app no se ha probado en un Umbrel real en este entorno (no hay Docker ni
   HAProxy locales). El código Go sí tiene tests unitarios y de integración.
 - El nombre de la red compartida se asume `umbrel_main_network`; si tu Umbrel
   usa otro, define `UMBREL_NETWORK` en el compose.
 - El alojamiento en GitHub y las URLs del manifiesto son marcadores
-  (`tunnel-wg/tunnel-wg`) hasta que se publique el repositorio.
+  (`umbrel-tunnel/umbrel-tunnel`) hasta que se publique el repositorio.
 
 ## Estructura
 
 ```
 vps/
-  cmd/tunnel-wg/        CLI y servidor
+  cmd/umbrel-tunnel/    CLI y servidor
   internal/             config, state, wireguard, firewall, pair, service, httpapi…
   packaging/            unidades systemd, tmpfiles, sysctl
   install.sh            instalador de una línea
   scripts/push.sh       build + despliegue por SSH
   Makefile              cross-compile y release
-umbrel-app/
+umbrel-tunnel/
   gateway/              Flask, detección Docker, HAProxy, WireGuard, sync
   docker-compose.yml    app_proxy, socket-proxy y gateway
   umbrel-app.yml        manifiesto de Umbrel

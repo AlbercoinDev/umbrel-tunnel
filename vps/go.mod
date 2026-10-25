@@ -1,3 +1,3 @@
-module tunnel-wg
+module umbrel-tunnel
 
 go 1.22

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# tunnel-wg installer for Debian 12/13 and Ubuntu 22.04/24.04+.
+# umbrel-tunnel installer for Debian 12/13 and Ubuntu 22.04/24.04+.
 #
-# It installs WireGuard, nftables and the tunnel-wg control plane, creates the
+# It installs WireGuard, nftables and the umbrel-tunnel control plane, creates the
 # server keys, starts the systemd units and prints the pairing code for the
 # Umbrel app. It is safe to run again: existing configuration is preserved
 # unless --force is used.
@@ -13,13 +13,13 @@
 #
 set -Eeuo pipefail
 
-PROGRAM="tunnel-wg"
-BIN_PATH="/usr/local/bin/tunnel-wg"
-ETC_DIR="/etc/tunnel-wg"
-STATE_DIR="/var/lib/tunnel-wg"
-RUN_DIR="/run/tunnel-wg"
+PROGRAM="umbrel-tunnel"
+BIN_PATH="/usr/local/bin/umbrel-tunnel"
+ETC_DIR="/etc/umbrel-tunnel"
+STATE_DIR="/var/lib/umbrel-tunnel"
+RUN_DIR="/run/umbrel-tunnel"
 WG_DIR="/etc/wireguard"
-PAIRING_FILE="/root/tunnel-wg-pairing.txt"
+PAIRING_FILE="/root/umbrel-tunnel-pairing.txt"
 
 SCRIPT_PATH="${BASH_SOURCE[0]:-}"
 SCRIPT_DIR=""
@@ -75,7 +75,7 @@ FAILED=0
 
 usage() {
   cat <<'EOF'
-tunnel-wg installer
+umbrel-tunnel installer
 
 Uso:
   sudo ./install.sh [opciones]
@@ -93,7 +93,7 @@ Opciones:
   --no-start           instala pero no arranca los servicios
   --dry-run            muestra lo que haría sin cambiar nada
   --yes                no pregunta (instalación desatendida)
-  --uninstall          desinstala tunnel-wg
+  --uninstall          desinstala umbrel-tunnel
   --purge              con --uninstall, borra también configuración y estado
   --version            muestra la versión
   -h, --help           esta ayuda
@@ -181,7 +181,7 @@ require_root() {
 }
 
 check_os() {
-  local os_release="${TUNNEL_WG_OS_RELEASE:-/etc/os-release}"
+  local os_release="${UMBREL_TUNNEL_OS_RELEASE:-/etc/os-release}"
   [[ -r "$os_release" ]] || die "no se pudo leer $os_release"
   # shellcheck disable=SC1090
   . "$os_release"
@@ -307,8 +307,8 @@ check_port() {
     return 0
   fi
   if ss -H "$flag" "sport = :$port" 2>/dev/null | grep -q .; then
-    if [[ "$port" == "$API_PORT" ]] && systemctl is-active --quiet tunnel-wg 2>/dev/null; then
-      ok "puerto $port/$proto en uso por tunnel-wg (reinstalación)"
+    if [[ "$port" == "$API_PORT" ]] && systemctl is-active --quiet umbrel-tunnel 2>/dev/null; then
+      ok "puerto $port/$proto en uso por umbrel-tunnel (reinstalación)"
       return 0
     fi
     if [[ "$port" == "$WG_PORT" ]] && wg show wg0 >/dev/null 2>&1; then
@@ -327,13 +327,13 @@ check_ports() {
 
 check_existing_wg() {
   local file="$WG_DIR/wg0.conf"
-  if [[ -f "$file" ]] && ! grep -q "Managed by tunnel-wg" "$file"; then
+  if [[ -f "$file" ]] && ! grep -q "Managed by umbrel-tunnel" "$file"; then
     if ((FORCE)); then
       local backup="$file.bak.$(date +%Y%m%d%H%M%S)"
       run cp -a "$file" "$backup"
       warn "wg0.conf existente respaldado en $backup"
     else
-      die "existe $file y no lo gestiona tunnel-wg; usa --force para respaldarlo y sustituirlo"
+      die "existe $file y no lo gestiona umbrel-tunnel; usa --force para respaldarlo y sustituirlo"
     fi
   fi
 }
@@ -425,25 +425,25 @@ install_binary() {
 
 install_units() {
   log "instalando unidades systemd"
-  if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/packaging/tunnel-wg.service" ]]; then
-    run install -m 0644 "$SCRIPT_DIR/packaging/tunnel-wg.service" /etc/systemd/system/tunnel-wg.service
-    run install -m 0644 "$SCRIPT_DIR/packaging/tunnel-wg-firewall.service" /etc/systemd/system/tunnel-wg-firewall.service
-    run install -m 0644 "$SCRIPT_DIR/packaging/tunnel-wg.conf" /etc/tmpfiles.d/tunnel-wg.conf
-    run install -m 0644 "$SCRIPT_DIR/packaging/90-tunnel-wg.conf" /etc/sysctl.d/90-tunnel-wg.conf
+  if [[ -n "$SCRIPT_DIR" && -f "$SCRIPT_DIR/packaging/umbrel-tunnel.service" ]]; then
+    run install -m 0644 "$SCRIPT_DIR/packaging/umbrel-tunnel.service" /etc/systemd/system/umbrel-tunnel.service
+    run install -m 0644 "$SCRIPT_DIR/packaging/umbrel-tunnel-firewall.service" /etc/systemd/system/umbrel-tunnel-firewall.service
+    run install -m 0644 "$SCRIPT_DIR/packaging/umbrel-tunnel.conf" /etc/tmpfiles.d/umbrel-tunnel.conf
+    run install -m 0644 "$SCRIPT_DIR/packaging/90-umbrel-tunnel.conf" /etc/sysctl.d/90-umbrel-tunnel.conf
     return 0
   fi
 
   # Fallback for `curl | bash` installs. Keep in sync with packaging/.
-  write_file /etc/systemd/system/tunnel-wg.service 0644 <<'EOF'
+  write_file /etc/systemd/system/umbrel-tunnel.service 0644 <<'EOF'
 [Unit]
-Description=tunnel-wg control plane
-After=network-online.target wg-quick@wg0.service tunnel-wg-firewall.service
+Description=umbrel-tunnel control plane
+After=network-online.target wg-quick@wg0.service umbrel-tunnel-firewall.service
 Wants=network-online.target
-Requires=wg-quick@wg0.service tunnel-wg-firewall.service
+Requires=wg-quick@wg0.service umbrel-tunnel-firewall.service
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/tunnel-wg serve
+ExecStart=/usr/local/bin/umbrel-tunnel serve
 Restart=on-failure
 RestartSec=3s
 TimeoutStopSec=10s
@@ -464,7 +464,7 @@ LockPersonality=yes
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
-ReadWritePaths=/etc/tunnel-wg /var/lib/tunnel-wg /run/tunnel-wg /etc/wireguard
+ReadWritePaths=/etc/umbrel-tunnel /var/lib/umbrel-tunnel /run/umbrel-tunnel /etc/wireguard
 MemoryHigh=48M
 MemoryMax=96M
 TasksMax=64
@@ -474,9 +474,9 @@ LimitNOFILE=1024
 WantedBy=multi-user.target
 EOF
 
-  write_file /etc/systemd/system/tunnel-wg-firewall.service 0644 <<'EOF'
+  write_file /etc/systemd/system/umbrel-tunnel-firewall.service 0644 <<'EOF'
 [Unit]
-Description=tunnel-wg nftables firewall
+Description=umbrel-tunnel nftables firewall
 After=network-pre.target wg-quick@wg0.service
 Wants=wg-quick@wg0.service
 Before=network.target
@@ -484,17 +484,17 @@ Before=network.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStartPre=-/usr/sbin/nft delete table inet tunnel_wg
-ExecStart=/usr/sbin/nft -f /etc/tunnel-wg/rules.nft
-ExecReload=-/usr/sbin/nft delete table inet tunnel_wg
-ExecReload=/usr/sbin/nft -f /etc/tunnel-wg/rules.nft
-ExecStop=-/usr/sbin/nft delete table inet tunnel_wg
+ExecStartPre=-/usr/sbin/nft delete table inet umbrel_tunnel
+ExecStart=/usr/sbin/nft -f /etc/umbrel-tunnel/rules.nft
+ExecReload=-/usr/sbin/nft delete table inet umbrel_tunnel
+ExecReload=/usr/sbin/nft -f /etc/umbrel-tunnel/rules.nft
+ExecStop=-/usr/sbin/nft delete table inet umbrel_tunnel
 NoNewPrivileges=yes
 ProtectHome=yes
 ProtectSystem=strict
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
-ReadOnlyPaths=/etc/tunnel-wg
+ReadOnlyPaths=/etc/umbrel-tunnel
 CapabilityBoundingSet=CAP_NET_ADMIN
 AmbientCapabilities=CAP_NET_ADMIN
 
@@ -502,13 +502,13 @@ AmbientCapabilities=CAP_NET_ADMIN
 WantedBy=multi-user.target
 EOF
 
-  write_file /etc/tmpfiles.d/tunnel-wg.conf 0644 <<'EOF'
-d /etc/tunnel-wg 0700 root root -
-d /var/lib/tunnel-wg 0700 root root -
-d /run/tunnel-wg 0755 root root -
+  write_file /etc/tmpfiles.d/umbrel-tunnel.conf 0644 <<'EOF'
+d /etc/umbrel-tunnel 0700 root root -
+d /var/lib/umbrel-tunnel 0700 root root -
+d /run/umbrel-tunnel 0755 root root -
 EOF
 
-  write_file /etc/sysctl.d/90-tunnel-wg.conf 0644 <<'EOF'
+  write_file /etc/sysctl.d/90-umbrel-tunnel.conf 0644 <<'EOF'
 net.ipv4.ip_forward = 1
 net.ipv4.conf.all.src_valid_mark = 1
 EOF
@@ -535,20 +535,20 @@ init_config() {
 enable_services() {
   log "activando servicios"
   run systemctl daemon-reload
-  run systemd-tmpfiles --create /etc/tmpfiles.d/tunnel-wg.conf
+  run systemd-tmpfiles --create /etc/tmpfiles.d/umbrel-tunnel.conf
   if ((DRY_RUN)); then
     run sysctl --system
   else
     sysctl --system >/dev/null
   fi
-  run systemctl enable wg-quick@wg0.service tunnel-wg-firewall.service tunnel-wg.service
+  run systemctl enable wg-quick@wg0.service umbrel-tunnel-firewall.service umbrel-tunnel.service
   if ((NO_START)); then
     warn "servicios no arrancados (--no-start)"
     return 0
   fi
   run systemctl restart wg-quick@wg0.service
-  run systemctl restart tunnel-wg-firewall.service
-  run systemctl restart tunnel-wg.service
+  run systemctl restart umbrel-tunnel-firewall.service
+  run systemctl restart umbrel-tunnel.service
 }
 
 # --------------------------------------------------------------- post-check ---
@@ -582,17 +582,17 @@ postflight() {
   else
     warn "la API no responde en 10.0.0.1:${API_PORT}"
     FAILED=1
-    journalctl -u tunnel-wg -n 20 --no-pager 2>/dev/null || true
+    journalctl -u umbrel-tunnel -n 20 --no-pager 2>/dev/null || true
   fi
 
   check_service wg-quick@wg0.service
-  check_service tunnel-wg-firewall.service
-  check_service tunnel-wg.service
+  check_service umbrel-tunnel-firewall.service
+  check_service umbrel-tunnel.service
 
-  if nft list table inet tunnel_wg >/dev/null 2>&1; then
-    ok "tabla nftables inet tunnel_wg presente"
+  if nft list table inet umbrel_tunnel >/dev/null 2>&1; then
+    ok "tabla nftables inet umbrel_tunnel presente"
   else
-    warn "falta la tabla nftables inet tunnel_wg"
+    warn "falta la tabla nftables inet umbrel_tunnel"
     FAILED=1
   fi
 
@@ -608,7 +608,7 @@ postflight() {
   fi
 
   local pid rss
-  pid="$(systemctl show -p MainPID --value tunnel-wg 2>/dev/null || true)"
+  pid="$(systemctl show -p MainPID --value umbrel-tunnel 2>/dev/null || true)"
   if [[ "$pid" =~ ^[0-9]+$ ]] && ((pid > 0)) && [[ -r "/proc/$pid/status" ]]; then
     rss="$(awk '/^VmRSS:/ {print $2}' "/proc/$pid/status")"
     ok "RAM del servicio: $((rss / 1024)) MiB"
@@ -645,7 +645,7 @@ print_summary() {
   printf '  Endpoint:     %s:%s/udp\n' "${endpoint:-?}" "$WG_PORT"
   printf '  API (túnel):  http://10.0.0.1:%s\n' "$API_PORT"
   printf '  Panel VPS:    http://10.0.0.1:%s (desde el túnel)\n' "$API_PORT"
-  printf '\nSiguiente paso: instala la app de Umbrel y pega el código tw1.\n'
+  printf '\nSiguiente paso: instala la app de Umbrel y pega el código ut1.\n'
   if ((FIREWALL_WARNING)); then
     printf '\n%sAviso:%s hay un firewall del sistema activo. Abre %s/udp y el tráfico\n' \
       "$C_YELLOW" "$C_RESET" "$WG_PORT"
@@ -653,8 +653,8 @@ print_summary() {
   fi
   if ((FAILED)); then
     printf '\n%sAlgunas comprobaciones fallaron.%s Revisa:\n' "$C_RED" "$C_RESET"
-    printf '  systemctl status tunnel-wg tunnel-wg-firewall wg-quick@wg0\n'
-    printf '  journalctl -u tunnel-wg -n 50 --no-pager\n'
+    printf '  systemctl status umbrel-tunnel umbrel-tunnel-firewall wg-quick@wg0\n'
+    printf '  journalctl -u umbrel-tunnel -n 50 --no-pager\n'
     exit 1
   fi
 }
@@ -662,15 +662,15 @@ print_summary() {
 # --------------------------------------------------------------- uninstall ---
 do_uninstall() {
   require_root "$@"
-  log "desinstalando tunnel-wg"
-  run_shell "systemctl disable --now tunnel-wg.service tunnel-wg-firewall.service wg-quick@wg0.service 2>/dev/null || true"
-  run_shell "nft delete table inet tunnel_wg 2>/dev/null || true"
-  run rm -f /etc/systemd/system/tunnel-wg.service \
-    /etc/systemd/system/tunnel-wg-firewall.service \
-    /etc/tmpfiles.d/tunnel-wg.conf \
-    /etc/sysctl.d/90-tunnel-wg.conf
+  log "desinstalando umbrel-tunnel"
+  run_shell "systemctl disable --now umbrel-tunnel.service umbrel-tunnel-firewall.service wg-quick@wg0.service 2>/dev/null || true"
+  run_shell "nft delete table inet umbrel_tunnel 2>/dev/null || true"
+  run rm -f /etc/systemd/system/umbrel-tunnel.service \
+    /etc/systemd/system/umbrel-tunnel-firewall.service \
+    /etc/tmpfiles.d/umbrel-tunnel.conf \
+    /etc/sysctl.d/90-umbrel-tunnel.conf
   run systemctl daemon-reload
-  if [[ -f "$WG_DIR/wg0.conf" ]] && grep -q "Managed by tunnel-wg" "$WG_DIR/wg0.conf"; then
+  if [[ -f "$WG_DIR/wg0.conf" ]] && grep -q "Managed by umbrel-tunnel" "$WG_DIR/wg0.conf"; then
     run rm -f "$WG_DIR/wg0.conf"
   fi
   run rm -f "$BIN_PATH" "$PAIRING_FILE"

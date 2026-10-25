@@ -4,9 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"tunnel-wg/internal/config"
-	"tunnel-wg/internal/execx"
-	"tunnel-wg/internal/state"
+	"umbrel-tunnel/internal/config"
+	"umbrel-tunnel/internal/execx"
+	"umbrel-tunnel/internal/state"
 )
 
 func TestRulesIncludeForwardAndGuard(t *testing.T) {
@@ -18,7 +18,7 @@ func TestRulesIncludeForwardAndGuard(t *testing.T) {
 	})
 
 	checks := []string{
-		"table inet tunnel_wg",
+		"table inet umbrel_tunnel",
 		`iifname "wg0" tcp dport 8080 accept`,
 		`iifname "lo" tcp dport 8080 accept`,
 		"tcp dport 8080 drop",
