@@ -1,0 +1,52 @@
+name: VPS release
+
+# Publishes the static binaries used by install.sh and by
+# `umbrel-tunnel update --from .../releases/latest/download/...`.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish the VPS binaries
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vps
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: vps/go.mod
+          cache: false
+
+      - name: Check the tag matches VERSION
+        run: test "$(tr -d ' \n' < VERSION)" = "${GITHUB_REF_NAME#v}"
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build release artifacts
+        run: make dist
+
+      - name: Publish release
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" \
+            vps/dist/umbrel-tunnel-linux-amd64 \
+            vps/dist/umbrel-tunnel-linux-amd64.sha256 \
+            vps/dist/umbrel-tunnel-linux-arm64 \
+            vps/dist/umbrel-tunnel-linux-arm64.sha256 \
+            vps/dist/umbrel-tunnel-*-linux-*.tar.gz \
+            vps/dist/SHA256SUMS \
+            vps/install.sh \
+            --clobber

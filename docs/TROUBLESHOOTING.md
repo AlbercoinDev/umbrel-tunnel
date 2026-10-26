@@ -140,6 +140,35 @@ la siguiente sincronización. También puedes borrarlos a mano:
 sudo umbrel-tunnel forward rm <id>
 ```
 
+## `no se pudo aplicar nftables: ... specify 'dnat ip'`
+
+Las versiones 1.0.0 y anteriores generaban `dnat to` dentro de una tabla
+`inet`. nftables lo rechaza y el forward se revierte, así que el puerto nunca
+llega a abrirse:
+
+```
+nft: /etc/umbrel-tunnel/rules.nft:19:42-45: Error: specify `dnat ip' or `dnat ip6' in inet table to disambiguate
+```
+
+Corregido en 1.0.1. Actualiza el binario del VPS (en arm64 usa `arm64`):
+
+```bash
+sudo umbrel-tunnel backup --output /root/umbrel-tunnel-backup.tar.gz
+sudo umbrel-tunnel update \
+  --from https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download/umbrel-tunnel-linux-amd64
+```
+
+`update` verifica el `.sha256` publicado y reinicia el servicio. Al arrancar,
+`Reconcile` reescribe `rules.nft`, de modo que el fichero inválido que dejó el
+error desaparece. Después vuelve a activar la exposición en la app (el forward
+se borró en el rollback) y comprueba:
+
+```bash
+umbrel-tunnel version          # 1.0.1
+sudo nft list table inet umbrel_tunnel | grep dnat
+sudo umbrel-tunnel forward list
+```
+
 ## Idioma incorrecto
 
 La primera visita usa `?lang=`, la cookie `ut_lang`, `Accept-Language` y luego

@@ -62,7 +62,9 @@ func (m *Manager) Rules(forwards []state.Forward) string {
 		if proto == "" {
 			proto = "tcp"
 		}
-		fmt.Fprintf(&b, "        iifname != %q %s dport %d dnat to %s:%d\n",
+		// The table is `inet`, so nftables requires an explicit address
+		// family on dnat. Targets are always IPv4 tunnel peers.
+		fmt.Fprintf(&b, "        iifname != %q %s dport %d dnat ip to %s:%d\n",
 			m.cfg.Interface, proto, f.PublicPort, f.TargetIP, f.TargetPort)
 	}
 	b.WriteString("    }\n\n")
@@ -82,12 +84,15 @@ func (m *Manager) Rules(forwards []state.Forward) string {
 // Apply persists and loads the ruleset. It deletes the previous table first so
 // the operation is idempotent and no duplicate rules accumulate.
 func (m *Manager) Apply(ctx context.Context, forwards []state.Forward) error {
-	if err := fsutil.WriteString(m.paths.RulesFile(), m.Rules(forwards), 0o644); err != nil {
-		return err
-	}
-	// Validate first: never tear down the live table with an invalid ruleset.
-	if _, err := m.run.Run(ctx, "nft", "-c", "-f", m.paths.RulesFile()); err != nil {
+	rules := m.Rules(forwards)
+	// Validate from stdin before writing the persisted ruleset. If the rendered
+	// rules are invalid the file must stay untouched: umbrel-tunnel-firewall
+	// loads it at boot and a broken file would keep the tunnel down.
+	if _, err := m.run.RunInput(ctx, []byte(rules), "nft", "-c", "-f", "-"); err != nil {
 		return fmt.Errorf("validar nftables: %w", err)
+	}
+	if err := fsutil.WriteString(m.paths.RulesFile(), rules, 0o644); err != nil {
+		return err
 	}
 	// The table may not exist yet; ignore that error.
 	_, _ = m.run.Run(ctx, "nft", "delete", "table", "inet", "umbrel_tunnel")

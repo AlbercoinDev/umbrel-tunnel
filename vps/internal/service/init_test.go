@@ -98,7 +98,7 @@ func TestInitializeCreatesEverything(t *testing.T) {
 	if !run.Called("nft", "-f", paths.RulesFile()) {
 		t.Fatal("no se aplicó nftables")
 	}
-	if !run.Called("nft", "-c", "-f", paths.RulesFile()) {
+	if !run.Called("nft", "-c", "-f", "-") {
 		t.Fatal("no se validó nftables")
 	}
 }

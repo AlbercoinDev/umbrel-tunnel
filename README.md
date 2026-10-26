@@ -106,10 +106,10 @@ escribirla. Opciones útiles:
 ```bash
 cd vps
 make dist
-scp dist/umbrel-tunnel-1.0.0-linux-amd64.tar.gz root@203.0.113.10:/tmp/
+scp dist/umbrel-tunnel-1.0.1-linux-amd64.tar.gz root@203.0.113.10:/tmp/
 ssh root@203.0.113.10
-tar -xzf /tmp/umbrel-tunnel-1.0.0-linux-amd64.tar.gz -C /tmp
-cd /tmp/umbrel-tunnel-1.0.0-linux-amd64
+tar -xzf /tmp/umbrel-tunnel-1.0.1-linux-amd64.tar.gz -C /tmp
+cd /tmp/umbrel-tunnel-1.0.1-linux-amd64
 sudo ./install.sh --endpoint 203.0.113.10
 ```
 
@@ -385,8 +385,14 @@ necesita `NET_ADMIN` y, para cargar el módulo, `SYS_MODULE` con
 ## Actualizar, backup y desinstalar
 
 ```bash
-# Actualizar el binario desde una URL o ruta local
-sudo umbrel-tunnel update --from https://…/umbrel-tunnel-linux-amd64 --sha256 <hex>
+# Actualizar el binario. Descarga el .sha256 publicado junto al binario y lo
+# verifica; después reinicia el servicio. Configuración, claves y peers no se
+# tocan. En arm64 cambia amd64 por arm64.
+sudo umbrel-tunnel update \
+  --from https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download/umbrel-tunnel-linux-amd64
+
+# También sirve desde una ruta local o fijando el checksum a mano
+sudo umbrel-tunnel update --from ./umbrel-tunnel-linux-amd64 --sha256 <hex>
 
 # Copia de seguridad (configuración, claves y estado)
 sudo umbrel-tunnel backup --output /root/umbrel-tunnel-backup.tar.gz
@@ -395,6 +401,16 @@ sudo umbrel-tunnel restore --from /root/umbrel-tunnel-backup.tar.gz --force
 # Desinstalar
 sudo ./install.sh --uninstall          # conserva /etc/umbrel-tunnel y /var/lib/umbrel-tunnel
 sudo ./install.sh --uninstall --purge  # borra también configuración y estado
+```
+
+`update` solo sustituye `/usr/local/bin/umbrel-tunnel`. Si una versión cambia
+unidades systemd, `sysctl` o el propio `install.sh`, reinstala con el instalador
+(es idempotente y conserva la configuración):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/main/vps/install.sh \
+  | sudo bash -s -- --endpoint <IP> \
+      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download
 ```
 
 ## Desarrollo

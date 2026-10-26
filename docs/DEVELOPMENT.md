@@ -155,13 +155,17 @@ Para actualizar la tienda:
 
 ## Release del VPS
 
-1. Actualiza `vps/VERSION`.
-2. `cd vps && make dist`.
-3. Publica los tarballs, los binarios sueltos y `SHA256SUMS` como assets del
-   release.
+1. Actualiza `vps/VERSION` (debe coincidir con el tag sin la `v`).
+2. `cd vps && make dist` genera los binarios, los tarballs, los sidecars
+   `.sha256` y `SHA256SUMS`.
+3. Crea y sube el tag `vX.Y.Z`. El workflow `vps-release.yml` compila, comprueba
+   que el tag coincide con `VERSION` y publica como assets `install.sh`, los
+   binarios sueltos, sus `.sha256`, los tarballs y `SHA256SUMS`.
 4. El instalador de una línea usa
    `--binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download`,
    que resuelve `umbrel-tunnel-linux-$ARCH`.
+5. `umbrel-tunnel update --from .../releases/latest/download/umbrel-tunnel-linux-amd64`
+   usa el sidecar `.sha256` para verificar la descarga sin pasar `--sha256`.
 
 ## Convenciones
 
