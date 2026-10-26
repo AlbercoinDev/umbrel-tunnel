@@ -1,5 +1,5 @@
 manifestVersion: 1.1
-id: umbrel-tunnel
+id: albercoin-store-umbrel-tunnel
 storage:
   dataRoot: data
 category: networking
@@ -35,4 +35,4 @@ path: ""
 deterministicPassword: true
 torOnly: false
 submitter: AlbercoinDev
-submission: https://github.com/AlbercoinDev/umbrel-tunnel
+submission: https://github.com/AlbercoinDev/Umbrel-AppStore-Albercoin

@@ -31,7 +31,13 @@ except ImportError:  # pragma: no cover - the container always ships PyYAML
 APP_DATA = Path(os.environ.get("UMBREL_APP_DATA", "/umbrel-app-data"))
 HOST_SERVICES = os.environ.get("UMBREL_TUNNEL_HOST_SERVICES", "1") not in {"0", "false", "no"}
 
-IGNORED_APPS = {"umbrel-tunnel", "app_proxy", "app-proxy", "socket-proxy"}
+IGNORED_APPS = {
+    "albercoin-store-umbrel-tunnel",
+    "umbrel-tunnel",
+    "app_proxy",
+    "app-proxy",
+    "socket-proxy",
+}
 IGNORED_PORTS = {2375, 8081}
 MAX_FILE_SIZE = 512 * 1024
 EXPORT_RE = re.compile(r"""^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)=["']?([^"'\n]*)["']?""", re.MULTILINE)

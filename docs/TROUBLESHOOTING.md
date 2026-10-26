@@ -10,7 +10,7 @@
 - Revisa los logs del gateway:
 
   ```bash
-  docker logs -f umbrel-tunnel_gateway_1
+  docker logs -f albercoin-store-umbrel-tunnel_gateway_1
   ```
 
 ## El túnel no tiene handshake
@@ -39,8 +39,8 @@ Comprueba:
 En Umbrel:
 
 ```bash
-docker exec umbrel-tunnel_gateway_1 wg show
-docker exec umbrel-tunnel_gateway_1 ip -4 addr show wg0
+docker exec albercoin-store-umbrel-tunnel_gateway_1 wg show
+docker exec albercoin-store-umbrel-tunnel_gateway_1 ip -4 addr show wg0
 ```
 
 Si `wg0` no existe:
@@ -56,7 +56,7 @@ El contenedor necesita `NET_ADMIN` y, para cargar el módulo, `SYS_MODULE` con
 
 ```bash
 # Desde el contenedor del gateway
-docker exec umbrel-tunnel_gateway_1 wget -qO- http://10.0.0.1:8080/health
+docker exec albercoin-store-umbrel-tunnel_gateway_1 wget -qO- http://10.0.0.1:8080/health
 ```
 
 Si falla:
@@ -84,9 +84,9 @@ Si falla:
 ## HAProxy no arranca o un puerto no responde
 
 ```bash
-docker exec umbrel-tunnel_gateway_1 haproxy -c -f /etc/haproxy/haproxy.cfg
-docker exec umbrel-tunnel_gateway_1 cat /data/haproxy.cfg
-docker logs umbrel-tunnel_gateway_1 | tail -50
+docker exec albercoin-store-umbrel-tunnel_gateway_1 haproxy -c -f /etc/haproxy/haproxy.cfg
+docker exec albercoin-store-umbrel-tunnel_gateway_1 cat /data/haproxy.cfg
+docker logs albercoin-store-umbrel-tunnel_gateway_1 | tail -50
 ```
 
 Causas habituales:
@@ -104,7 +104,7 @@ Causas habituales:
   contenedor ve ese árbol:
 
   ```bash
-  docker exec umbrel-tunnel_gateway_1 ls /umbrel-app-data
+  docker exec albercoin-store-umbrel-tunnel_gateway_1 ls /umbrel-app-data
   ```
 
 - Algunas apps no declaran `app_proxy` ni puertos publicados. Añade un servicio

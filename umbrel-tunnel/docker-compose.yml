@@ -4,7 +4,7 @@ services:
   app_proxy:
     environment:
       # <app-id>_<service-name>_1, the container name umbrelOS assigns.
-      APP_HOST: umbrel-tunnel_gateway_1
+      APP_HOST: albercoin-store-umbrel-tunnel_gateway_1
       APP_PORT: 8081
 
   gateway:

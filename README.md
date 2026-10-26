@@ -35,8 +35,9 @@ Internet ──► VPS (IP fija) ──► wg0 ──► Umbrel ──► HAProx
 **Umbrel**
 
 - UmbrelOS con Docker.
-- La app se instala desde una Community App Store o copiando la carpeta
-  `umbrel-tunnel/` a `app-data` en un entorno de desarrollo.
+- La app se instala desde la Community App Store
+  `AlbercoinDev/Umbrel-AppStore-Albercoin`. Para desarrollo, copia la carpeta
+  `umbrel-tunnel/` a `app-data/albercoin-store-umbrel-tunnel/`.
 
 ## Flujo recomendado: primero la app, después el VPS
 
@@ -155,19 +156,23 @@ existentes salvo que uses `--force`.
 ### Community App Store
 
 1. En UmbrelOS: **App Store → … → Community App Stores → Add store**.
-2. Pega la URL del repositorio:
-   `https://github.com/AlbercoinDev/umbrel-tunnel`.
-   El archivo `umbrel-app-store.yml` de la raíz define el ID `umbrel-tunnel` y
-   el nombre de la tienda.
+2. Pega la URL de la tienda:
+   `https://github.com/AlbercoinDev/Umbrel-AppStore-Albercoin`.
+   La app vive en la carpeta `albercoin-store-umbrel-tunnel/` de esa tienda
+   (`albercoin-store`).
 3. Instala **Umbrel Tunnel**. La imagen del gateway se publica en
    `ghcr.io/albercoindev/umbrel-tunnel-gateway` y el compose la fija por digest
    (`@sha256:…`) para que cada instalación use exactamente la misma imagen.
+
+> El repositorio `AlbercoinDev/umbrel-tunnel` contiene el código, la
+> documentación y las releases del plano de control del VPS. La tienda
+> `AlbercoinDev/Umbrel-AppStore-Albercoin` es la que se añade a UmbrelOS.
 
 ### Emparejar Umbrel
 
 Sigue el [flujo recomendado](#flujo-recomendado-primero-la-app-después-el-vps):
 
-1. Instala la app `umbrel-tunnel` en Umbrel.
+1. Instala la app **Umbrel Tunnel** en Umbrel.
 2. Abre la app y ve a **Conexión**. Introduce la IP pública del VPS y pulsa
    **Generar comando de instalación**.
 3. Ejecuta ese comando en el VPS.
@@ -465,7 +470,6 @@ Documentación adicional:
 ## Estructura
 
 ```
-umbrel-app-store.yml          metadatos de la Community App Store
 umbrel-tunnel/
   umbrel-app.yml              manifiesto de la app
   docker-compose.yml          app_proxy + gateway

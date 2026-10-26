@@ -121,8 +121,8 @@ El workflow publica `ghcr.io/albercoindev/umbrel-tunnel-gateway:1.0.0` y
 git clone --depth 1 https://github.com/getumbrel/umbrel-apps /tmp/umbrel-apps
 cd /tmp/umbrel-apps
 npm install
-UMBREL_APP_LINT_ROOT=/ruta/a/este/repositorio \
-  node .tools/lint-apps.mjs umbrel-tunnel --format text
+UMBREL_APP_LINT_ROOT=/ruta/a/Umbrel-AppStore-Albercoin \
+  node .tools/lint-apps.mjs albercoin-store-umbrel-tunnel --format text
 ```
 
 Avisos esperados y justificados:
@@ -134,23 +134,24 @@ Avisos esperados y justificados:
 
 ## Community App Store
 
-La raíz del repositorio contiene `umbrel-app-store.yml`:
+Este repositorio contiene el código, la documentación y las releases del plano
+de control. La app se distribuye desde la tienda
+[`AlbercoinDev/Umbrel-AppStore-Albercoin`](https://github.com/AlbercoinDev/Umbrel-AppStore-Albercoin),
+en la carpeta `albercoin-store-umbrel-tunnel/`.
 
-```yaml
-id: "umbrel-tunnel"
-name: "Umbrel Tunnel"
-```
+Umbrel solo muestra las apps cuyo `id` empieza por el `id` de la tienda. La
+tienda usa `id: albercoin-store`, así que la app debe llamarse
+`albercoin-store-umbrel-tunnel` y la carpeta de la tienda debe coincidir con ese
+ID. El manifiesto y el Compose de este repositorio se copian a la tienda al
+publicar.
 
-El ID de la app (`umbrel-tunnel`) debe empezar por el ID de la tienda. Para
-publicar:
+Para actualizar la tienda:
 
-1. Sube el repositorio a GitHub (`AlbercoinDev/umbrel-tunnel`).
-2. En UmbrelOS, añade `https://github.com/AlbercoinDev/umbrel-tunnel` como
-   Community App Store.
-3. Instala la app.
-
-La app debe estar en una carpeta con el mismo nombre que su `id`
-(`umbrel-tunnel/`).
+1. Cambia el código y publica la imagen multiarquitectura desde este repositorio.
+2. Fija etiqueta y digest en `umbrel-tunnel/docker-compose.yml`.
+3. Copia `umbrel-app.yml` y `docker-compose.yml` a
+   `albercoin-store-umbrel-tunnel/` en la tienda.
+4. Sube la tienda a `master` y espera a que Umbrel refresque el catálogo.
 
 ## Release del VPS
 

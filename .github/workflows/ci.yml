@@ -71,21 +71,20 @@ jobs:
           import yaml
 
           root = pathlib.Path(".")
-          store = yaml.safe_load((root / "umbrel-app-store.yml").read_text())
           manifest = yaml.safe_load((root / "umbrel-tunnel/umbrel-app.yml").read_text())
           compose = yaml.safe_load((root / "umbrel-tunnel/docker-compose.yml").read_text())
 
           errors = []
-          if manifest.get("id") != "umbrel-tunnel":
-              errors.append("manifest id must be umbrel-tunnel")
-          if not str(manifest.get("id", "")).startswith(str(store.get("id", ""))):
-              errors.append("app id must start with the store id")
+          if manifest.get("id") != "albercoin-store-umbrel-tunnel":
+              errors.append("manifest id must be albercoin-store-umbrel-tunnel")
+          if not str(manifest.get("id", "")).startswith("albercoin-store"):
+              errors.append("app id must start with the store id (albercoin-store)")
           if manifest.get("port") != 8642:
               errors.append("unexpected manifest port")
           services = compose.get("services") or {}
           proxy = services.get("app_proxy") or {}
           env = proxy.get("environment") or {}
-          if env.get("APP_HOST") != "umbrel-tunnel_gateway_1":
+          if env.get("APP_HOST") != "albercoin-store-umbrel-tunnel_gateway_1":
               errors.append("app_proxy APP_HOST mismatch")
           if int(env.get("APP_PORT", 0)) != 8081:
               errors.append("app_proxy APP_PORT mismatch")
