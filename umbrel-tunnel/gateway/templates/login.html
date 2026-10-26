@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ t('login.title') }} · Umbrel</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body class="login-page">
+<main class="login-wrap">
+  <section class="card login-card">
+    <div class="login-head">
+      <span class="logo" aria-hidden="true">ut</span>
+      <div>
+        <h1>{{ t('login.title') }}</h1>
+        <p class="muted">{{ t('login.subtitle') }}</p>
+      </div>
+    </div>
+
+    <div class="lang-switch" role="group" aria-label="{{ t('lang.label') }}">
+      <a href="/lang/es?next={{ next_url|urlencode }}" class="{{ 'active' if lang == 'es' else '' }}" lang="es">ES</a>
+      <a href="/lang/en?next={{ next_url|urlencode }}" class="{{ 'active' if lang == 'en' else '' }}" lang="en">EN</a>
+    </div>
+
+    {% if error %}
+    <div class="alert error" role="alert">{{ error }}</div>
+    {% endif %}
+
+    <form method="post" action="/login" class="stack" autocomplete="current-password">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <input type="hidden" name="next" value="{{ next_url }}">
+      <label class="field">
+        <span>{{ t('login.password') }}</span>
+        <input type="password" name="password" required autofocus autocomplete="current-password">
+      </label>
+      <button type="submit">{{ t('login.button') }}</button>
+    </form>
+
+    <p class="muted login-hint">{{ t('login.hint') }}</p>
+  </section>
+</main>
+</body>
+</html>

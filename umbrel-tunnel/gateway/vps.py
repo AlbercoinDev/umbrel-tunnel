@@ -9,7 +9,9 @@ from typing import Any
 
 
 class VPSError(RuntimeError):
-    pass
+    def __init__(self, message: str, status: int | None = None):
+        super().__init__(message)
+        self.status = status
 
 
 class VPSClient:
@@ -41,7 +43,7 @@ class VPSClient:
                 message = json.loads(body).get("error", body)
             except (json.JSONDecodeError, AttributeError):
                 message = body
-            raise VPSError(f"VPS HTTP {exc.code}: {message}") from exc
+            raise VPSError(f"VPS HTTP {exc.code}: {message}", status=exc.code) from exc
         except urllib.error.URLError as exc:
             raise VPSError(f"no se pudo contactar con el VPS: {exc.reason}") from exc
         except (TimeoutError, OSError) as exc:
@@ -71,3 +73,12 @@ class VPSClient:
     def list_peers(self) -> list[dict]:
         data = self._request("GET", "/api/peers")
         return data if isinstance(data, list) else []
+
+    def create_peer(self, peer: dict) -> dict:
+        return self._request("POST", "/api/peers", peer)
+
+    def update_peer(self, peer_id: str, patch: dict) -> dict:
+        return self._request("PUT", f"/api/peers/{peer_id}", patch)
+
+    def delete_peer(self, peer_id: str) -> None:
+        self._request("DELETE", f"/api/peers/{peer_id}")

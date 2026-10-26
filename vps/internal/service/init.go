@@ -182,61 +182,36 @@ func ensureSecrets(ctx context.Context, svc *Service, opts InitOptions) error {
 		}
 	}
 
-	// Umbrel client keypair (not generated in manual mode).
-	clientKey, keyErr := svc.ClientPrivateKey()
-	hasClientKey := keyErr == nil && clientKey != ""
-	manual := strings.TrimSpace(opts.UmbrelPubKey) != ""
-	if !hasClientKey && !manual {
-		if _, ok := svc.Store.PeerByIP(svc.Cfg.UmbrelIP); !ok {
-			priv, err := svc.WG.GenKey(ctx)
-			if err != nil {
-				return fmt.Errorf("generar clave del cliente: %w", err)
-			}
-			if err := fsutil.WriteString(svc.Paths.ClientKeyFile(), priv+"\n", 0o600); err != nil {
-				return err
-			}
-			clientKey = priv
-			hasClientKey = true
-		}
+	// The Umbrel app owns its WireGuard private key. The VPS only stores the
+	// public key, either pre-provisioned here (--umbrel-pubkey) or registered
+	// later through POST/PUT /api/peers.
+	wantPub := strings.TrimSpace(opts.UmbrelPubKey)
+	if wantPub == "" {
+		return nil
+	}
+	if !ValidPubKey(wantPub) {
+		return fmt.Errorf("clave pública de Umbrel inválida")
 	}
 
-	// Ensure the Umbrel peer exists and matches the expected public key.
-	var wantPub string
-	switch {
-	case manual:
-		wantPub = strings.TrimSpace(opts.UmbrelPubKey)
-		if !ValidPubKey(wantPub) {
-			return fmt.Errorf("clave pública de Umbrel inválida")
-		}
-	case hasClientKey:
-		pub, err := svc.WG.PubKey(ctx, clientKey)
-		if err != nil {
-			return fmt.Errorf("derivar clave pública del cliente: %w", err)
-		}
-		wantPub = pub
-	}
-
-	if wantPub != "" {
-		if peer, ok := svc.Store.PeerByIP(svc.Cfg.UmbrelIP); ok {
-			if peer.PublicKey != wantPub {
-				if !opts.Force && !manual {
-					return fmt.Errorf("el peer %s ya existe con otra clave pública", svc.Cfg.UmbrelIP)
-				}
-				if _, err := svc.Store.UpdatePeer(peer.ID, func(p *state.Peer) error {
-					p.PublicKey = wantPub
-					return nil
-				}); err != nil {
-					return err
-				}
+	if peer, ok := svc.Store.PeerByIP(svc.Cfg.UmbrelIP); ok {
+		if peer.PublicKey != wantPub {
+			if !opts.Force {
+				return fmt.Errorf("el peer %s ya existe con otra clave pública", svc.Cfg.UmbrelIP)
 			}
-		} else {
-			if err := svc.Store.AddPeer(state.Peer{
-				Name:      "umbrel",
-				PublicKey: wantPub,
-				AllowedIP: svc.Cfg.UmbrelIP,
+			if _, err := svc.Store.UpdatePeer(peer.ID, func(p *state.Peer) error {
+				p.PublicKey = wantPub
+				return nil
 			}); err != nil {
 				return err
 			}
+		}
+	} else {
+		if err := svc.Store.AddPeer(state.Peer{
+			Name:      "umbrel",
+			PublicKey: wantPub,
+			AllowedIP: svc.Cfg.UmbrelIP,
+		}); err != nil {
+			return err
 		}
 	}
 

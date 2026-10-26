@@ -20,7 +20,6 @@ import (
 	"umbrel-tunnel/internal/config"
 	"umbrel-tunnel/internal/doctor"
 	"umbrel-tunnel/internal/execx"
-	"umbrel-tunnel/internal/fsutil"
 	"umbrel-tunnel/internal/httpapi"
 	"umbrel-tunnel/internal/pair"
 	"umbrel-tunnel/internal/service"
@@ -86,7 +85,7 @@ Uso:
 
 Comandos:
   serve                         arranca la API (lo usa systemd)
-  init                          crea configuración, claves, token y peer de Umbrel
+  init                          crea configuración, claves y token del servidor
   pair                          imprime el código de emparejamiento
   peer list|add|rm|config       gestiona peers
   forward list|add|rm|enable|disable
@@ -192,18 +191,14 @@ func cmdInit(ctx context.Context, args []string) error {
 
 func printPairing(p pair.Pairing) {
 	fmt.Print("\n" + pair.Block(p))
-	if p.WG != "" {
-		fmt.Println("\nWireGuard (pegar en la app de Umbrel):")
-		fmt.Println(p.WG)
-	} else {
-		fmt.Println("\nModo manual: usa `umbrel-tunnel peer add` con la clave pública de Umbrel.")
-	}
+	fmt.Println("\nLa app de Umbrel genera su propia clave WireGuard y registra la")
+	fmt.Println("clave pública a través de la API del túnel. No hay secretos de")
+	fmt.Println("WireGuard en el código de emparejamiento.")
 }
 
 func cmdPair(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("pair", flag.ExitOnError)
 	asJSON := fs.Bool("json", false, "salida JSON")
-	newKey := fs.Bool("new", false, "genera una nueva clave para Umbrel")
 	rotate := fs.Bool("rotate-token", false, "rota el token antes de imprimir")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -222,37 +217,6 @@ func cmdPair(ctx context.Context, args []string) error {
 		if err := svc.Paths.SaveToken(token); err != nil {
 			return err
 		}
-	}
-
-	if *newKey {
-		priv, err := svc.WG.GenKey(ctx)
-		if err != nil {
-			return err
-		}
-		pub, err := svc.WG.PubKey(ctx, priv)
-		if err != nil {
-			return err
-		}
-		if err := fsutil.WriteString(svc.Paths.ClientKeyFile(), priv+"\n", 0o600); err != nil {
-			return err
-		}
-		peer, ok := svc.Store.PeerByIP(svc.Cfg.UmbrelIP)
-		if ok {
-			if _, err := svc.Store.UpdatePeer(peer.ID, func(p *state.Peer) error {
-				p.PublicKey = pub
-				return nil
-			}); err != nil {
-				return err
-			}
-		} else {
-			if err := svc.Store.AddPeer(state.Peer{Name: "umbrel", PublicKey: pub, AllowedIP: svc.Cfg.UmbrelIP}); err != nil {
-				return err
-			}
-		}
-		if err := svc.ReloadPeers(ctx); err != nil {
-			return err
-		}
-		fmt.Println("Nueva clave generada: la configuración anterior de Umbrel deja de funcionar.")
 	}
 
 	p, err := svc.Pairing()

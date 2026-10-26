@@ -37,7 +37,7 @@ def payload(exposure: dict) -> dict:
         "public_port": int(exposure["public_port"]),
         "target_ip": exposure.get("tunnel_ip") or "10.0.0.2",
         "target_port": int(exposure["tunnel_port"]),
-        "protocol": "tcp",
+        "protocol": str(exposure.get("protocol") or "tcp"),
         "enabled": True,
     }
 
@@ -99,7 +99,10 @@ def sync(config: dict) -> dict:
     # forward keeps its id even if its name changed.
     handled_ids: set[str] = set()
 
+    tunnel_ip = str(vps.get("umbrel_ip") or "10.0.0.2")
     for exposure in config.get("exposures", []):
+        # The Umbrel tunnel address can change if the VPS is re-paired.
+        exposure["tunnel_ip"] = tunnel_ip
         exposure["vps_name"] = vps_name(exposure)
         if not exposure.get("enabled", True):
             forward_id = str(exposure.get("vps_forward_id") or "")
@@ -110,10 +113,11 @@ def sync(config: dict) -> dict:
                     client.delete_forward(forward_id)
                     result["deleted"] += 1
                 except VPSError as exc:
-                    exposure["sync_error"] = str(exc)
-                    result["errors"].append(f"{exposure.get('name')}: {exc}")
-                    exposure["last_sync"] = time.time()
-                    continue
+                    if exc.status != 404:
+                        exposure["sync_error"] = str(exc)
+                        result["errors"].append(f"{exposure.get('name')}: {exc}")
+                        exposure["last_sync"] = time.time()
+                        continue
             exposure["vps_forward_id"] = None
             exposure["sync_error"] = ""
             exposure["last_sync"] = time.time()
@@ -152,7 +156,8 @@ def sync(config: dict) -> dict:
             client.delete_forward(forward_id)
             result["deleted"] += 1
         except VPSError as exc:
-            result["errors"].append(f"limpieza {name}: {exc}")
+            if exc.status != 404:
+                result["errors"].append(f"limpieza {name}: {exc}")
 
     _apply_proxy(config, result)
     result["ok"] = not result["errors"]
@@ -160,7 +165,13 @@ def sync(config: dict) -> dict:
 
 
 def _apply_proxy(config: dict, result: dict) -> None:
-    enabled = [e for e in config.get("exposures", []) if e.get("enabled", True)]
+    # HAProxy only proxies TCP. UDP forwards are created from the VPS CLI,
+    # where the operator can point them at a UDP listener directly.
+    enabled = [
+        e
+        for e in config.get("exposures", [])
+        if e.get("enabled", True) and str(e.get("protocol") or "tcp") == "tcp"
+    ]
     if not enabled:
         proxy.stop()
         return

@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  vps:
+    name: VPS (Go)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: vps
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: vps/go.mod
+          cache: false
+
+      - name: gofmt
+        run: |
+          test -z "$(gofmt -l .)"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./...
+
+      - name: build
+        run: |
+          CGO_ENABLED=0 go build -trimpath -o /tmp/umbrel-tunnel ./cmd/umbrel-tunnel
+
+  gateway:
+    name: Gateway (Python)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: umbrel-tunnel/gateway
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install flask pyyaml waitress
+
+      - name: Compile
+        run: |
+          python -m py_compile app.py catalog.py detect.py i18n.py proxy.py serve.py state.py sync.py vps.py wireguard.py
+
+      - name: Tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Validate manifests and compose
+        working-directory: .
+        run: |
+          python - <<'PY'
+          import pathlib
+          import sys
+          import yaml
+
+          root = pathlib.Path(".")
+          store = yaml.safe_load((root / "umbrel-app-store.yml").read_text())
+          manifest = yaml.safe_load((root / "umbrel-tunnel/umbrel-app.yml").read_text())
+          compose = yaml.safe_load((root / "umbrel-tunnel/docker-compose.yml").read_text())
+
+          errors = []
+          if manifest.get("id") != "umbrel-tunnel":
+              errors.append("manifest id must be umbrel-tunnel")
+          if not str(manifest.get("id", "")).startswith(str(store.get("id", ""))):
+              errors.append("app id must start with the store id")
+          if manifest.get("port") != 8642:
+              errors.append("unexpected manifest port")
+          services = compose.get("services") or {}
+          proxy = services.get("app_proxy") or {}
+          env = proxy.get("environment") or {}
+          if env.get("APP_HOST") != "umbrel-tunnel_gateway_1":
+              errors.append("app_proxy APP_HOST mismatch")
+          if int(env.get("APP_PORT", 0)) != 8081:
+              errors.append("app_proxy APP_PORT mismatch")
+          if "gateway" not in services:
+              errors.append("gateway service missing")
+
+          if errors:
+              print("\n".join(errors), file=sys.stderr)
+              sys.exit(1)
+          print("manifests and compose OK")
+          PY

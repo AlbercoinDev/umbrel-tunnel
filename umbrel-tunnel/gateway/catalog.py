@@ -505,7 +505,7 @@ CATALOG = {
 SYSTEM_SERVICES = [
     {
         "id": "ssh",
-        "name": "SSH de UmbrelOS",
+        "name": "UmbrelOS SSH",
         "port": 22,
         "protocol": "tcp",
         "sensitive": True,
@@ -513,11 +513,19 @@ SYSTEM_SERVICES = [
     },
     {
         "id": "umbrel-dashboard",
-        "name": "Panel de UmbrelOS",
+        "name": "UmbrelOS dashboard",
         "port": 80,
         "protocol": "tcp",
         "sensitive": True,
         "description": "Interfaz principal de Umbrel. Exponerla da acceso al panel de administración.",
+    },
+    {
+        "id": "umbrel-dashboard-https",
+        "name": "UmbrelOS dashboard (HTTPS)",
+        "port": 443,
+        "protocol": "tcp",
+        "sensitive": True,
+        "description": "Interfaz de Umbrel por HTTPS. Exponerla da acceso al panel de administración.",
     },
 ]
 

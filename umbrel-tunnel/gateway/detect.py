@@ -1,15 +1,20 @@
 """Detección de servicios expuestos por las apps de Umbrel.
 
-Fuentes, en orden:
-1. API de Docker (a través del socket-proxy): contenedores en ejecución, sus
-   redes y puertos.
-2. exports.sh de cada app en /umbrel-app-data: IPs y puertos publicados por
-   Umbrel cuando Docker no está disponible.
-3. Servicios del host (SSH, panel de UmbrelOS).
+The gateway never talks to the Docker daemon. Umbrel installs every app in
+``${UMBREL_ROOT}/app-data/<app-id>`` and keeps the rendered ``umbrel-app.yml``
+and ``docker-compose.yml`` there, so the gateway can read those files read-only
+and use Docker DNS names (``<app-id>_<service>_1``) as targets.
+
+Security rules:
+- only regular files below the app-data root are read, never symlinks;
+- ``exports.sh`` is never executed, only scanned with a static regex;
+- environment values and app data are never returned by the API;
+- unknown apps remain available through the manual service form.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import socket
@@ -17,201 +22,275 @@ import struct
 from pathlib import Path
 
 import catalog
-from docker_api import DockerClient, DockerError
+
+try:  # PyYAML is installed in the image; the fallback keeps imports testable.
+    import yaml
+except ImportError:  # pragma: no cover - the container always ships PyYAML
+    yaml = None
 
 APP_DATA = Path(os.environ.get("UMBREL_APP_DATA", "/umbrel-app-data"))
-NETWORK = os.environ.get("UMBREL_NETWORK", "umbrel_main_network")
 HOST_SERVICES = os.environ.get("UMBREL_TUNNEL_HOST_SERVICES", "1") not in {"0", "false", "no"}
 
-IGNORED_PROJECTS = {"umbrel-tunnel", "app_proxy", "app-proxy", "socket-proxy"}
+IGNORED_APPS = {"umbrel-tunnel", "app_proxy", "app-proxy", "socket-proxy"}
 IGNORED_PORTS = {2375, 8081}
+MAX_FILE_SIZE = 512 * 1024
 EXPORT_RE = re.compile(r"""^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)=["']?([^"'\n]*)["']?""", re.MULTILINE)
-IPV4_RE = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,251}[A-Za-z0-9])?$")
+SENSITIVE_HINTS = ("postgres", "mysql", "mariadb", "mongo", "redis", "admin", "rpc", "grpc", "docker", "portainer")
+
+
+def _read_text(path: Path) -> str:
+    try:
+        if path.is_symlink() or not path.is_file():
+            return ""
+        if path.stat().st_size > MAX_FILE_SIZE:
+            return ""
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+def _load_yaml(path: Path) -> dict:
+    text = _read_text(path)
+    if not text or yaml is None:
+        return {}
+    try:
+        data = yaml.safe_load(text)
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _load_json(path: Path) -> dict:
+    text = _read_text(path)
+    if not text:
+        return {}
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _gateway_config(app_dir: Path) -> tuple[str, int]:
+    """Read umbreld's resolved app_proxy target without executing anything.
+
+    Modern umbrelOS writes ``app-gateway.json`` next to the installed compose
+    file with the interpolated ``APP_HOST``/``APP_PORT`` values. It is more
+    reliable than the raw compose environment, which can contain ``${...}``.
+    """
+    data = _load_json(app_dir / "app-gateway.json")
+    host = str(data.get("APP_HOST") or "").strip()
+    try:
+        port = int(str(data.get("APP_PORT") or "").strip())
+    except (TypeError, ValueError):
+        port = 0
+    return host, port
 
 
 def _manifest_name(app_id: str) -> str:
-    manifest = APP_DATA / app_id / "umbrel-app.yml"
-    try:
-        for line in manifest.read_text(encoding="utf-8", errors="replace").splitlines():
-            if line.startswith("name:"):
-                value = line.split(":", 1)[1].strip().strip("\"'")
-                if value:
-                    return value
-    except OSError:
-        pass
-    return catalog.app_name(app_id)
+    manifest = _load_yaml(APP_DATA / app_id / "umbrel-app.yml")
+    name = str(manifest.get("name") or "").strip()
+    return name or catalog.app_name(app_id)
 
 
 def _parse_exports(path: Path) -> dict[str, str]:
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return {}
+    """Read static ``export KEY=value`` lines without executing the file."""
     result: dict[str, str] = {}
-    for match in EXPORT_RE.finditer(text):
+    for match in EXPORT_RE.finditer(_read_text(path)):
         result[match.group(1)] = match.group(2).strip()
     return result
 
 
-def _app_id_from_name(name: str, labels: dict) -> str:
-    project = labels.get("com.docker.compose.project") or labels.get("com.docker.compose.project.working_dir")
-    if project:
-        return str(project).rstrip("/").split("/")[-1]
-    # Nombres típicos de Umbrel: bitcoin_bitcoind_1, bitcoin-bitcoind-1.
-    return re.split(r"[_-]", name, maxsplit=1)[0]
+def _environment(service: dict) -> dict[str, str]:
+    env = service.get("environment")
+    if isinstance(env, dict):
+        return {str(k): str(v) for k, v in env.items() if v is not None}
+    if isinstance(env, list):
+        result: dict[str, str] = {}
+        for item in env:
+            key, sep, value = str(item).partition("=")
+            if sep:
+                result[key] = value
+        return result
+    return {}
 
 
-def _service_from_name(name: str, labels: dict) -> str:
-    service = labels.get("com.docker.compose.service")
-    if service:
-        return str(service)
-    parts = re.split(r"[_-]", name)
-    return parts[1] if len(parts) > 1 else name
+def _service_name_from_container(container: str, app_id: str) -> str:
+    prefix = f"{app_id}_"
+    if container.startswith(prefix):
+        container = container[len(prefix) :]
+    if container.endswith("_1"):
+        container = container[:-2]
+    return container or "app"
 
 
-def _container_ip(container: dict) -> str | None:
-    networks = (container.get("NetworkSettings") or {}).get("Networks") or {}
-    if NETWORK in networks and networks[NETWORK].get("IPAddress"):
-        return networks[NETWORK]["IPAddress"]
-    for data in networks.values():
-        ip = (data or {}).get("IPAddress")
-        if ip:
-            return ip
-    return None
+def _sensitive(app_id: str, service: str, port: int) -> bool:
+    meta = catalog.service_for(app_id, port)
+    if meta and meta.get("sensitive"):
+        return True
+    lowered = service.lower()
+    return any(hint in lowered for hint in SENSITIVE_HINTS)
 
 
-def _container_ports(container: dict, client: DockerClient) -> set[int]:
-    ports: set[int] = set()
-    for entry in container.get("Ports") or []:
-        if entry.get("Type") == "tcp" and entry.get("PrivatePort"):
-            try:
-                ports.add(int(entry["PrivatePort"]))
-            except (TypeError, ValueError):
-                pass
-    if not ports:
-        # Algunas imágenes no publican Ports en /containers/json.
-        try:
-            detail = client.inspect(container.get("Id", ""))
-        except DockerError:
-            detail = {}
-        exposed = ((detail.get("Config") or {}).get("ExposedPorts") or {})
-        for key in exposed:
-            if str(key).endswith("/tcp"):
-                try:
-                    ports.add(int(str(key).split("/", 1)[0]))
-                except ValueError:
-                    pass
-    return ports
-
-
-def _service_entry(
+def _entry(
     app_id: str,
     app: str,
     service: str,
-    ip: str,
+    host: str,
     port: int,
-    source: str,
+    protocol: str = "tcp",
+    source: str = "app-data",
     system: bool = False,
-    meta: dict | None = None,
-) -> dict:
-    meta = meta or {}
-    name = meta.get("name") or f"{service} ({port})"
+    sensitive: bool | None = None,
+    description: str = "",
+    name_key: str = "",
+) -> dict | None:
+    host = (host or "").strip()
+    if not HOST_RE.match(host) or not (1 <= int(port) <= 65535):
+        return None
+    # Never let a manifest point the proxy back at the gateway itself.
+    if host == "localhost" or host.startswith("127.") or host == "0.0.0.0":
+        return None
+    protocol = protocol if protocol in {"tcp", "udp"} else "tcp"
+    meta = catalog.service_for(app_id, port)
+    name = (meta or {}).get("name") or f"{service} ({port})"
     return {
-        "id": f"{app_id}:{service}:{port}",
+        "id": f"{app_id}:{service}:{port}:{protocol}",
         "app_id": app_id,
         "app": app,
         "service": service,
         "name": name,
-        "target_ip": ip,
-        "target_port": port,
-        "protocol": "tcp",
-        "sensitive": bool(meta.get("sensitive", False)),
+        "name_key": name_key,
+        "target_ip": host,
+        "target_port": int(port),
+        "protocol": protocol,
+        "sensitive": bool(sensitive if sensitive is not None else _sensitive(app_id, service, int(port))),
         "system": system,
-        "description": meta.get("description", ""),
+        "description": (meta or {}).get("description", description),
         "source": source,
     }
 
 
-def _detect_docker() -> list[dict]:
-    try:
-        client = DockerClient()
-        containers = client.containers()
-    except DockerError:
-        return []
-
-    services: list[dict] = []
-    for container in containers:
-        names = container.get("Names") or []
-        raw_name = names[0].lstrip("/") if names else ""
-        labels = container.get("Labels") or {}
-        app_id = _app_id_from_name(raw_name, labels)
-        if app_id in IGNORED_PROJECTS:
-            continue
-        if any(token in raw_name for token in ("app_proxy", "app-proxy", "socket-proxy")):
-            continue
-        ip = _container_ip(container)
-        if not ip:
-            continue
-        service = _service_from_name(raw_name, labels)
-        app = _manifest_name(app_id)
-        for port in sorted(_container_ports(container, client)):
-            if port in IGNORED_PORTS:
+def _ports_from_service(service: dict) -> list[tuple[int, str]]:
+    ports: list[tuple[int, str]] = []
+    raw_ports = service.get("ports")
+    if isinstance(raw_ports, list):
+        for item in raw_ports:
+            if isinstance(item, dict):
+                try:
+                    target = int(item.get("target"))
+                except (TypeError, ValueError):
+                    continue
+                protocol = str(item.get("protocol") or "tcp").lower()
+                ports.append((target, protocol))
                 continue
-            meta = catalog.service_for(app_id, port)
-            services.append(_service_entry(app_id, app, service, ip, port, "docker", meta=meta))
-    return services
+            text = str(item).strip()
+            if not text or "${" in text:
+                continue
+            protocol = "tcp"
+            if "/" in text:
+                text, protocol = text.rsplit("/", 1)
+            parts = text.split(":")
+            try:
+                target = int(parts[-1])
+            except (TypeError, ValueError):
+                continue
+            ports.append((target, protocol.lower()))
+    return ports
 
 
-def _first_ip(exports: dict[str, str], app_id: str) -> str | None:
-    for var in catalog.ip_vars(app_id):
-        value = exports.get(var, "")
-        if IPV4_RE.match(value):
-            return value
-    # Heurística: cualquier APP_<APP>_*_IP.
-    for key, value in exports.items():
-        if key.endswith("_IP") and IPV4_RE.match(value):
-            return value
-    return None
-
-
-def _detect_exports() -> list[dict]:
+def _detect_apps() -> list[dict]:
     services: list[dict] = []
     if not APP_DATA.is_dir():
         return services
     for app_dir in sorted(APP_DATA.iterdir()):
-        if not app_dir.is_dir():
+        if app_dir.name.startswith(".") or app_dir.is_symlink() or not app_dir.is_dir():
             continue
         app_id = app_dir.name
-        exports = _parse_exports(app_dir / "exports.sh")
-        if not exports:
+        if app_id in IGNORED_APPS:
             continue
-        ip = _first_ip(exports, app_id)
-        if not ip:
-            continue
-        app = _manifest_name(app_id)
-        entry = catalog.CATALOG.get(app_id)
-        if entry:
-            for svc in entry["services"]:
-                port = svc["port"]
-                for var in svc.get("port_vars", []):
+        manifest = _load_yaml(app_dir / "umbrel-app.yml")
+        compose = _load_yaml(app_dir / "docker-compose.yml")
+        app = str(manifest.get("name") or catalog.app_name(app_id))
+        compose_services = compose.get("services")
+        if not isinstance(compose_services, dict):
+            compose_services = {}
+
+        seen: set[tuple[str, int, str]] = set()
+        app_entries: list[dict] = []
+        proxy_host = ""
+
+        # Primary source: umbreld's resolved app_proxy target. Fall back to the
+        # raw compose environment for older installations.
+        host, port = _gateway_config(app_dir)
+        if not host or not port:
+            proxy = compose_services.get("app_proxy")
+            if isinstance(proxy, dict):
+                env = _environment(proxy)
+                host = str(env.get("APP_HOST") or "").strip()
+                try:
+                    port = int(str(env.get("APP_PORT") or "").strip())
+                except (TypeError, ValueError):
+                    port = 0
+        if not port:
+            try:
+                port = int(manifest.get("port") or 0)
+            except (TypeError, ValueError):
+                port = 0
+        if host and port:
+            proxy_host = host
+            service_name = _service_name_from_container(host, app_id)
+            entry = _entry(app_id, app, service_name, host, port)
+            if entry:
+                app_entries.append(entry)
+                seen.add((host, port, "tcp"))
+
+        # Raw published ports are intentional protocol endpoints (P2P, RPC,
+        # databases, etc.). Container-internal "expose" entries are ignored.
+        for service_name, service in compose_services.items():
+            if service_name in {"app_proxy", "app-proxy"} or not isinstance(service, dict):
+                continue
+            container = str(service.get("container_name") or f"{app_id}_{service_name}_1")
+            for port, protocol in _ports_from_service(service):
+                key = (container, port, protocol)
+                if key in seen or port in IGNORED_PORTS:
+                    continue
+                entry = _entry(app_id, app, service_name, container, port, protocol)
+                if entry:
+                    app_entries.append(entry)
+                    seen.add(key)
+
+        # Conservative exports.sh fallback: static APP_*_PORT values for
+        # catalog-known apps, only on the already verified app_proxy container.
+        # We never guess a container name and never execute the file.
+        if proxy_host:
+            exports = _parse_exports(app_dir / "exports.sh")
+            for known in (catalog.CATALOG.get(app_id) or {}).get("services", []):
+                port = int(known["port"])
+                for var in known.get("port_vars", []):
                     value = exports.get(var, "")
                     if value.isdigit():
                         port = int(value)
                         break
-                services.append(
-                    _service_entry(app_id, app, svc["name"], ip, port, "exports", meta=svc)
-                )
-        else:
-            # App desconocida: cada APP_*_PORT con su IP.
-            for key, value in exports.items():
-                if not key.endswith("_PORT") or not value.isdigit():
+                key = (proxy_host, port, "tcp")
+                if key in seen:
                     continue
-                port = int(value)
-                if not (1 <= port <= 65535):
-                    continue
-                services.append(
-                    _service_entry(app_id, app, key.removeprefix("APP_").removesuffix("_PORT").lower(), ip, port, "exports")
+                entry = _entry(
+                    app_id,
+                    app,
+                    known["name"],
+                    proxy_host,
+                    port,
+                    source="exports",
+                    sensitive=known.get("sensitive"),
                 )
+                if entry:
+                    app_entries.append(entry)
+                    seen.add(key)
+
+        services.extend(app_entries)
+
     return services
 
 
@@ -248,36 +327,66 @@ def _detect_host() -> list[dict]:
         return []
     services: list[dict] = []
     for svc in catalog.SYSTEM_SERVICES:
-        if _port_open(ip, svc["port"]):
-            services.append(
-                _service_entry(
-                    "umbrel-os",
-                    "UmbrelOS",
-                    svc["id"],
-                    ip,
-                    svc["port"],
-                    "system",
-                    system=True,
-                    meta=svc,
-                )
-            )
+        if not _port_open(ip, svc["port"]):
+            continue
+        entry = _entry(
+            "umbrel-os",
+            "UmbrelOS",
+            svc["id"],
+            ip,
+            svc["port"],
+            source="system",
+            system=True,
+            sensitive=True,
+            description=svc.get("description", ""),
+            name_key=f"system.{svc['id']}",
+        )
+        if entry:
+            services.append(entry)
     return services
 
 
-def detect_services() -> list[dict]:
-    services = _detect_docker()
-    if not services:
-        services = _detect_exports()
+def _manual_entries(manual: list[dict] | None) -> list[dict]:
+    result: list[dict] = []
+    for item in manual or []:
+        if not isinstance(item, dict):
+            continue
+        host = str(item.get("host") or "").strip()
+        name = str(item.get("name") or "").strip()[:80]
+        protocol = str(item.get("protocol") or "tcp").lower()
+        try:
+            port = int(item.get("port"))
+        except (TypeError, ValueError):
+            continue
+        entry = _entry(
+            "manual",
+            "Manual",
+            name or f"manual-{port}",
+            host,
+            port,
+            protocol,
+            source="manual",
+            sensitive=True,
+        )
+        if entry:
+            entry["id"] = f"manual:{item.get('id') or name or port}:{port}:{protocol}"
+            result.append(entry)
+    return result
+
+
+def detect_services(manual: list[dict] | None = None) -> list[dict]:
+    services = _detect_apps()
     services.extend(_detect_host())
+    services.extend(_manual_entries(manual))
 
-    unique: dict[str, dict] = {}
+    unique: dict[tuple[str, int, str], dict] = {}
     for svc in services:
-        unique.setdefault(svc["id"], svc)
-    return sorted(unique.values(), key=lambda s: (s["system"], s["app"].lower(), s["target_port"]))
+        unique.setdefault((svc["target_ip"], svc["target_port"], svc["protocol"]), svc)
+    return sorted(unique.values(), key=lambda s: (s["system"], s["app"].lower(), s["target_port"], s["protocol"]))
 
 
-def find_service(service_id: str) -> dict | None:
-    for svc in detect_services():
+def find_service(service_id: str, manual: list[dict] | None = None) -> dict | None:
+    for svc in detect_services(manual):
         if svc["id"] == service_id:
             return svc
     return None

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 )
@@ -12,15 +13,18 @@ import (
 // Prefix identifies a umbrel-tunnel pairing code.
 const Prefix = "ut1."
 
-// Pairing is the payload embedded in a ut1 code.
+// Pairing is the payload embedded in a ut1 code. It never contains a
+// WireGuard private key: the Umbrel app generates its own keypair and
+// registers the public key through the authenticated VPS API.
 type Pairing struct {
 	V            int    `json:"v"`
 	API          string `json:"api"`
 	Token        string `json:"token"`
-	WG           string `json:"wg,omitempty"`
 	Endpoint     string `json:"endpoint,omitempty"`
 	ServerPubKey string `json:"server_pubkey,omitempty"`
 	UmbrelIP     string `json:"umbrel_ip,omitempty"`
+	Subnet       string `json:"subnet,omitempty"`
+	MTU          int    `json:"mtu,omitempty"`
 }
 
 // Encode serializes a pairing payload.
@@ -65,6 +69,17 @@ func (p Pairing) validate() error {
 	}
 	if strings.TrimSpace(p.Token) == "" {
 		return fmt.Errorf("token vacío")
+	}
+	if p.Subnet != "" {
+		if _, _, err := net.ParseCIDR(p.Subnet); err != nil {
+			return fmt.Errorf("subred inválida: %q", p.Subnet)
+		}
+	}
+	if p.UmbrelIP != "" && net.ParseIP(p.UmbrelIP) == nil {
+		return fmt.Errorf("IP de Umbrel inválida: %q", p.UmbrelIP)
+	}
+	if p.MTU != 0 && (p.MTU < 1280 || p.MTU > 1500) {
+		return fmt.Errorf("MTU fuera de rango: %d", p.MTU)
 	}
 	return nil
 }

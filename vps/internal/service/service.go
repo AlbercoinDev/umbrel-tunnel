@@ -128,24 +128,12 @@ func (s *Service) Pairing() (pair.Pairing, error) {
 		Token:    token,
 		Endpoint: net.JoinHostPort(s.Cfg.Endpoint, fmt.Sprintf("%d", s.Cfg.WGPort)),
 		UmbrelIP: s.Cfg.UmbrelIP,
+		Subnet:   s.Cfg.Subnet,
+		MTU:      s.Cfg.MTU,
 	}
 	if pub, err := s.ServerPublicKey(); err == nil {
 		p.ServerPubKey = pub
 	}
-
-	clientKey, err := s.ClientPrivateKey()
-	if err != nil || clientKey == "" {
-		return p, nil
-	}
-	serverPub, err := s.ServerPublicKey()
-	if err != nil {
-		return pair.Pairing{}, err
-	}
-	peer, ok := s.Store.PeerByIP(s.Cfg.UmbrelIP)
-	if !ok {
-		return p, nil
-	}
-	p.WG = s.WG.ClientConfig(clientKey, serverPub, peer.AllowedIP)
 	return p, nil
 }
 

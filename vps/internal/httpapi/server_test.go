@@ -39,9 +39,13 @@ func newHarness(t *testing.T) *harness {
 		"wg genkey": []byte("cHJpdmF0ZS1rZXktZm9yLXRlc3Rz\n"),
 		"wg pubkey": []byte("cHVibGljLWtleS1mb3ItdGVzdHM=\n"),
 	}}
+	// The Umbrel app owns its private key. Pre-provision the public key the
+	// same way the installer's --umbrel-pubkey flag does.
+	umbrelPub := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{7}, 32))
 	_, pairing, err := service.Initialize(context.Background(), paths, run, service.InitOptions{
-		Endpoint: "203.0.113.10",
-		Token:    "test-token",
+		Endpoint:     "203.0.113.10",
+		Token:        "test-token",
+		UmbrelPubKey: umbrelPub,
 	})
 	if err != nil {
 		t.Fatalf("Initialize: %v", err)
@@ -216,11 +220,11 @@ func TestPeerLifecycle(t *testing.T) {
 		t.Fatalf("peers: %+v", peers)
 	}
 
+	// The Umbrel peer owns its private key, so the VPS cannot render a full
+	// client config for it. This is the manual pairing mode.
 	resp, body = h.do(http.MethodGet, "/api/peers/"+h.umbrel.ID+"/config", h.token, nil)
-	var cfg map[string]string
-	h.decode(resp, body, &cfg)
-	if cfg["config"] == "" {
-		t.Fatal("configuración vacía")
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("config de peer manual: HTTP %d %s", resp.StatusCode, body)
 	}
 
 	resp, body = h.do(http.MethodDelete, "/api/peers/"+created.ID, h.token, nil)
@@ -233,6 +237,34 @@ func TestPeerLifecycle(t *testing.T) {
 	})
 	if resp.StatusCode != http.StatusConflict {
 		t.Fatalf("IP duplicada: HTTP %d", resp.StatusCode)
+	}
+}
+
+func TestPeerKeyRotation(t *testing.T) {
+	h := newHarness(t)
+
+	rotated := base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32))
+	resp, body := h.do(http.MethodPut, "/api/peers/"+h.umbrel.ID, h.token, map[string]any{
+		"public_key": rotated,
+		"endpoint":   "198.51.100.20:51820",
+	})
+	var updated state.Peer
+	h.decode(resp, body, &updated)
+	if updated.PublicKey != rotated || updated.Endpoint != "198.51.100.20:51820" {
+		t.Fatalf("peer no actualizado: %+v", updated)
+	}
+	resp, _ = h.do(http.MethodPut, "/api/peers/"+h.umbrel.ID, h.token, map[string]any{
+		"public_key": "no-es-una-clave",
+	})
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("clave inválida aceptada: HTTP %d", resp.StatusCode)
+	}
+
+	resp, _ = h.do(http.MethodPut, "/api/peers/nope", h.token, map[string]any{
+		"public_key": rotated,
+	})
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("peer inexistente: HTTP %d", resp.StatusCode)
 	}
 }
 

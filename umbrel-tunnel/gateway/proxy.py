@@ -1,22 +1,27 @@
 """Proxy TCP local: escucha en la IP del túnel y reenvía a la app real.
 
-El VPS hace DNAT del puerto público a 10.0.0.2:<tunnel_port>. Aquí HAProxy
-escucha ese puerto en wg0 y conecta con el contenedor de la app a través de la
-red compartida de Umbrel.
+El VPS hace DNAT del puerto público a ``<umbrel_ip>:<tunnel_port>``. HAProxy
+escucha ese puerto en ``wg0`` y conecta con el contenedor de la app por su
+nombre DNS de Docker. Las IPs de contenedor cambian al reiniciar, así que los
+backends se resuelven dinámicamente con el resolver interno de Docker.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import signal
 import subprocess
+import time
 from pathlib import Path
 
-DATA_CFG = Path("/data/haproxy.cfg")
-ETC_CFG = Path("/etc/haproxy/haproxy.cfg")
-PID_FILE = Path("/var/run/haproxy.pid")
+DATA_DIR = Path(os.environ.get("UMBREL_TUNNEL_DATA", "/data"))
+DATA_CFG = DATA_DIR / "haproxy.cfg"
+ETC_CFG = Path(os.environ.get("UMBREL_TUNNEL_HAPROXY_CONF", "/etc/haproxy/haproxy.cfg"))
+PID_FILE = Path(os.environ.get("UMBREL_TUNNEL_HAPROXY_PID", "/var/run/haproxy.pid"))
 BIND_IP = "10.0.0.2"
+HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,251}[A-Za-z0-9])?$")
 
 
 class ProxyError(RuntimeError):
@@ -28,7 +33,24 @@ def _safe(value: str, fallback: str) -> str:
     return cleaned[:40] or fallback
 
 
+def _valid_bind_ip(value: str) -> str:
+    try:
+        return str(ipaddress.IPv4Address(value))
+    except ValueError as exc:
+        raise ProxyError(f"IP de escucha inválida: {value!r}") from exc
+
+
+def _valid_target(host: str, port: int) -> tuple[str, int]:
+    host = (host or "").strip()
+    if not HOST_RE.match(host):
+        raise ProxyError(f"destino inválido: {host!r}")
+    if not (1 <= int(port) <= 65535):
+        raise ProxyError(f"puerto destino inválido: {port}")
+    return host, int(port)
+
+
 def render(forwards: list[dict], bind_ip: str = BIND_IP) -> str:
+    bind_ip = _valid_bind_ip(bind_ip)
     lines = [
         "global",
         "    daemon",
@@ -42,6 +64,13 @@ def render(forwards: list[dict], bind_ip: str = BIND_IP) -> str:
         "    timeout server 1m",
         "    option tcplog",
         "",
+        "resolvers docker",
+        "    nameserver dns 127.0.0.11:53",
+        "    resolve_retries 3",
+        "    timeout resolve 1s",
+        "    timeout retry 1s",
+        "    hold valid 10s",
+        "",
     ]
     for fwd in forwards:
         if not fwd.get("enabled", True):
@@ -49,13 +78,21 @@ def render(forwards: list[dict], bind_ip: str = BIND_IP) -> str:
         name = _safe(fwd.get("name") or fwd.get("id", ""), "fwd")
         unique = _safe(fwd.get("id", ""), "0")[:8]
         backend = f"b_{name}_{unique}"
+        try:
+            tunnel_port = int(fwd["tunnel_port"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ProxyError(f"puerto del túnel inválido en {name}") from exc
+        if not (1 <= tunnel_port <= 65535):
+            raise ProxyError(f"puerto del túnel fuera de rango en {name}")
+        host, port = _valid_target(str(fwd.get("target_ip") or ""), int(fwd.get("target_port") or 0))
         lines += [
             f"frontend f_{name}_{unique}",
-            f"    bind {bind_ip}:{int(fwd['tunnel_port'])}",
+            f"    bind {bind_ip}:{tunnel_port}",
             f"    default_backend {backend}",
             "",
             f"backend {backend}",
-            f"    server s1 {fwd['target_ip']}:{int(fwd['target_port'])} check inter 10s fall 3 rise 2",
+            f"    server s1 {host}:{port} check inter 10s fall 3 rise 2 "
+            "resolvers docker resolve-prefer ipv4 init-addr last,libc,none",
             "",
         ]
     return "\n".join(lines).rstrip() + "\n"
@@ -103,14 +140,23 @@ def apply(forwards: list[dict], bind_ip: str = BIND_IP) -> str:
         return "sin puertos que proxyar"
 
     config = render(enabled, bind_ip)
-    ETC_CFG.parent.mkdir(parents=True, exist_ok=True)
+    DATA_CFG.parent.mkdir(parents=True, exist_ok=True)
     DATA_CFG.write_text(config, encoding="utf-8")
-    ETC_CFG.write_text(config, encoding="utf-8")
 
-    check = _run(["haproxy", "-c", "-f", str(ETC_CFG)])
+    # Validate a temporary file first so a bad rule never replaces a working
+    # HAProxy configuration.
+    ETC_CFG.parent.mkdir(parents=True, exist_ok=True)
+    candidate = ETC_CFG.with_suffix(".candidate")
+    candidate.write_text(config, encoding="utf-8")
+    check = _run(["haproxy", "-c", "-f", str(candidate)])
     if check.returncode != 0:
         detail = (check.stderr or check.stdout or "").strip()
+        try:
+            candidate.unlink()
+        except OSError:
+            pass
         raise ProxyError(f"configuración de HAProxy inválida: {detail}")
+    os.replace(candidate, ETC_CFG)
 
     old_pid = _read_pid()
     args = ["haproxy", "-f", str(ETC_CFG), "-p", str(PID_FILE)]
@@ -120,4 +166,8 @@ def apply(forwards: list[dict], bind_ip: str = BIND_IP) -> str:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "").strip()
         raise ProxyError(f"no se pudo arrancar HAProxy: {detail}")
+    time.sleep(0.2)
+    new_pid = _read_pid()
+    if not new_pid or not _alive(new_pid):
+        raise ProxyError("HAProxy no quedó en ejecución")
     return f"{len(enabled)} puerto(s) proxyados"

@@ -213,6 +213,36 @@ td .sub { display: block; color: var(--muted); font-size: .76rem; margin-top: 2p
 .notes { margin: 0; padding-left: 18px; display: grid; gap: 8px; font-size: .86rem; color: var(--muted); }
 .notes code, p code, li code { background: #0d1522; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: .8em; }
 
+.lang-switch {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  overflow: hidden;
+  background: var(--bg-soft);
+}
+.lang-switch a {
+  padding: 4px 10px;
+  font-size: .72rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-decoration: none;
+}
+.lang-switch a:hover { color: var(--text); background: rgba(255, 255, 255, .04); }
+.lang-switch a.active { background: var(--accent); color: #1a1002; }
+
+.login-page { display: grid; place-items: center; min-height: 100vh; padding: 24px; }
+.login-wrap { width: 100%; max-width: 420px; }
+.login-card { padding: 24px; }
+.login-head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.login-head h1 { font-size: 1.25rem; }
+.login-head p { font-size: .84rem; margin-top: 4px; }
+.login-card .lang-switch { margin-bottom: 16px; }
+.login-card button[type="submit"] { width: 100%; }
+.login-hint { margin-top: 16px; font-size: .8rem; line-height: 1.45; }
+.field { display: flex; flex-direction: column; gap: 6px; font-size: .82rem; color: var(--muted); }
+.version-line { margin: 14px 0; font-size: .82rem; }
+
 @media (max-width: 640px) {
   .topbar { padding: 14px 16px; flex-direction: column; align-items: flex-start; }
   .tabs { padding: 10px 16px 0; }

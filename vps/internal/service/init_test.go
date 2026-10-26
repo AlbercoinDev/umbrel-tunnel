@@ -71,23 +71,25 @@ func TestInitializeCreatesEverything(t *testing.T) {
 	if p.API != "http://10.0.0.1:8080" {
 		t.Fatalf("api: %q", p.API)
 	}
-	if p.Token == "" || p.WG == "" {
+	if p.Token == "" || p.Subnet != "10.0.0.0/24" || p.Endpoint == "" {
 		t.Fatalf("pairing incompleto: %+v", p)
 	}
 
 	for _, path := range []string{
 		paths.ConfigFile(), paths.TokenFile(), paths.ServerKeyFile(),
-		paths.ServerPubFile(), paths.ClientKeyFile(), paths.WGConfFile(),
-		paths.RulesFile(), paths.PeersFile(),
+		paths.ServerPubFile(), paths.WGConfFile(), paths.RulesFile(),
 	} {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("falta %s: %v", path, err)
 		}
 	}
 
-	peers := svc.Store.Peers()
-	if len(peers) != 1 || peers[0].AllowedIP != "10.0.0.2" || peers[0].Name != "umbrel" {
+	// The app registers its own public key later; init must not invent one.
+	if peers := svc.Store.Peers(); len(peers) != 0 {
 		t.Fatalf("peers inesperados: %+v", peers)
+	}
+	if _, err := os.Stat(paths.ClientKeyFile()); !os.IsNotExist(err) {
+		t.Fatal("init no debe generar una clave privada de cliente")
 	}
 
 	if !run.Called("wg", "syncconf", "wg0", paths.SyncConfFile()) {
@@ -113,11 +115,11 @@ func TestInitializeIsIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if first.Token != second.Token || first.WG != second.WG {
+	if first.Token != second.Token || first.Subnet != second.Subnet || first.Endpoint != second.Endpoint {
 		t.Fatalf("pairing cambió:\n%+v\n%+v", first, second)
 	}
-	if len(svc.Store.Peers()) != 1 {
-		t.Fatalf("peers duplicados: %+v", svc.Store.Peers())
+	if len(svc.Store.Peers()) != 0 {
+		t.Fatalf("peers inesperados: %+v", svc.Store.Peers())
 	}
 }
 
@@ -135,8 +137,8 @@ func TestInitializeManualPubkey(t *testing.T) {
 	if len(peers) != 1 || peers[0].PublicKey != pub {
 		t.Fatalf("peer manual incorrecto: %+v", peers)
 	}
-	if p.WG != "" {
-		t.Fatal("modo manual no debe incluir configuración de cliente")
+	if p.ServerPubKey == "" {
+		t.Fatal("el emparejamiento debe incluir la clave pública del servidor")
 	}
 	if _, err := os.Stat(paths.ClientKeyFile()); !os.IsNotExist(err) {
 		t.Fatal("modo manual no debe generar clave de cliente")

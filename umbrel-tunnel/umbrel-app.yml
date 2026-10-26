@@ -1,23 +1,38 @@
-manifestVersion: 1
+manifestVersion: 1.1
 id: umbrel-tunnel
+storage:
+  dataRoot: data
+category: networking
 name: Umbrel Tunnel
-tagline: Expón servicios de Umbrel a través de tu VPS con WireGuard
-icon: https://raw.githubusercontent.com/umbrel-tunnel/umbrel-tunnel/main/umbrel-tunnel/images/icon.svg
-category: Networking
 version: "1.0.0"
-port: 8081
+tagline: Expose Umbrel services through your own VPS over WireGuard
+icon: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iZyIgeDE9IjAlIiB5MT0iMCUiIHgyPSIxMDAlIiB5Mj0iMTAwJSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0eWxlPSJzdG9wLWNvbG9yOiMzOGJkZjgiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdHlsZT0ic3RvcC1jb2xvcjojNjM2NmYxIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgcng9IjIwIiBmaWxsPSJ1cmwoI2cpIi8+CiAgPHBhdGggZD0iTTMwIDUwIEw1MCAzMCBMNzAgNTAgTDUwIDcwIFoiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjgiIGZpbGw9IndoaXRlIi8+CiAgPGxpbmUgeDE9IjUwIiB5MT0iMzAiIHgyPSI1MCIgeTI9IjIwIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxsaW5lIHgxPSI1MCIgeTE9IjcwIiB4Mj0iNTAiIHkyPSI4MCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8bGluZSB4MT0iMzAiIHkxPSI1MCIgeDI9IjIwIiB5Mj0iNTAiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPGxpbmUgeDE9IjcwIiB5MT0iNTAiIHgyPSI4MCIgeTI9IjUwIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K"
 description: >-
-  Crea un túnel WireGuard entre tu Umbrel y un VPS con IP fija. La app detecta
-  las aplicaciones instaladas y los servicios de UmbrelOS, y te permite abrir
-  sus puertos en el VPS desde la interfaz. La API del VPS solo es accesible a
-  través del túnel y está protegida con un token.
+  Umbrel Tunnel connects your Umbrel to a VPS with a fixed public IP through a
+  WireGuard tunnel. The app detects installed apps and UmbrelOS services, lets
+  you choose which ports to expose, and opens or closes the matching public
+  ports on the VPS. The VPS control API only listens inside the tunnel and is
+  protected by a Bearer token. The interface is available in Spanish (default)
+  and English, and follows the browser/UmbrelOS language on first open.
+
+
+  Requirements: a Debian 12/13 or Ubuntu Server 22.04/24.04+ VPS (amd64/arm64)
+  with a fixed public IP. Run the one-line installer on the VPS, then paste the
+  pairing code in the app.
+releaseNotes: >-
+  First release: automatic app detection without the Docker socket, ut1
+  pairing, per-peer WireGuard key registration and rotation, local TCP proxying
+  with HAProxy, and opening/closing public ports on the VPS. Spanish and English
+  UI with automatic language detection.
 developer: umbrel-tunnel
 website: https://github.com/umbrel-tunnel/umbrel-tunnel
 dependencies: []
 repo: https://github.com/umbrel-tunnel/umbrel-tunnel
 support: https://github.com/umbrel-tunnel/umbrel-tunnel/issues
+port: 8642
 gallery: []
-releaseNotes: >-
-  Primera versión: detección automática de apps, emparejamiento ut1, proxy TCP
-  local y apertura/cierre de puertos en el VPS.
+path: ""
+deterministicPassword: true
 torOnly: false
+submitter: umbrel-tunnel
+submission: https://github.com/umbrel-tunnel/umbrel-tunnel

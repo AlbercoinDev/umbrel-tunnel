@@ -2,21 +2,25 @@
 
 Expón servicios de tu Umbrel a través de un VPS con IP fija usando un túnel
 WireGuard. La app de Umbrel detecta las aplicaciones instaladas y los servicios
-de UmbrelOS, y abre o cierra sus puertos públicos en el VPS desde una interfaz
-web. La API del VPS solo escucha dentro del túnel y está protegida con un token.
+de UmbrelOS, deja elegir qué puertos abrir y sincroniza los forwards públicos
+con el VPS. La API del VPS solo escucha dentro del túnel y está protegida con un
+token Bearer.
 
 ```
-Internet ──► VPS (IP fija) ──► wg0 ──► Umbrel ──► app/contenedor
-             DNAT :8333       túnel     HAProxy   10.0.0.x:8333
-             nftables         10.0.0.1  10.0.0.2
+Internet ──► VPS (IP fija) ──► wg0 ──► Umbrel ──► HAProxy ──► app/contenedor
+             DNAT :8333       túnel    10.0.0.2    :20000      app_web_1:3000
+             nftables         10.0.0.1
 ```
 
 - **VPS**: un único binario Go estático + systemd, WireGuard en el kernel y
   nftables. Sin Docker ni Python. Pensado para 128–256 MB de RAM.
-- **Umbrel**: app con gateway en Flask, `docker-socket-proxy` para detectar
-  contenedores, HAProxy para el proxy TCP local y `wg-quick` para el túnel.
+- **Umbrel**: app con gateway en Flask/waitress, detección de apps leyendo
+  `app-data` en modo solo lectura (sin socket de Docker), HAProxy para el proxy
+  TCP local y `wg-quick` para el túnel.
 - **Sin DDNS ni QR**: el VPS tiene IP fija y el emparejamiento es un código
   `ut1.…` que se pega en la app.
+- **Bilingüe**: interfaz en español por defecto e inglés opcional. En la
+  primera visita se detecta el idioma del navegador/UmbrelOS.
 
 ## Requisitos
 
@@ -31,7 +35,8 @@ Internet ──► VPS (IP fija) ──► wg0 ──► Umbrel ──► app/co
 **Umbrel**
 
 - UmbrelOS con Docker.
-- La app se instala como cualquier app de Umbrel (carpeta `umbrel-tunnel/`).
+- La app se instala desde una Community App Store o copiando la carpeta
+  `umbrel-tunnel/` a `app-data` en un entorno de desarrollo.
 
 ## Instalación del VPS
 
@@ -79,7 +84,9 @@ curl -fsSL https://raw.githubusercontent.com/<OWNER>/<REPO>/main/vps/install.sh 
 2. Instala solo lo que falta (`wireguard`, `wireguard-tools`, `nftables`, etc.).
 3. Copia el binario a `/usr/local/bin/umbrel-tunnel`.
 4. Instala las unidades `wg-quick@wg0`, `umbrel-tunnel-firewall` y `umbrel-tunnel`.
-5. Crea claves, token, configuración y el peer de Umbrel.
+5. Crea claves del servidor, token, configuración y reglas de firewall. No crea
+   ninguna clave privada de Umbrel: la app genera la suya y registra su clave
+   pública por la API.
 6. Verifica que la API responde en `10.0.0.1:8080` y que escucha solo en el túnel.
 7. Imprime el código de emparejamiento y lo guarda en
    `/root/umbrel-tunnel-pairing.txt` (permisos `600`).
@@ -91,7 +98,7 @@ Opciones principales:
 --wg-port PORT       puerto UDP de WireGuard (51820)
 --api-port PORT      puerto de la API dentro del túnel (8080)
 --subnet CIDR        subred del túnel (10.0.0.0/24)
---umbrel-pubkey KEY  emparejamiento manual
+--umbrel-pubkey KEY  pre-registra la clave pública de Umbrel (opcional)
 --public-api         expone la API fuera del túnel (no recomendado)
 --binary URL|RUTA    binario a instalar
 --force              sustituye configuración existente (hace backup de wg0.conf)
@@ -103,7 +110,23 @@ Opciones principales:
 Reejecutar el instalador es seguro: conserva la configuración y las claves
 existentes salvo que uses `--force`.
 
-## Emparejar Umbrel
+## Instalación de la app en Umbrel
+
+### Community App Store
+
+1. Publica este repositorio en GitHub (o usa una URL accesible por Umbrel).
+2. En UmbrelOS: **App Store → … → Community App Stores → Add store**.
+3. Pega la URL del repositorio. El archivo `umbrel-app-store.yml` de la raíz
+   define el ID `umbrel-tunnel` y el nombre de la tienda.
+4. Instala **Umbrel Tunnel**.
+
+> **Imagen pendiente de publicación.** `umbrel-tunnel/docker-compose.yml` usa
+> `ghcr.io/umbrel-tunnel/umbrel-tunnel-gateway:1.0.0` como marcador. Antes de
+> instalar en un Umbrel real hay que publicar la imagen multi-arquitectura y
+> añadir su digest (`@sha256:…`). Consulta
+> [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#publicar-la-imagen-del-gateway).
+
+### Emparejar Umbrel
 
 1. Instala la app `umbrel-tunnel` en Umbrel.
 2. En el VPS ejecuta `umbrel-tunnel pair` (o usa el código que imprimió el
@@ -111,25 +134,31 @@ existentes salvo que uses `--force`.
 3. Abre la app, pestaña **Conexión**, pega el código `ut1.…` y pulsa
    **Emparejar**.
 
-El código incluye la URL de la API (`http://10.0.0.1:8080`), el token, la
-configuración de WireGuard del cliente, el endpoint del VPS y la IP del túnel.
+El código incluye la URL de la API (`http://10.0.0.1:8080`), el token, el
+endpoint del VPS, la clave pública del servidor, la IP de Umbrel en el túnel, la
+subred y el MTU. **No incluye ninguna clave privada de WireGuard**: la app crea
+su par de claves y registra la pública en el VPS con `POST/PUT /api/peers`.
+
+La app valida que la URL de la API pertenezca a la subred del túnel y que la
+subred no solape con la red de Umbrel (`NETWORK_IP`, por defecto `10.21.0.0/16`).
 
 ### Emparejamiento manual
 
-Si prefieres no usar el código, o quieres regenerar claves:
+Si prefieres no usar el código, o quieres rotar claves:
 
 ```bash
-# En el VPS, sin clave de Umbrel:
+# En el VPS, opcionalmente con la clave pública de Umbrel ya conocida:
 umbrel-tunnel init --endpoint 203.0.113.10 --umbrel-pubkey "<CLAVE_PUBLICA_UMBREL>"
 
 # O añade un peer después:
 umbrel-tunnel peer add --name umbrel --ip 10.0.0.2 --pubkey "<CLAVE_PUBLICA_UMBREL>"
 ```
 
-En la app, pestaña **Conexión → Emparejamiento manual**: introduce endpoint y
-clave pública del servidor (`umbrel-tunnel pair -json` los muestra), genera la clave
-del cliente y añade al VPS la clave pública que imprime la app. También puedes
-pegar una configuración `[Interface]/[Peer]` completa y aplicarla.
+En la app, pestaña **Conexión → Emparejamiento manual**: introduce endpoint,
+clave pública del servidor, IP de Umbrel, subred y MTU. La app genera la clave
+local, aplica la configuración y muestra la clave pública que debe registrarse
+en el VPS. Si la app ya está emparejada por API/token, el registro es
+automático.
 
 ## Uso
 
@@ -138,24 +167,39 @@ pegar una configuración `[Interface]/[Peer]` completa y aplicarla.
   HAProxy en el lado de Umbrel.
 - **Puertos abiertos**: estado de cada exposición, activar/desactivar, cambiar
   el puerto público o cerrarlo.
-- **Conexión**: estado del túnel y del handshake, configuración de WireGuard y
-  emparejamiento manual.
-- **Avanzado**: URL/token de la API, intervalo de sincronización y notas.
+- **Conexión**: estado del túnel y del handshake, configuración de WireGuard
+  (redactada), emparejamiento manual y rotación de claves.
+- **Avanzado**: URL/token de la API, intervalo de sincronización y servicios
+  manuales.
 
-Los servicios del sistema (SSH, panel de UmbrelOS) se marcan como **sistema** y
-**sensible**. El puerto público `22` está bloqueado para no pisar el SSH del
-VPS; para SSH de Umbrel se propone `2222`.
+Los servicios del sistema (SSH, panel de UmbrelOS por HTTP/HTTPS) se marcan como
+**sistema** y **sensible**. El puerto público `22` está bloqueado para no pisar
+el SSH del VPS; para SSH de Umbrel se propone `2222`.
 
 La sincronización es declarativa: la app compara lo que quieres exponer con los
 forwards del VPS y crea, actualiza o elimina lo necesario. Se ejecuta al cambiar
 algo y cada `sync_interval` segundos (30 por defecto).
 
+### Detección de servicios
+
+La app **no monta el socket de Docker**. Lee, en modo solo lectura:
+
+- `${UMBREL_ROOT}/app-data/<app-id>/umbrel-app.yml`
+- `${UMBREL_ROOT}/app-data/<app-id>/docker-compose.yml`
+- `${UMBREL_ROOT}/app-data/<app-id>/app-gateway.json` (destino resuelto por umbreld)
+- `${UMBREL_ROOT}/app-data/<app-id>/exports.sh` (solo se analiza con regex; nunca se ejecuta)
+
+Usa los nombres DNS de Docker (`<app-id>_<servicio>_1`) como destino, de modo
+que el proxy sigue funcionando aunque cambie la IP del contenedor. Los servicios
+del host (SSH/panel) se detectan contra la puerta de enlace de la red Docker. Si
+una app no se detecta, añade un servicio manual en **Avanzado**.
+
 ## CLI del VPS
 
 ```bash
 umbrel-tunnel serve                      # API (lo arranca systemd)
-umbrel-tunnel init [opciones]            # configuración, claves, token y peer
-umbrel-tunnel pair [--json] [--new] [--rotate-token]
+umbrel-tunnel init [opciones]            # configuración, claves, token
+umbrel-tunnel pair [--json] [--rotate-token]
 umbrel-tunnel peer list
 umbrel-tunnel peer add --name N --ip 10.0.0.3 [--pubkey KEY]
 umbrel-tunnel peer rm <id>
@@ -186,13 +230,14 @@ Escucha en `10.0.0.1:8080` (solo túnel). Autenticación `Authorization: Bearer 
 | GET | `/health` | Estado básico, sin auth |
 | GET | `/api/status` | Versión, peers, forwards, handshakes |
 | GET/POST | `/api/peers` | Lista/crea peers |
+| PUT | `/api/peers/{id}` | Rota la clave pública / endpoint de un peer |
 | DELETE | `/api/peers/{id}` | Elimina peer |
-| GET | `/api/peers/{id}/config` | Configuración WireGuard del peer |
+| GET | `/api/peers/{id}/config` | Configuración de un peer creado por el VPS (409 en modo manual) |
 | GET/POST | `/api/forwards` | Lista/crea forwards |
 | PATCH/DELETE | `/api/forwards/{id}` | Actualiza/elimina forward |
 | POST | `/api/token/rotate` | Rota el token |
 
-Un forward usa `public_port` (el antiguo `dport` se migra al leer el estado):
+Un forward usa `public_port`:
 
 ```json
 {
@@ -227,6 +272,20 @@ handshakes, abrir/cerrar forwards y rotar el token. Los assets estáticos
 - El puerto público `22` está reservado para el SSH del VPS.
 - Los servicios sensibles (RPC de Bitcoin, LND, Ollama, Portainer, SSH…) se
   marcan en la UI para que decidas con contexto.
+- La app de Umbrel mantiene el login de Umbrel (`app_proxy`) **y** su propio
+  login con `APP_PASSWORD` (cookie de sesión firmada, HttpOnly, SameSite,
+  CSRF y límite de intentos).
+- La configuración de WireGuard se genera desde campos estructurados. Se
+  rechazan directivas arbitrarias como `PostUp`, `PostDown`, `PreUp`,
+  `PreDown` o `SaveConfig`.
+- El código `ut1` no transporta claves privadas. La URL de la API debe estar
+  dentro de la subred del túnel para evitar peticiones a hosts arbitrarios.
+- El contenedor del gateway necesita `NET_ADMIN` (crear `wg0` y escuchar en la
+  IP del túnel) y `SYS_MODULE` + `/lib/modules:ro` para cargar el módulo
+  WireGuard del host, igual que la app oficial de WireGuard. No monta el socket
+  de Docker. Monta `${UMBREL_ROOT}/app-data` en solo lectura para detectar apps;
+  es el privilegio de host más amplio del paquete y está documentado en
+  [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Red y puertos
 
@@ -238,15 +297,21 @@ handshakes, abrir/cerrar forwards y rotar el token. Los assets estáticos
 | Umbrel en el túnel | `10.0.0.2` |
 | Puerto WireGuard | `51820/udp` |
 | API | `10.0.0.1:8080` |
+| Puerto de la app en Umbrel | `8642` (interno `8081`) |
 | Puertos internos de Umbrel | `20000–29999` |
 | MTU | `1420` |
 
-Rutas:
+Rutas del VPS:
 
 - `/etc/umbrel-tunnel/` — `config.json`, `token`, claves, `rules.nft`
 - `/var/lib/umbrel-tunnel/` — `peers.json`, `forwards.json`
 - `/etc/wireguard/wg0.conf`
 - `/run/umbrel-tunnel/`
+
+Rutas de la app:
+
+- `${APP_DATA_DIR}/data/` — `config.json`, `session.key`, `wireguard/`,
+  `haproxy.cfg`
 
 Si usas `ufw` o `firewalld`, el instalador avisa: además de nftables necesitas
 permitir el puerto WireGuard y el tráfico enrutado hacia `wg0`.
@@ -266,8 +331,9 @@ En la app, la píldora **Túnel** indica si hay handshake; **VPS** y **Sync**
 muestran el resultado de la última reconciliación.
 
 Si el gateway no puede crear `wg0`, comprueba que el módulo del kernel esté
-disponible en el host de Umbrel (`sudo modprobe wireguard`). El contenedor solo
-necesita `NET_ADMIN`; no usa `/dev/net/tun` ni carga módulos.
+disponible en el host de Umbrel (`sudo modprobe wireguard`). El contenedor
+necesita `NET_ADMIN` y, para cargar el módulo, `SYS_MODULE` con
+`/lib/modules:ro`. No usa `/dev/net/tun`.
 
 ## Actualizar, backup y desinstalar
 
@@ -289,7 +355,6 @@ sudo ./install.sh --uninstall --purge  # borra también configuración y estado
 ```bash
 # VPS
 cd vps
-export PATH=/tmp/opencode/go/bin:$PATH   # o tu instalación de Go
 gofmt -w .
 go vet ./...
 go test ./...
@@ -297,45 +362,86 @@ make dist          # binarios + tarballs + SHA256SUMS en vps/dist/
 ```
 
 ```bash
-# App de Umbrel
-cd umbrel-tunnel
-python3 -m py_compile gateway/*.py
-# Sin Docker local no se puede probar el runtime completo; requiere Umbrel real.
+# App de Umbrel (gateway)
+cd umbrel-tunnel/gateway
+python3 -m pip install flask pyyaml waitress
+python3 -m py_compile app.py catalog.py detect.py i18n.py proxy.py serve.py state.py sync.py vps.py wireguard.py
+python3 -m unittest discover -s tests -v
 ```
+
+Con Docker, se puede construir y probar la imagen del gateway:
+
+```bash
+cd umbrel-tunnel/gateway
+docker build -t umbrel-tunnel-gateway:dev .
+```
+
+Para una ejecución local sin Umbrel:
+
+```bash
+UMBREL_TUNNEL_DEV=1 UMBREL_TUNNEL_DATA=/tmp/umbrel-tunnel-data \
+  UMBREL_APP_DATA=/tmp/umbrel-app-data PORT=8081 python3 serve.py
+```
+
+La contraseña de desarrollo es `dev`. No uses `UMBREL_TUNNEL_DEV` en producción.
 
 Variables de entorno útiles en el gateway:
 
 | Variable | Por defecto | Uso |
 | --- | --- | --- |
-| `DOCKER_HOST` | `tcp://socket-proxy:2375` | API de Docker |
-| `UMBREL_APP_DATA` | `/umbrel-app-data` | manifests/exports de apps |
-| `UMBREL_NETWORK` | `umbrel_main_network` | red compartida de Umbrel |
-| `UMBREL_TUNNEL_HOST_SERVICES` | `1` | detectar SSH/panel del host |
+| `APP_PASSWORD` | — | contraseña de login; Umbrel la inyecta |
 | `APP_VERSION` | `1.0.0` | versión mostrada |
+| `UMBREL_TUNNEL_DATA` | `/data` | estado, claves y configuración |
+| `UMBREL_APP_DATA` | `/umbrel-app-data` | manifiestos de apps (solo lectura) |
+| `NETWORK_IP` | `10.21.0.0` | red de Umbrel para detectar solapes |
+| `UMBREL_TUNNEL_HOST_SERVICES` | `1` | detectar SSH/panel del host |
+| `UMBREL_TUNNEL_WG_CONF` | `/etc/wireguard/wg0.conf` | ruta de `wg0.conf` (tests) |
+| `UMBREL_TUNNEL_HAPROXY_CONF` | `/etc/haproxy/haproxy.cfg` | ruta de HAProxy (tests) |
+| `UMBREL_TUNNEL_HAPROXY_PID` | `/var/run/haproxy.pid` | PID de HAProxy (tests) |
+| `UMBREL_TUNNEL_DEV` | — | `1` permite arrancar sin `APP_PASSWORD` |
+
+Documentación adicional:
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/SECURITY.md](docs/SECURITY.md)
+- [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
 
 ## Limitaciones actuales
 
 - El proxy local de Umbrel solo gestiona **TCP**. Para UDP usa
   `umbrel-tunnel forward add --protocol udp` en el VPS.
+- La imagen del gateway aún no está publicada; el compose usa un marcador. Hay
+  que publicarla y fijar el digest antes de instalar desde la tienda.
 - La app no se ha probado en un Umbrel real en este entorno (no hay Docker ni
-  HAProxy locales). El código Go sí tiene tests unitarios y de integración.
-- El nombre de la red compartida se asume `umbrel_main_network`; si tu Umbrel
-  usa otro, define `UMBREL_NETWORK` en el compose.
+  HAProxy locales). El gateway tiene tests unitarios; el código Go tiene tests
+  unitarios y de integración.
+- El nombre de la red compartida se asume `umbrel_main_network`; Umbrel lo
+  inyecta en tiempo de ejecución.
 - El alojamiento en GitHub y las URLs del manifiesto son marcadores
   (`umbrel-tunnel/umbrel-tunnel`) hasta que se publique el repositorio.
 
 ## Estructura
 
 ```
-vps/
-  cmd/umbrel-tunnel/    CLI y servidor
-  internal/             config, state, wireguard, firewall, pair, service, httpapi…
-  packaging/            unidades systemd, tmpfiles, sysctl
-  install.sh            instalador de una línea
-  scripts/push.sh       build + despliegue por SSH
-  Makefile              cross-compile y release
+umbrel-app-store.yml          metadatos de la Community App Store
 umbrel-tunnel/
-  gateway/              Flask, detección Docker, HAProxy, WireGuard, sync
-  docker-compose.yml    app_proxy, socket-proxy y gateway
-  umbrel-app.yml        manifiesto de Umbrel
+  umbrel-app.yml              manifiesto de la app
+  docker-compose.yml          app_proxy + gateway
+  data/.gitkeep               datos persistentes
+  gateway/                    Flask, detección, HAProxy, WireGuard, sync
+    i18n/                     catálogos es.json / en.json
+    tests/                    tests unitarios del gateway
+vps/
+  cmd/umbrel-tunnel/          CLI y servidor
+  internal/                   config, state, wireguard, firewall, pair, service, httpapi…
+  packaging/                  unidades systemd, tmpfiles, sysctl
+  install.sh                  instalador de una línea
+  scripts/push.sh             build + despliegue por SSH
+  Makefile                    cross-compile y release
+docs/                         arquitectura, seguridad, desarrollo, diagnóstico
 ```
+
+## Licencia
+
+MIT. Consulta [LICENSE](LICENSE).

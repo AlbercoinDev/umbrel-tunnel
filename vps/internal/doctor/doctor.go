@@ -66,10 +66,15 @@ func Run(ctx context.Context, svc *service.Service, run execx.Runner, version st
 	} else {
 		r.add("clave servidor", "ok", "")
 	}
-	if _, err := svc.ClientPrivateKey(); err != nil {
-		r.add("clave cliente", "warn", "no existe (modo manual)")
+	// The Umbrel app normally owns the client private key, so the VPS only
+	// needs the peer's public key. A local client key exists only for peers
+	// created by the VPS itself.
+	if _, err := svc.ClientPrivateKey(); err == nil {
+		r.add("clave cliente", "ok", "gestionada por el VPS")
+	} else if _, ok := svc.Store.PeerByIP(svc.Cfg.UmbrelIP); ok {
+		r.add("clave cliente", "ok", "la clave pública la registra la app de Umbrel")
 	} else {
-		r.add("clave cliente", "ok", "")
+		r.add("clave cliente", "warn", "ningún peer de Umbrel registrado todavía")
 	}
 
 	if _, err := os.Stat(svc.Paths.WGConfFile()); err != nil {

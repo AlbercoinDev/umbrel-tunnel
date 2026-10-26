@@ -49,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/status", s.auth(s.statusHandler))
 	mux.HandleFunc("GET /api/peers", s.auth(s.listPeers))
 	mux.HandleFunc("POST /api/peers", s.auth(s.createPeer))
+	mux.HandleFunc("PUT /api/peers/{id}", s.auth(s.updatePeer))
 	mux.HandleFunc("DELETE /api/peers/{id}", s.auth(s.deletePeer))
 	mux.HandleFunc("GET /api/peers/{id}/config", s.auth(s.peerConfig))
 	mux.HandleFunc("GET /api/forwards", s.auth(s.listForwards))
@@ -297,6 +298,59 @@ func (s *Server) createPeer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusCreated, peerResponse{Peer: created, PrivateKey: privateKey})
+}
+
+type peerUpdateRequest struct {
+	PublicKey string `json:"public_key"`
+	Endpoint  string `json:"endpoint"`
+}
+
+// updatePeer rotates the public key of an existing peer. The Umbrel app uses
+// it when it regenerates its local WireGuard keypair.
+func (s *Server) updatePeer(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req peerUpdateRequest
+	if err := decode(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "JSON inválido: "+err.Error())
+		return
+	}
+	req.PublicKey = strings.TrimSpace(req.PublicKey)
+	if !service.ValidPubKey(req.PublicKey) {
+		writeError(w, http.StatusBadRequest, "clave pública inválida")
+		return
+	}
+	old, ok := s.svc.Store.PeerByID(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "peer no encontrado")
+		return
+	}
+	updated, err := s.svc.Store.UpdatePeer(id, func(p *state.Peer) error {
+		p.PublicKey = req.PublicKey
+		if endpoint := strings.TrimSpace(req.Endpoint); endpoint != "" {
+			p.Endpoint = endpoint
+		}
+		return nil
+	})
+	if err != nil {
+		code := http.StatusBadRequest
+		if strings.Contains(err.Error(), "no encontrado") {
+			code = http.StatusNotFound
+		}
+		writeError(w, code, err.Error())
+		return
+	}
+	if err := s.svc.ReloadPeers(r.Context()); err != nil {
+		// Roll back the stored key if the live interface cannot be updated.
+		_, _ = s.svc.Store.UpdatePeer(id, func(p *state.Peer) error {
+			p.PublicKey = old.PublicKey
+			p.Endpoint = old.Endpoint
+			return nil
+		})
+		_ = s.svc.ReloadPeers(r.Context())
+		writeError(w, http.StatusInternalServerError, "no se pudo aplicar WireGuard: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
 }
 
 func (s *Server) deletePeer(w http.ResponseWriter, r *http.Request) {

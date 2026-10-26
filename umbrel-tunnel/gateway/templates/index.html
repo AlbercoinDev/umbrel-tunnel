@@ -1,191 +1,238 @@
 <!doctype html>
-<html lang="es">
+<html lang="{{ lang }}">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>umbrel-tunnel · Umbrel</title>
+  <title>{{ t('app.title') }} · Umbrel</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 <header class="topbar">
   <div class="brand">
-    <span class="logo">tw</span>
+    <span class="logo" aria-hidden="true">ut</span>
     <div>
-      <h1>umbrel-tunnel</h1>
-      <p class="muted">Servicios de Umbrel a través de tu VPS</p>
+      <h1>{{ t('app.title') }}</h1>
+      <p class="muted">{{ t('app.subtitle') }}</p>
     </div>
   </div>
   <div class="statusbar">
-    <span id="pill-wg" class="pill">WireGuard …</span>
-    <span id="pill-vps" class="pill">VPS …</span>
-    <span id="pill-sync" class="pill">Sync …</span>
+    <span id="pill-wg" class="pill">{{ t('status.wg') }}</span>
+    <span id="pill-vps" class="pill">{{ t('status.vps') }}</span>
+    <span id="pill-sync" class="pill">{{ t('status.sync') }}</span>
+    <div class="lang-switch" role="group" aria-label="{{ t('lang.label') }}">
+      <a href="/lang/es?next={{ request.path|urlencode }}" class="{{ 'active' if lang == 'es' else '' }}" lang="es">ES</a>
+      <a href="/lang/en?next={{ request.path|urlencode }}" class="{{ 'active' if lang == 'en' else '' }}" lang="en">EN</a>
+    </div>
   </div>
 </header>
 
-<nav class="tabs" role="tablist">
-  <button class="tab active" data-tab="servicios" role="tab">Servicios</button>
-  <button class="tab" data-tab="abiertos" role="tab">Puertos abiertos</button>
-  <button class="tab" data-tab="conexion" role="tab">Conexión</button>
-  <button class="tab" data-tab="avanzado" role="tab">Avanzado</button>
+<nav class="tabs" role="tablist" aria-label="{{ t('app.title') }}">
+  <button class="tab active" data-tab="services" role="tab" aria-selected="true">{{ t('nav.services') }}</button>
+  <button class="tab" data-tab="open" role="tab" aria-selected="false">{{ t('nav.open_ports') }}</button>
+  <button class="tab" data-tab="connection" role="tab" aria-selected="false">{{ t('nav.connection') }}</button>
+  <button class="tab" data-tab="advanced" role="tab" aria-selected="false">{{ t('nav.advanced') }}</button>
 </nav>
 
 <main>
-  <div id="global-error" class="alert error" hidden></div>
-  <div id="global-ok" class="alert ok" hidden></div>
+  <div id="global-error" class="alert error" role="alert" hidden></div>
+  <div id="global-ok" class="alert ok" role="status" hidden></div>
 
-  <section id="tab-servicios" class="tab-panel active">
-    <div class="cards" id="summary-cards">
-      <article class="card stat"><span class="muted">Túnel</span><strong id="stat-wg">—</strong></article>
-      <article class="card stat"><span class="muted">VPS</span><strong id="stat-vps">—</strong></article>
-      <article class="card stat"><span class="muted">Puertos abiertos</span><strong id="stat-open">—</strong></article>
-      <article class="card stat"><span class="muted">Servicios detectados</span><strong id="stat-services">—</strong></article>
-      <article class="card stat"><span class="muted">Última sync</span><strong id="stat-sync">—</strong></article>
+  <section id="tab-services" class="tab-panel active">
+    <div class="cards">
+      <article class="card stat"><span class="muted">{{ t('stats.tunnel') }}</span><strong id="stat-wg">—</strong></article>
+      <article class="card stat"><span class="muted">{{ t('stats.vps') }}</span><strong id="stat-vps">—</strong></article>
+      <article class="card stat"><span class="muted">{{ t('stats.open_ports') }}</span><strong id="stat-open">—</strong></article>
+      <article class="card stat"><span class="muted">{{ t('stats.services') }}</span><strong id="stat-services">—</strong></article>
+      <article class="card stat"><span class="muted">{{ t('stats.last_sync') }}</span><strong id="stat-sync">—</strong></article>
     </div>
 
     <section class="card">
       <div class="card-head">
         <div>
-          <h2>Servicios detectados</h2>
-          <p class="muted">Apps instaladas y servicios de UmbrelOS. Elige un puerto público y ábrelo en el VPS.</p>
+          <h2>{{ t('services.title') }}</h2>
+          <p class="muted">{{ t('services.subtitle') }}</p>
         </div>
         <div class="row">
-          <input id="service-search" type="search" placeholder="Buscar app o servicio…" aria-label="Buscar">
-          <button id="refresh-services" class="ghost" type="button">Refrescar</button>
+          <input id="service-search" type="search" placeholder="{{ t('services.search') }}" aria-label="{{ t('services.search') }}">
+          <button id="refresh-services" class="ghost" type="button">{{ t('services.refresh') }}</button>
         </div>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>App / servicio</th><th>Destino</th><th>Notas</th><th>Puerto público</th><th></th></tr>
+            <tr>
+              <th>{{ t('services.col.app') }}</th>
+              <th>{{ t('services.col.target') }}</th>
+              <th>{{ t('services.col.notes') }}</th>
+              <th>{{ t('services.col.public_port') }}</th>
+              <th>{{ t('services.col.actions') }}</th>
+            </tr>
           </thead>
           <tbody id="services-body"></tbody>
         </table>
       </div>
-      <p id="services-empty" class="muted empty" hidden>
-        No se han detectado servicios. Comprueba que el socket-proxy y las apps estén en marcha.
-      </p>
+      <p id="services-empty" class="muted empty" hidden>{{ t('services.empty') }}</p>
     </section>
   </section>
 
-  <section id="tab-abiertos" class="tab-panel">
+  <section id="tab-open" class="tab-panel">
     <section class="card">
       <div class="card-head">
         <div>
-          <h2>Puertos abiertos en el VPS</h2>
-          <p class="muted">Cada puerto público se redirige por el túnel a un servicio de Umbrel.</p>
+          <h2>{{ t('open.title') }}</h2>
+          <p class="muted">{{ t('open.subtitle') }}</p>
         </div>
-        <button id="sync-now" type="button">Sincronizar ahora</button>
+        <button id="sync-now" type="button">{{ t('open.sync') }}</button>
       </div>
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Servicio</th><th>Público</th><th>Destino interno</th><th>Activo</th><th>Estado</th><th></th></tr>
+            <tr>
+              <th>{{ t('open.col.service') }}</th>
+              <th>{{ t('open.col.public') }}</th>
+              <th>{{ t('open.col.internal') }}</th>
+              <th>{{ t('open.col.active') }}</th>
+              <th>{{ t('open.col.status') }}</th>
+              <th>{{ t('open.col.actions') }}</th>
+            </tr>
           </thead>
           <tbody id="exposures-body"></tbody>
         </table>
       </div>
-      <p id="exposures-empty" class="muted empty" hidden>No hay puertos abiertos todavía.</p>
+      <p id="exposures-empty" class="muted empty" hidden>{{ t('open.empty') }}</p>
     </section>
 
-    <section class="card" id="sync-detail-card">
-      <h2>Resultado de la última sincronización</h2>
-      <div id="sync-detail" class="sync-detail muted">Sin datos.</div>
+    <section class="card">
+      <h2>{{ t('sync.title') }}</h2>
+      <div id="sync-detail" class="sync-detail muted">{{ t('sync.empty') }}</div>
     </section>
   </section>
 
-  <section id="tab-conexion" class="tab-panel">
+  <section id="tab-connection" class="tab-panel">
     <section class="card">
-      <h2>Emparejar con el VPS</h2>
-      <p class="muted">
-        Ejecuta <code>umbrel-tunnel pair</code> en el VPS (o copia el código que imprime el instalador)
-        y pégalo aquí. El código incluye la API, el token y la configuración de WireGuard.
-      </p>
+      <h2>{{ t('connection.pair_title') }}</h2>
+      <p class="muted">{{ t('connection.pair_help') }}</p>
       <form id="pair-form" class="stack">
-        <textarea id="pair-code" rows="4" placeholder="ut1.…" spellcheck="false" required></textarea>
+        <textarea id="pair-code" rows="4" placeholder="{{ t('connection.pair_placeholder') }}" spellcheck="false" required></textarea>
         <div class="row">
-          <button type="submit">Emparejar</button>
-          <button id="unpair" class="danger ghost" type="button">Desemparejar</button>
+          <button type="submit">{{ t('connection.pair_button') }}</button>
+          <button id="unpair" class="danger ghost" type="button">{{ t('connection.unpair') }}</button>
         </div>
       </form>
       <p id="pair-msg" class="msg" hidden></p>
-      <dl class="kv" id="pair-info">
-        <div><dt>API</dt><dd id="pair-api">—</dd></div>
-        <div><dt>Endpoint</dt><dd id="pair-endpoint">—</dd></div>
-        <div><dt>IP del túnel</dt><dd id="pair-ip">—</dd></div>
+      <dl class="kv">
+        <div><dt>{{ t('connection.api') }}</dt><dd id="pair-api">—</dd></div>
+        <div><dt>{{ t('connection.endpoint') }}</dt><dd id="pair-endpoint">—</dd></div>
+        <div><dt>{{ t('connection.tunnel_ip') }}</dt><dd id="pair-ip">—</dd></div>
+        <div><dt>{{ t('connection.subnet') }}</dt><dd id="pair-subnet">—</dd></div>
       </dl>
     </section>
 
     <section class="card">
       <div class="card-head">
         <div>
-          <h2>WireGuard</h2>
-          <p class="muted">Configuración activa en este contenedor.</p>
+          <h2>{{ t('connection.wg_title') }}</h2>
+          <p class="muted">{{ t('connection.wg_help') }}</p>
         </div>
         <div class="row">
-          <button id="toggle-wg" class="ghost" type="button">Mostrar</button>
-          <button id="copy-wg" class="ghost" type="button">Copiar</button>
+          <button id="toggle-wg" class="ghost" type="button">{{ t('connection.show') }}</button>
+          <button id="copy-wg" class="ghost" type="button">{{ t('connection.copy') }}</button>
+          <button id="rotate-wg" class="ghost" type="button">{{ t('connection.rotate') }}</button>
+          <button id="retry-register" class="ghost" type="button">{{ t('connection.retry_register') }}</button>
         </div>
       </div>
-      <pre id="wg-config" class="code hidden" aria-label="Configuración de WireGuard"></pre>
+      <pre id="wg-config" class="code hidden" aria-label="{{ t('connection.wg_title') }}"></pre>
       <dl class="kv">
-        <div><dt>Estado</dt><dd id="wg-state">—</dd></div>
-        <div><dt>IP local</dt><dd id="wg-address">—</dd></div>
-        <div><dt>Handshake</dt><dd id="wg-handshake">—</dd></div>
+        <div><dt>{{ t('connection.wg_state') }}</dt><dd id="wg-state">—</dd></div>
+        <div><dt>{{ t('connection.wg_address') }}</dt><dd id="wg-address">—</dd></div>
+        <div><dt>{{ t('connection.wg_handshake') }}</dt><dd id="wg-handshake">—</dd></div>
+        <div><dt>{{ t('connection.wg_public_key') }}</dt><dd id="wg-public-key">—</dd></div>
+        <div><dt>{{ t('connection.server_public_key') }}</dt><dd id="wg-server-key">—</dd></div>
       </dl>
+      <p id="wg-msg" class="msg" hidden></p>
     </section>
 
     <section class="card">
-      <h2>Emparejamiento manual</h2>
-      <p class="muted">
-        Si el código no incluye configuración de WireGuard, genera una clave aquí y añade la
-        clave pública al VPS con <code>umbrel-tunnel peer add</code>.
-      </p>
+      <h2>{{ t('connection.manual_title') }}</h2>
+      <p class="muted">{{ t('connection.manual_help') }}</p>
       <form id="manual-form" class="grid-form">
-        <label>Endpoint del VPS<input id="manual-endpoint" placeholder="203.0.113.10:51820"></label>
-        <label>Clave pública del servidor<input id="manual-server-pub" placeholder="…"></label>
-        <label>IP del cliente<input id="manual-client-ip" value="10.0.0.2"></label>
-        <div class="row"><button type="submit">Generar clave y configuración</button></div>
+        <label>{{ t('connection.manual_endpoint') }}<input id="manual-endpoint" placeholder="203.0.113.10:51820" required></label>
+        <label>{{ t('connection.manual_server_pub') }}<input id="manual-server-pub" placeholder="…" required></label>
+        <label>{{ t('connection.manual_client_ip') }}<input id="manual-client-ip" value="10.0.0.2" required></label>
+        <label>{{ t('connection.manual_subnet') }}<input id="manual-subnet" value="10.0.0.0/24" required></label>
+        <label>{{ t('connection.manual_mtu') }}<input id="manual-mtu" type="number" min="1280" max="1500" value="1420" required></label>
+        <div class="row"><button type="submit">{{ t('connection.manual_button') }}</button></div>
       </form>
       <p id="manual-msg" class="msg" hidden></p>
       <pre id="manual-output" class="code hidden"></pre>
-
-      <details class="details">
-        <summary>Pegar una configuración existente</summary>
-        <form id="apply-form" class="stack">
-          <textarea id="apply-config" rows="8" placeholder="[Interface]…" spellcheck="false"></textarea>
-          <button type="submit">Aplicar configuración</button>
-        </form>
-        <p id="apply-msg" class="msg" hidden></p>
-      </details>
     </section>
   </section>
 
-  <section id="tab-avanzado" class="tab-panel">
+  <section id="tab-advanced" class="tab-panel">
     <section class="card">
-      <h2>API del VPS</h2>
-      <p class="muted">Normalmente se rellena al emparejar. El token se guarda en <code>/data/config.json</code> con permisos 600.</p>
+      <h2>{{ t('advanced.api_title') }}</h2>
+      <p class="muted">{{ t('advanced.api_help') }}</p>
       <form id="settings-form" class="grid-form">
-        <label>URL de la API<input id="settings-api" placeholder="http://10.0.0.1:8080"></label>
-        <label>Token<input id="settings-token" type="password" placeholder="(sin cambios)"></label>
-        <label>Intervalo de sync (s)<input id="settings-interval" type="number" min="10" max="3600"></label>
-        <div class="row"><button type="submit">Guardar</button></div>
+        <label>{{ t('advanced.api_url') }}<input id="settings-api" placeholder="http://10.0.0.1:8080"></label>
+        <label>{{ t('advanced.token') }}<input id="settings-token" type="password" placeholder="{{ t('advanced.token_placeholder') }}"></label>
+        <label>{{ t('advanced.interval') }}<input id="settings-interval" type="number" min="10" max="3600"></label>
+        <div class="row"><button type="submit">{{ t('advanced.save') }}</button></div>
       </form>
       <p id="settings-msg" class="msg" hidden></p>
     </section>
 
     <section class="card">
-      <h2>Notas</h2>
+      <h2>{{ t('advanced.manual_title') }}</h2>
+      <p class="muted">{{ t('advanced.manual_help') }}</p>
+      <form id="manual-service-form" class="grid-form">
+        <label>{{ t('advanced.manual_name') }}<input id="manual-service-name" placeholder="{{ t('common.optional') }}"></label>
+        <label>{{ t('advanced.manual_host') }}<input id="manual-service-host" placeholder="myapp_web_1" required></label>
+        <label>{{ t('advanced.manual_port') }}<input id="manual-service-port" type="number" min="1" max="65535" required></label>
+        <label>{{ t('advanced.manual_protocol') }}
+          <select id="manual-service-protocol">
+            <option value="tcp">TCP</option>
+            <option value="udp">UDP</option>
+          </select>
+        </label>
+        <div class="row"><button type="submit">{{ t('advanced.manual_add') }}</button></div>
+      </form>
+      <p id="manual-service-msg" class="msg" hidden></p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>{{ t('advanced.manual_col.name') }}</th>
+              <th>{{ t('advanced.manual_col.target') }}</th>
+              <th>{{ t('advanced.manual_col.protocol') }}</th>
+              <th>{{ t('advanced.manual_col.actions') }}</th>
+            </tr>
+          </thead>
+          <tbody id="manual-services-body"></tbody>
+        </table>
+      </div>
+      <p id="manual-services-empty" class="muted empty" hidden>{{ t('advanced.manual_empty') }}</p>
+    </section>
+
+    <section class="card">
+      <h2>{{ t('advanced.notes_title') }}</h2>
       <ul class="notes">
-        <li>La API del VPS solo escucha en <code>10.0.0.1:8080</code> dentro del túnel.</li>
-        <li>El puerto 22 del VPS está reservado para su SSH; para SSH de Umbrel usa otro público (p. ej. 2222).</li>
-        <li>El proxy local solo soporta TCP. Los puertos UDP se pueden abrir desde la CLI del VPS.</li>
-        <li>Si cambias el token en el VPS, vuelve a emparejar.</li>
+        <li>{{ t('advanced.note_api') }}</li>
+        <li>{{ t('advanced.note_ssh') }}</li>
+        <li>{{ t('advanced.note_tcp') }}</li>
+        <li>{{ t('advanced.note_token') }}</li>
       </ul>
-      <p class="muted">Versión del gateway: <span id="app-version">{{ version }}</span></p>
+      <p class="muted version-line">{{ t('advanced.version', version=app_version) }}</p>
+      <form method="post" action="/logout" class="row">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+        <button type="submit" class="ghost small">{{ t('advanced.logout') }}</button>
+      </form>
     </section>
   </section>
 </main>
 
+<script type="application/json" id="ut-config">
+  {{ config_json|safe }}
+</script>
 <script src="/static/app.js"></script>
 </body>
 </html>
