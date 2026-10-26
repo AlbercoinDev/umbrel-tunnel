@@ -4,7 +4,7 @@ BIN := umbrel-tunnel
 VERSION := $(shell tr -d ' \n' < VERSION)
 DIST := dist
 LDFLAGS := -s -w -X main.version=$(VERSION)
-GOFLAGS := -trimpath
+GOFLAGS := -trimpath -buildvcs=false
 BINS := $(DIST)/$(BIN)-linux-amd64 $(DIST)/$(BIN)-linux-arm64
 
 .PHONY: all build test vet fmt check clean dist tarballs checksums
