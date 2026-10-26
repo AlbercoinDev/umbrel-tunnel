@@ -187,12 +187,16 @@
     const pairCard = $('pair-card');
     if (!onboarding || !pairCard) return;
     const paired = Boolean(state.status && state.status.paired);
-    onboarding.hidden = paired;
-    pairCard.hidden = !paired;
-    if (paired) return;
-
     const data = state.bootstrap || {};
     const active = Boolean(data.active);
+    onboarding.hidden = paired;
+    // Keep the manual ut1 form available when there is no pending bootstrap
+    // (for VPS installs done outside the app-first flow).
+    pairCard.hidden = !paired && active;
+    const unpairButton = $('unpair');
+    if (unpairButton) unpairButton.hidden = !paired;
+    if (paired) return;
+
     $('bootstrap-form').hidden = active;
     $('bootstrap-pending').hidden = !active;
     if (!active) return;

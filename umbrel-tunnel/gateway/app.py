@@ -957,28 +957,38 @@ def pair():
     except wireguard.WireGuardError as exc:
         return api_error("wg_config", 400, detail=str(exc))
 
+    last_error: VPSError | None = None
     with state.LOCK:
         config = state.load()
-        try:
-            ensure_peer(config, public)
-            state.save(config)
-        except VPSError as exc:
-            state.save(config)
-            return (
-                jsonify(
-                    {
-                        "ok": False,
-                        "paired": True,
-                        "manual": False,
-                        "public_key": public,
-                        "wg": wg_message,
-                        "code": "peer_register_failed",
-                        "error": _t("error.peer_register_failed"),
-                        "detail": str(exc),
-                    }
-                ),
-                502,
-            )
+        # The first API request triggers the WireGuard handshake, so allow a
+        # few seconds before declaring the registration failed.
+        for attempt in range(4):
+            try:
+                ensure_peer(config, public)
+                last_error = None
+                break
+            except VPSError as exc:
+                last_error = exc
+                if attempt < 3:
+                    time.sleep(1)
+        state.save(config)
+
+    if last_error is not None:
+        return (
+            jsonify(
+                {
+                    "ok": False,
+                    "paired": True,
+                    "manual": False,
+                    "public_key": public,
+                    "wg": wg_message,
+                    "code": "peer_register_failed",
+                    "error": _t("error.peer_register_failed"),
+                    "detail": str(last_error),
+                }
+            ),
+            502,
+        )
 
     result = sync_now() if wg_ok else {
         "ok": False,

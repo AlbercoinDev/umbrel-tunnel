@@ -9,7 +9,7 @@
 #
 # Usage:
 #   sudo ./install.sh [options]
-#   curl -fsSL <url>/install.sh | sudo bash -s -- --binary <url>
+#   curl -fsSL <url>/install.sh | sudo bash -s -- --binary-base <url>
 #
 set -Eeuo pipefail
 
@@ -83,6 +83,7 @@ umbrel-tunnel installer
 
 Uso:
   sudo ./install.sh [opciones]
+  curl -fsSL <url>/install.sh | sudo bash -s -- --binary-base <url>
 
 Opciones:
   --endpoint IP        IP pública fija del VPS (si se omite se detecta)
