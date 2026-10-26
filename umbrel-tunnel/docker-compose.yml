@@ -10,7 +10,7 @@ services:
   gateway:
     # Published multi-arch image (linux/amd64 + linux/arm64), pinned by digest
     # so every install uses the exact same image.
-    image: ghcr.io/albercoindev/umbrel-tunnel-gateway:1.0.0@sha256:a9c3ba5e7501c3715865f420b7ec7fcbd7b314496e9fcc740e938dca89baebcf
+    image: ghcr.io/albercoindev/umbrel-tunnel-gateway:1.0.0@sha256:a876e1d7865ae85fb262e1dda3d6067e00bbb73a1954c0fa42037120950db326
     # Restart after crashes. A clean exit is treated as an intentional stop.
     restart: on-failure
     stop_grace_period: 30s
