@@ -436,6 +436,39 @@ class DetectTests(unittest.TestCase):
             detect._entry("x", "X", "web", "x_web_1", 8080)
         )
 
+    def test_mempool_ip_maps_to_web_container_and_internal_port(self):
+        self._write_app(
+            "mempool", "name: Mempool\nport: 3006\n",
+            "services:\n  web:\n    ports: ['3006:8080']\n    networks:\n      default:\n        ipv4_address: 10.21.0.10\n  api:\n    ports: ['8999:8999']\n",
+            {"APP_HOST": "10.21.0.10", "APP_PORT": 8080},
+        )
+        with mock.patch.object(detect.socket, "gethostbyname", return_value="10.21.0.10"):
+            entries = detect._detect_apps()
+        targets = {(e["target_ip"], e["target_port"]) for e in entries}
+        self.assertEqual(targets, {("mempool_web_1", 8080), ("mempool_api_1", 8999)})
+        self.assertEqual(detect.canonical_target("10.21.0.10", "mempool"), "mempool_web_1")
+        self.assertEqual(detect.canonical_target("10.21.0.10", "manual"), "10.21.0.10")
+
+    def test_electrs_backend_does_not_use_web_container(self):
+        self._write_app(
+            "electrs", "name: Electrs\n",
+            "services:\n  web:\n    image: web\n  node:\n    ports: ['50001:50001']\n",
+            {"APP_HOST": "electrs_web_1", "APP_PORT": 3000},
+        )
+        entries = detect._detect_apps()
+        electrum = [e for e in entries if e["target_port"] == 50001]
+        self.assertEqual(len(electrum), 1)
+        self.assertEqual(electrum[0]["target_ip"], "electrs_node_1")
+
+    def test_destination_ip_is_informational(self):
+        with mock.patch.object(detect, "_detect_apps", return_value=[detect._entry("x", "X", "web", "x_web_1", 80)]), mock.patch.object(detect, "_detect_host", return_value=[]), mock.patch.object(detect.socket, "gethostbyname", return_value="10.21.0.20"):
+            entry = detect.detect_services()[0]
+        self.assertEqual(entry["target_ip"], "x_web_1")
+        self.assertEqual(entry["resolved_ip"], "10.21.0.20")
+
+    def test_variable_published_port_keeps_internal_port(self):
+        self.assertEqual(detect._ports_from_service({"ports": ["${APP_PORT}:50001"]}), [(50001, "tcp")])
+
     def test_exports_is_never_executed(self):
         app_dir = self.root / "evil-app"
         app_dir.mkdir()
@@ -758,6 +791,10 @@ class ManualServiceApiTests(unittest.TestCase):
         self.assertEqual(
             data["manual_service"]["exposure"]["id"], data["exposure"]["id"]
         )
+
+    def test_manual_public_port_defaults_to_service_port(self):
+        data = self._open_manual().get_json()
+        self.assertEqual(data["exposure"]["public_port"], 8080)
 
     def test_open_auto_picks_a_free_public_port(self):
         state_config = state.load()

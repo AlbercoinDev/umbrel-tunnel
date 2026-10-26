@@ -325,7 +325,11 @@
       appCell.append(el('span', 'sub', sub));
       tr.append(appCell);
 
-      tr.append(el('td', '', `${svc.target_ip}:${svc.target_port}`));
+      const destination = el('td', '', `${svc.target_ip}:${svc.target_port}`);
+      if (!svc.system) destination.append(el('span', 'sub', t('services.internal_ip', {
+        ip: svc.resolved_ip || t('services.ip_unavailable'),
+      })));
+      tr.append(destination);
 
       const notes = document.createElement('td');
       if (svc.sensitive) notes.append(badge(t('services.badge.sensitive'), 'warn'));
@@ -984,6 +988,16 @@
       }
     });
 
+    const manualPort = $('manual-service-port');
+    const manualPublicPort = $('manual-service-public-port');
+    let publicPortEdited = false;
+    manualPublicPort.addEventListener('input', () => {
+      publicPortEdited = manualPublicPort.value !== '';
+      if (!publicPortEdited) manualPublicPort.value = manualPort.value;
+    });
+    manualPort.addEventListener('input', () => {
+      if (!publicPortEdited) manualPublicPort.value = manualPort.value;
+    });
     $('manual-service-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const mode = event.submitter && event.submitter.dataset.mode === 'add' ? 'add' : 'open';
@@ -1017,6 +1031,7 @@
         $('manual-service-host').value = '';
         $('manual-service-port').value = '';
         $('manual-service-public-port').value = '';
+        publicPortEdited = false;
         if (mode === 'open') {
           result.requested_public_port = requested;
           const port = result.exposure ? result.exposure.public_port : '';

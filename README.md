@@ -246,6 +246,9 @@ notificaciones persistentes con el detalle del VPS o de HAProxy, y cada fila
 ofrece **Reintentar** y **Cerrar**. El panel **Diagnóstico** comprueba túnel,
 API del VPS, peer, forwards y HAProxy sin abrir ni cerrar puertos.
 
+El puerto público manual se rellena con el puerto del servicio. Puedes editarlo;
+una vez editado, no se sobrescribe al cambiar el puerto del servicio.
+
 ### Detección de servicios
 
 La app **no monta el socket de Docker**. Lee, en modo solo lectura:
@@ -257,6 +260,10 @@ La app **no monta el socket de Docker**. Lee, en modo solo lectura:
 
 Usa los nombres DNS de Docker (`<app-id>_<servicio>_1`) como destino, de modo
 que el proxy sigue funcionando aunque cambie la IP del contenedor. Los servicios
+detectados muestran debajo la IP resuelta, solo como información. Las IPs de
+`app-gateway.json` se asocian al contenedor declarado en el compose cuando es
+posible; no se asignan puertos del catálogo a contenedores web arbitrariamente.
+Los servicios
 del host (SSH/panel) se detectan contra la puerta de enlace de la red Docker. Si
 una app no se detecta, añade un servicio manual en **Avanzado**.
 
@@ -472,7 +479,7 @@ Variables de entorno útiles en el gateway:
 | Variable | Por defecto | Uso |
 | --- | --- | --- |
 | `APP_PASSWORD` | — | contraseña de login; Umbrel la inyecta |
-| `APP_VERSION` | `1.0.2` | versión mostrada |
+| `APP_VERSION` | `1.0.3` | versión mostrada |
 | `UMBREL_TUNNEL_DATA` | `/data` | estado, claves y configuración |
 | `UMBREL_APP_DATA` | `/umbrel-app-data` | manifiestos de apps (solo lectura) |
 | `NETWORK_IP` | `10.21.0.0` | red de Umbrel para detectar solapes |

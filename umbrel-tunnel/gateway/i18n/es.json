@@ -1,5 +1,7 @@
 {
   "app.title": "Umbrel Tunnel",
+  "services.internal_ip": "IP interna: {ip}",
+  "services.ip_unavailable": "No disponible",
   "app.subtitle": "Servicios de Umbrel a través de tu VPS",
   "nav.services": "Servicios",
   "nav.open_ports": "Puertos abiertos",

@@ -45,7 +45,7 @@ import sync
 import wireguard
 from vps import VPSClient, VPSError
 
-VERSION = os.environ.get("APP_VERSION", "1.0.2")
+VERSION = os.environ.get("APP_VERSION", "1.0.3")
 RESERVED_PUBLIC_PORTS = {22}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
 DEV_MODE = os.environ.get("UMBREL_TUNNEL_DEV") == "1"
@@ -297,7 +297,18 @@ def _persist_sync_state(snapshot: dict) -> None:
 def sync_now() -> dict:
     global _last_sync
     with _sync_lock:
-        config = state.load()
+        with state.LOCK:
+            config = state.load()
+            changed = False
+            for exposure in config.get("exposures", []):
+                host = str(exposure.get("target_ip") or "")
+                app_id = str(exposure.get("service_id") or "").split(":")[0]
+                canonical = detect.canonical_target(host, app_id)
+                if canonical != host:
+                    exposure["target_ip"] = canonical
+                    changed = True
+            if changed:
+                state.save(config)
         vps = config.get("vps") or {}
         if state.paired(config) and not vps.get("peer_registered"):
             public = wireguard.public_key()
@@ -698,6 +709,8 @@ def _create_or_open_exposure(
     """
     existing = _find_exposure_for_service(config, service)
     if existing is not None:
+        existing["target_ip"] = service["target_ip"]
+        existing["target_port"] = service["target_port"]
         if not existing.get("enabled", True):
             existing["enabled"] = True
         if name and not existing.get("name"):
@@ -1657,7 +1670,7 @@ def add_manual_service():
     if wants_open and protocol != "tcp":
         return api_error("unsupported_protocol", 400)
     try:
-        requested_port = _requested_public_port(body) if wants_open else None
+        requested_port = (_requested_public_port(body) or port) if wants_open else None
     except ValueError as exc:
         return api_error(str(exc), 400)
 
@@ -1735,6 +1748,8 @@ def open_manual_service(service_id: str):
         item = _manual_service(config, service_id)
         if item is None:
             return api_error("manual_service_not_found", 404)
+        if requested_port is None:
+            requested_port = int(item["port"])
         if str(item.get("protocol") or "tcp") != "tcp":
             return api_error("unsupported_protocol", 400)
         service = detect.manual_entry(item)

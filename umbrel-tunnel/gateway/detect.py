@@ -15,6 +15,7 @@ Security rules:
 from __future__ import annotations
 
 import json
+import ipaddress
 import os
 import re
 import socket
@@ -192,7 +193,7 @@ def _ports_from_service(service: dict) -> list[tuple[int, str]]:
                 ports.append((target, protocol))
                 continue
             text = str(item).strip()
-            if not text or "${" in text:
+            if not text:
                 continue
             protocol = "tcp"
             if "/" in text:
@@ -204,6 +205,51 @@ def _ports_from_service(service: dict) -> list[tuple[int, str]]:
                 continue
             ports.append((target, protocol.lower()))
     return ports
+
+
+def _container_target(host: str, services: dict, app_id: str, exports: dict | None = None) -> str:
+    """Map resolved IPs and service aliases to their stable container DNS."""
+    for name, service in services.items():
+        if name in {"app_proxy", "app-proxy"} or not isinstance(service, dict):
+            continue
+        container = str(service.get("container_name") or f"{app_id}_{name}_1")
+        aliases = {name, container}
+        networks = service.get("networks") or {}
+        if isinstance(networks, dict):
+            for network in networks.values():
+                if isinstance(network, dict):
+                    address = str(network.get("ipv4_address") or "")
+                    if address.startswith("${") and address.endswith("}"):
+                        address = (exports or {}).get(address[2:-1], address)
+                    aliases.add(address)
+                    aliases.update(str(alias) for alias in network.get("aliases", []) or [])
+        if host in aliases:
+            return container
+    return host
+
+
+def _resolved_ip(host: str) -> str:
+    try:
+        ipaddress.ip_address(host)
+        return host
+    except ValueError:
+        try:
+            return socket.gethostbyname(host)
+        except OSError:
+            return ""
+
+
+def canonical_target(host: str, app_id: str) -> str:
+    """Upgrade saved detected targets, never guessing manual/system hosts."""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", app_id) or app_id in {"manual", "umbrel-os"}:
+        return host
+    app_dir = APP_DATA / app_id
+    if app_dir.is_symlink():
+        return host
+    services = _load_yaml(app_dir / "docker-compose.yml").get("services") or {}
+    if not isinstance(services, dict):
+        return host
+    return _container_target(host, services, app_id, _parse_exports(app_dir / "exports.sh"))
 
 
 def _detect_apps() -> list[dict]:
@@ -225,7 +271,6 @@ def _detect_apps() -> list[dict]:
 
         seen: set[tuple[str, int, str]] = set()
         app_entries: list[dict] = []
-        proxy_host = ""
 
         # Primary source: umbreld's resolved app_proxy target. Fall back to the
         # raw compose environment for older installations.
@@ -245,7 +290,10 @@ def _detect_apps() -> list[dict]:
             except (TypeError, ValueError):
                 port = 0
         if host and port:
-            proxy_host = host
+            exports = _parse_exports(app_dir / "exports.sh")
+            if host.startswith("${") and host.endswith("}"):
+                host = exports.get(host[2:-1], host)
+            host = _container_target(host, compose_services, app_id, exports)
             service_name = _service_name_from_container(host, app_id)
             entry = _entry(app_id, app, service_name, host, port)
             if entry:
@@ -267,33 +315,9 @@ def _detect_apps() -> list[dict]:
                     app_entries.append(entry)
                     seen.add(key)
 
-        # Conservative exports.sh fallback: static APP_*_PORT values for
-        # catalog-known apps, only on the already verified app_proxy container.
-        # We never guess a container name and never execute the file.
-        if proxy_host:
-            exports = _parse_exports(app_dir / "exports.sh")
-            for known in (catalog.CATALOG.get(app_id) or {}).get("services", []):
-                port = int(known["port"])
-                for var in known.get("port_vars", []):
-                    value = exports.get(var, "")
-                    if value.isdigit():
-                        port = int(value)
-                        break
-                key = (proxy_host, port, "tcp")
-                if key in seen:
-                    continue
-                entry = _entry(
-                    app_id,
-                    app,
-                    known["name"],
-                    proxy_host,
-                    port,
-                    source="exports",
-                    sensitive=known.get("sensitive"),
-                )
-                if entry:
-                    app_entries.append(entry)
-                    seen.add(key)
+        # Never attach catalog ports to the web container: multi-container
+        # apps (Electrs/Mempool) have distinct protocol backends. Only use
+        # endpoints actually declared by the gateway or published ports.
 
         services.extend(app_entries)
 
@@ -401,6 +425,12 @@ def detect_services(manual: list[dict] | None = None) -> list[dict]:
     unique: dict[tuple[str, int, str], dict] = {}
     for svc in services:
         unique.setdefault((svc["target_ip"], svc["target_port"], svc["protocol"]), svc)
+    resolved = {}
+    for svc in unique.values():
+        host = svc["target_ip"]
+        if host not in resolved:
+            resolved[host] = _resolved_ip(host)
+        svc["resolved_ip"] = resolved[host]
     return sorted(unique.values(), key=lambda s: (s["system"], s["app"].lower(), s["target_port"], s["protocol"]))
 
 
