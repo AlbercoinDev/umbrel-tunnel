@@ -18,6 +18,7 @@ import json
 import os
 import re
 import secrets
+import shlex
 import threading
 import time
 import urllib.parse
@@ -50,6 +51,22 @@ APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
 DEV_MODE = os.environ.get("UMBREL_TUNNEL_DEV") == "1"
 NETWORK_IP = os.environ.get("NETWORK_IP", "").strip()
 HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,251}[A-Za-z0-9])?$")
+PAIR_TOKEN_RE = re.compile(r"(ut1\.[A-Za-z0-9_=-]+)")
+
+# Where the app points users to install the VPS side. Both values can be
+# overridden for forks, testing or air-gapped mirrors.
+DEFAULT_INSTALL_URL = (
+    "https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/main/vps/install.sh"
+)
+DEFAULT_BINARY_BASE = (
+    "https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download"
+)
+INSTALL_URL = (
+    os.environ.get("UMBREL_TUNNEL_INSTALL_URL", "").strip() or DEFAULT_INSTALL_URL
+)
+BINARY_BASE = (
+    os.environ.get("UMBREL_TUNNEL_BINARY_BASE", "").strip() or DEFAULT_BINARY_BASE
+)
 
 if not APP_PASSWORD:
     if DEV_MODE:
@@ -89,6 +106,13 @@ LOGIN_LIMIT = 5
 
 
 class PairError(ValueError):
+    def __init__(self, code: str, **params: object):
+        super().__init__(code)
+        self.code = code
+        self.params = params
+
+
+class BootstrapError(ValueError):
     def __init__(self, code: str, **params: object):
         super().__init__(code)
         self.code = code
@@ -293,8 +317,176 @@ def validate_api_url(api: str, subnet: str) -> str:
     return api
 
 
+def _bootstrap_api(bootstrap: dict) -> str:
+    return f"http://{bootstrap.get('server_ip', '')}:{int(bootstrap.get('api_port') or 0)}"
+
+
+def _bootstrap_endpoint(bootstrap: dict) -> str:
+    return f"{bootstrap.get('vps_ip', '')}:{int(bootstrap.get('wg_port') or 0)}"
+
+
+def install_command(bootstrap: dict) -> str:
+    """Build the one-line VPS installer command shown to the user.
+
+    Every value is shell-quoted because it is pasted into a root shell.
+    """
+    args = [
+        "--endpoint",
+        str(bootstrap["vps_ip"]),
+        "--token",
+        str(bootstrap["token"]),
+        "--umbrel-pubkey",
+        str(bootstrap["public_key"]),
+        "--subnet",
+        str(bootstrap["subnet"]),
+        "--server-ip",
+        str(bootstrap["server_ip"]),
+        "--umbrel-ip",
+        str(bootstrap["umbrel_ip"]),
+        "--api-port",
+        str(int(bootstrap["api_port"])),
+        "--wg-port",
+        str(int(bootstrap["wg_port"])),
+        "--mtu",
+        str(int(bootstrap["mtu"])),
+        "--binary-base",
+        BINARY_BASE,
+    ]
+    return "curl -fsSL {} | sudo bash -s -- {}".format(
+        shlex.quote(INSTALL_URL), " ".join(shlex.quote(item) for item in args)
+    )
+
+
+def bootstrap_view(bootstrap: dict) -> dict:
+    """Public (browser-facing) view of a pending bootstrap.
+
+    The token is deliberately omitted: it is already embedded in the command
+    and should not be duplicated in every status response.
+    """
+    return {
+        "active": True,
+        "vps_ip": bootstrap.get("vps_ip", ""),
+        "endpoint": _bootstrap_endpoint(bootstrap),
+        "api": _bootstrap_api(bootstrap),
+        "subnet": bootstrap.get("subnet", ""),
+        "server_ip": bootstrap.get("server_ip", ""),
+        "umbrel_ip": bootstrap.get("umbrel_ip", ""),
+        "api_port": int(bootstrap.get("api_port") or 0),
+        "wg_port": int(bootstrap.get("wg_port") or 0),
+        "mtu": int(bootstrap.get("mtu") or 0),
+        "public_key": bootstrap.get("public_key", ""),
+        "token_set": bool(bootstrap.get("token")),
+        "command": install_command(bootstrap),
+        "install_url": INSTALL_URL,
+        "binary_base": BINARY_BASE,
+        "created_at": bootstrap.get("created_at", 0),
+    }
+
+
+def _int_in_range(value: object, minimum: int, maximum: int, code: str) -> int:
+    try:
+        number = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError) as exc:
+        raise BootstrapError(code) from exc
+    if not (minimum <= number <= maximum):
+        raise BootstrapError(code)
+    return number
+
+
+def validate_vps_ip(value: str) -> str:
+    try:
+        address = ipaddress.ip_address((value or "").strip())
+    except ValueError as exc:
+        raise BootstrapError("invalid_vps_ip") from exc
+    if not isinstance(address, ipaddress.IPv4Address):
+        raise BootstrapError("invalid_vps_ip")
+    # A public VPS is required. Dev mode keeps LAN addresses usable for tests.
+    if not address.is_global and not DEV_MODE:
+        raise BootstrapError("vps_ip_not_public")
+    return str(address)
+
+
+def build_bootstrap(body: dict, existing: dict | None = None) -> dict:
+    """Create the pending bootstrap used by the app-first onboarding."""
+    existing = existing or {}
+    vps_ip = validate_vps_ip(str(body.get("vps_ip") or ""))
+    api_port = _int_in_range(body.get("api_port", 8080), 1, 65535, "invalid_bootstrap")
+    wg_port = _int_in_range(body.get("wg_port", 51820), 1, 65535, "invalid_bootstrap")
+    mtu = _int_in_range(body.get("mtu", 1420), 1280, 1500, "pair_mtu")
+
+    subnet = str(body.get("subnet") or "10.0.0.0/24").strip()
+    try:
+        network = wireguard.validate_subnet(subnet)
+    except wireguard.WireGuardError as exc:
+        raise BootstrapError("pair_subnet", detail=str(exc)) from exc
+    if wireguard.overlaps_network(subnet, NETWORK_IP):
+        raise BootstrapError("pair_overlap", subnet=subnet, network=NETWORK_IP)
+
+    server_ip = str(body.get("server_ip") or (network.network_address + 1)).strip()
+    umbrel_ip = str(body.get("umbrel_ip") or (network.network_address + 2)).strip()
+    try:
+        server_address = wireguard.validate_address(server_ip, subnet)
+        umbrel_address = wireguard.validate_address(umbrel_ip, subnet)
+    except wireguard.WireGuardError as exc:
+        raise BootstrapError("pair_address", detail=str(exc)) from exc
+    if server_address == umbrel_address:
+        raise BootstrapError("invalid_bootstrap")
+
+    try:
+        _, public_key = wireguard.ensure_keypair()
+    except wireguard.WireGuardError as exc:
+        raise BootstrapError("wg_config", detail=str(exc)) from exc
+
+    # Keep the token stable when the user regenerates the command for the same
+    # VPS; changing the VPS invalidates the old command.
+    token = str(existing.get("token") or "")
+    if not token or existing.get("vps_ip") != vps_ip:
+        token = secrets.token_urlsafe(32)
+
+    return {
+        "vps_ip": vps_ip,
+        "api_port": api_port,
+        "wg_port": wg_port,
+        "subnet": str(network),
+        "server_ip": str(server_address),
+        "umbrel_ip": str(umbrel_address),
+        "mtu": mtu,
+        "token": token,
+        "public_key": public_key,
+        "created_at": time.time(),
+    }
+
+
+def bootstrap_mismatch(payload: dict, bootstrap: dict) -> str:
+    """Return the first field of the ut1 code that differs from the bootstrap."""
+    expected = {
+        "token": str(bootstrap.get("token") or ""),
+        "api": _bootstrap_api(bootstrap),
+        "endpoint": _bootstrap_endpoint(bootstrap),
+        "subnet": str(bootstrap.get("subnet") or ""),
+        "umbrel_ip": str(bootstrap.get("umbrel_ip") or ""),
+    }
+    for field, want in expected.items():
+        if want and str(payload.get(field) or "") != want:
+            return field
+    want_mtu = bootstrap.get("mtu")
+    if want_mtu:
+        try:
+            got_mtu = int(payload.get("mtu") or 0)
+        except (TypeError, ValueError):
+            got_mtu = 0
+        if got_mtu != int(want_mtu):
+            return "mtu"
+    return ""
+
+
 def decode_pair(code: str) -> dict:
     code = (code or "").strip()
+    # The installer prints a whole block; accept it and extract the code.
+    if code and not code.startswith("ut1."):
+        match = PAIR_TOKEN_RE.search(code)
+        if match:
+            code = match.group(1)
     if not code.startswith("ut1."):
         raise PairError("pair_prefix")
     raw = code[4:]
@@ -317,7 +509,7 @@ def decode_pair(code: str) -> dict:
 
     subnet = str(payload.get("subnet") or "10.0.0.0/24").strip()
     try:
-        wireguard.validate_subnet(subnet)
+        subnet = str(wireguard.validate_subnet(subnet))
     except wireguard.WireGuardError as exc:
         raise PairError("pair_subnet", detail=str(exc)) from exc
     if wireguard.overlaps_network(subnet, NETWORK_IP):
@@ -496,12 +688,16 @@ def health():
 def status():
     config = state.load()
     vps = config.get("vps") or {}
+    bootstrap = config.get("bootstrap") or {}
+    paired = state.paired(config)
     wg = wireguard.status()
     return jsonify(
         {
             "version": VERSION,
             "uptime": int(time.time() - STARTED),
-            "paired": state.paired(config),
+            "paired": paired,
+            "bootstrap": bool(bootstrap) and not paired,
+            "bootstrap_vps_ip": (bootstrap.get("vps_ip", "") if bootstrap and not paired else ""),
             "vps": {
                 "api": vps.get("api", ""),
                 "endpoint": vps.get("endpoint", ""),
@@ -667,6 +863,40 @@ def sync_route():
     return jsonify(present_sync(sync_now()))
 
 
+@app.get("/api/bootstrap")
+def get_bootstrap():
+    config = state.load()
+    bootstrap = config.get("bootstrap") or {}
+    if state.paired(config) or not bootstrap:
+        return jsonify({"active": False})
+    return jsonify(bootstrap_view(bootstrap))
+
+
+@app.post("/api/bootstrap")
+def create_bootstrap():
+    body = request.get_json(silent=True) or {}
+    with state.LOCK:
+        config = state.load()
+        if state.paired(config):
+            return api_error("already_paired", 409)
+        try:
+            bootstrap = build_bootstrap(body, config.get("bootstrap") or {})
+        except BootstrapError as exc:
+            return api_error(exc.code, 400, **exc.params)
+        config["bootstrap"] = bootstrap
+        state.save(config)
+    return jsonify(bootstrap_view(bootstrap))
+
+
+@app.delete("/api/bootstrap")
+def delete_bootstrap():
+    with state.LOCK:
+        config = state.load()
+        config["bootstrap"] = {}
+        state.save(config)
+    return jsonify({"ok": True})
+
+
 @app.post("/api/pair")
 def pair():
     body = request.get_json(silent=True) or {}
@@ -678,6 +908,11 @@ def pair():
     api = payload["api"].rstrip("/")
     with state.LOCK:
         config = state.load()
+        bootstrap = config.get("bootstrap") or {}
+        if bootstrap:
+            field = bootstrap_mismatch(payload, bootstrap)
+            if field:
+                return api_error("pair_bootstrap_mismatch", 400, field=field)
         config["vps"] = {
             "api": api,
             "token": payload["token"],
@@ -688,6 +923,7 @@ def pair():
             "mtu": payload["mtu"],
             "peer_registered": False,
         }
+        config["bootstrap"] = {}
         state.save(config)
 
     if not payload["endpoint"] or not payload["server_pubkey"]:
@@ -797,6 +1033,7 @@ def unpair():
                 pass
         sync.remove_all(config)
         config["vps"] = {}
+        config["bootstrap"] = {}
         for exposure in config.get("exposures", []):
             exposure["vps_forward_id"] = None
             exposure["sync_error"] = ""

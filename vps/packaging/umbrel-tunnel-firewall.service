@@ -1,6 +1,6 @@
 [Unit]
 Description=umbrel-tunnel nftables firewall
-Documentation=https://github.com/umbrel-tunnel/umbrel-tunnel
+Documentation=https://github.com/AlbercoinDev/umbrel-tunnel
 After=network-pre.target wg-quick@wg0.service
 Wants=wg-quick@wg0.service
 Before=network.target

@@ -64,23 +64,25 @@ puerto por `wg0`; `--public-api` es una excepción explícita y no recomendada.
 ## Flujo de emparejamiento
 
 ```
-VPS                                   Umbrel
- │  install.sh / pair                  │
- │  genera token + clave servidor      │
- │  construye ut1 (api, token,         │
- │    endpoint, pubkey, subnet, mtu)   │
- │ ─────────── código ut1 ───────────► │
- │                                     │  valida subred/API
- │                                     │  genera clave privada local
- │                                     │  escribe wg0.conf y wg-quick up
- │ ◄──── PUT/POST /api/peers ───────── │  registra clave pública
- │  recarga wg0                        │
- │                                     │  sync de forwards
+Umbrel (app)                              VPS
+ │ POST /api/bootstrap                     │
+ │ genera clave + token, guarda bootstrap  │
+ │ muestra comando de instalación          │
+ │ ─── el usuario ejecuta install.sh ────► │
+ │                                         │ instala, crea config/keys
+ │                                         │ pre-registra pubkey de Umbrel
+ │ ◄────────── bloque ut1 ──────────────── │
+ │ valida que coincide con el bootstrap    │
+ │ escribe wg0.conf y wg-quick up          │
+ │ ──── POST/PUT /api/peers ─────────────► │ (idempotente)
+ │ sync de forwards                        │
 ```
 
 El código `ut1` **no contiene claves privadas**. El VPS solo guarda la clave
-pública de Umbrel. Si se rota la clave local, la app llama a
-`PUT /api/peers/{id}` y el VPS recarga WireGuard; si la recarga falla, el VPS
+pública de Umbrel. La app valida el token, el endpoint, la URL de la API, la
+subred, la IP y el MTU del código contra el bootstrap pendiente; así un código
+de otro VPS no puede redirigir el túnel. Si se rota la clave local, la app llama
+a `PUT /api/peers/{id}` y el VPS recarga WireGuard; si la recarga falla, el VPS
 revierte la clave anterior.
 
 ## Flujo de una exposición

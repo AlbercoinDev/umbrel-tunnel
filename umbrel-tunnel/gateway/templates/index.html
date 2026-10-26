@@ -109,7 +109,54 @@
   </section>
 
   <section id="tab-connection" class="tab-panel">
-    <section class="card">
+    <section id="onboarding" class="card onboarding" hidden>
+      <h2>{{ t('onboarding.title') }}</h2>
+      <p class="muted">{{ t('onboarding.help') }}</p>
+
+      <form id="bootstrap-form" class="stack">
+        <label class="field">{{ t('onboarding.vps_label') }}
+          <input id="bootstrap-vps-ip" inputmode="decimal" placeholder="{{ t('onboarding.vps_placeholder') }}" autocomplete="off" required>
+        </label>
+        <div class="row">
+          <button type="submit">{{ t('onboarding.generate') }}</button>
+        </div>
+      </form>
+
+      <div id="bootstrap-pending" class="stack" hidden>
+        <p class="muted">{{ t('onboarding.pending_help') }}</p>
+        <ol class="steps">
+          <li>
+            <strong>{{ t('onboarding.step1') }}</strong>
+            <pre id="bootstrap-command" class="code"></pre>
+            <div class="row">
+              <button id="copy-bootstrap-command" class="ghost small" type="button">{{ t('onboarding.copy_command') }}</button>
+              <button id="reset-bootstrap" class="danger ghost small" type="button">{{ t('onboarding.reset') }}</button>
+            </div>
+          </li>
+          <li>
+            <strong>{{ t('onboarding.step2') }}</strong>
+            <dl class="kv">
+              <div><dt>{{ t('onboarding.public_key') }}</dt><dd id="bootstrap-public-key">—</dd></div>
+              <div><dt>{{ t('onboarding.endpoint') }}</dt><dd id="bootstrap-endpoint">—</dd></div>
+              <div><dt>{{ t('onboarding.subnet') }}</dt><dd id="bootstrap-subnet">—</dd></div>
+              <div><dt>{{ t('onboarding.tunnel_ip') }}</dt><dd id="bootstrap-tunnel-ip">—</dd></div>
+            </dl>
+          </li>
+          <li>
+            <strong>{{ t('onboarding.step3') }}</strong>
+            <form id="bootstrap-link-form" class="stack">
+              <textarea id="bootstrap-code" rows="4" placeholder="{{ t('onboarding.paste_placeholder') }}" spellcheck="false" required></textarea>
+              <div class="row">
+                <button type="submit">{{ t('onboarding.link') }}</button>
+              </div>
+            </form>
+          </li>
+        </ol>
+      </div>
+      <p id="onboarding-msg" class="msg" hidden></p>
+    </section>
+
+    <section id="pair-card" class="card" hidden>
       <h2>{{ t('connection.pair_title') }}</h2>
       <p class="muted">{{ t('connection.pair_help') }}</p>
       <form id="pair-form" class="stack">

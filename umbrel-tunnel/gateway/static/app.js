@@ -20,6 +20,7 @@
     exposures: [],
     manualServices: [],
     wg: null,
+    bootstrap: null,
     search: '',
   };
   let pollTimer = null;
@@ -178,6 +179,29 @@
     }
 
     renderSyncDetail(sync);
+    renderBootstrap();
+  }
+
+  function renderBootstrap() {
+    const onboarding = $('onboarding');
+    const pairCard = $('pair-card');
+    if (!onboarding || !pairCard) return;
+    const paired = Boolean(state.status && state.status.paired);
+    onboarding.hidden = paired;
+    pairCard.hidden = !paired;
+    if (paired) return;
+
+    const data = state.bootstrap || {};
+    const active = Boolean(data.active);
+    $('bootstrap-form').hidden = active;
+    $('bootstrap-pending').hidden = !active;
+    if (!active) return;
+
+    $('bootstrap-command').textContent = data.command || '';
+    $('bootstrap-public-key').textContent = data.public_key || t('common.dash');
+    $('bootstrap-endpoint').textContent = data.endpoint || t('common.dash');
+    $('bootstrap-subnet').textContent = data.subnet || t('common.dash');
+    $('bootstrap-tunnel-ip').textContent = data.umbrel_ip || t('common.dash');
   }
 
   function renderSyncDetail(sync) {
@@ -466,6 +490,11 @@
     renderStatus();
   }
 
+  async function refreshBootstrap() {
+    state.bootstrap = await api('/api/bootstrap');
+    renderBootstrap();
+  }
+
   async function refreshServices(force = false) {
     if (force) {
       await api('/api/services/refresh', { method: 'POST' });
@@ -493,6 +522,7 @@
   async function refreshAll() {
     const results = await Promise.allSettled([
       refreshStatus(),
+      refreshBootstrap(),
       refreshServices(),
       refreshExposures(),
       refreshManualServices(),
@@ -566,6 +596,59 @@
       }
     });
 
+    $('bootstrap-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const vpsIp = $('bootstrap-vps-ip').value.trim();
+      if (!vpsIp) return;
+      try {
+        state.bootstrap = await api('/api/bootstrap', {
+          method: 'POST',
+          body: JSON.stringify({ vps_ip: vpsIp }),
+        });
+        renderBootstrap();
+        showMsg('onboarding-msg', t('onboarding.generated'), true);
+      } catch (err) {
+        showMsg('onboarding-msg', err.detail ? `${err.message} (${err.detail})` : err.message, false);
+      }
+    });
+
+    $('bootstrap-link-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const code = $('bootstrap-code').value.trim();
+      if (!code) return;
+      try {
+        const result = await api('/api/pair', { method: 'POST', body: JSON.stringify({ code }) });
+        showMsg('onboarding-msg', result.wg || t('onboarding.linked'), Boolean(result.ok));
+        $('bootstrap-code').value = '';
+        await refreshAll();
+        await loadWg();
+        if (result.ok && state.status && state.status.paired) switchTab('services');
+      } catch (err) {
+        showMsg('onboarding-msg', err.detail ? `${err.message} (${err.detail})` : err.message, false);
+      }
+    });
+
+    $('copy-bootstrap-command').addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText($('bootstrap-command').textContent);
+        showGlobal('ok', t('onboarding.copied'));
+      } catch (_) {
+        showGlobal('error', t('onboarding.copy_failed'));
+      }
+    });
+
+    $('reset-bootstrap').addEventListener('click', async () => {
+      if (!window.confirm(t('onboarding.reset_confirm'))) return;
+      try {
+        await api('/api/bootstrap', { method: 'DELETE' });
+        state.bootstrap = { active: false };
+        renderBootstrap();
+        showMsg('onboarding-msg', t('onboarding.reset_done'), true);
+      } catch (err) {
+        showMsg('onboarding-msg', err.message, false);
+      }
+    });
+
     $('pair-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const code = $('pair-code').value.trim();
@@ -588,6 +671,7 @@
         showGlobal('ok', t('connection.unpaired'));
         await refreshAll();
         await loadWg();
+        switchTab('connection');
       } catch (err) {
         showGlobal('error', err.message);
       }
@@ -712,6 +796,9 @@
       await refreshSettings();
       if (state.status && state.status.paired) {
         await loadWg();
+      } else {
+        // First run: send the user straight to the VPS onboarding wizard.
+        switchTab('connection');
       }
     } catch (err) {
       showGlobal('error', err.message);

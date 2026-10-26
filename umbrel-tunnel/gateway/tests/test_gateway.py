@@ -13,10 +13,12 @@ from __future__ import annotations
 import base64
 import json
 import os
+import shlex
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
 TMP = tempfile.mkdtemp(prefix="umbrel-tunnel-test-")
 os.environ["UMBREL_TUNNEL_DATA"] = TMP
@@ -159,6 +161,222 @@ class PairValidationTests(unittest.TestCase):
         with self.assertRaises(gateway.PairError) as ctx:
             gateway.decode_pair(code)
         self.assertEqual(ctx.exception.code, "pair_invalid")
+
+
+def pair_code(**overrides) -> str:
+    payload = {
+        "v": 1,
+        "api": "http://10.0.0.1:8080",
+        "token": "tok",
+        "endpoint": "8.8.8.8:51820",
+        "server_pubkey": SERVER_KEY,
+        "umbrel_ip": "10.0.0.2",
+        "subnet": "10.0.0.0/24",
+        "mtu": 1420,
+    }
+    payload.update(overrides)
+    return "ut1." + base64.urlsafe_b64encode(
+        json.dumps(payload).encode()
+    ).decode().rstrip("=")
+
+
+class BootstrapTests(unittest.TestCase):
+    def setUp(self):
+        state.CONFIG_FILE.unlink(missing_ok=True)
+        gateway._login_attempts.clear()
+        self.client = gateway.app.test_client()
+        self._login()
+
+    def _csrf(self):
+        with self.client.session_transaction() as sess:
+            return sess.get("csrf", "")
+
+    def _login(self):
+        self.client.get("/login")
+        return self.client.post(
+            "/login",
+            data={"password": "test-password", "csrf_token": self._csrf()},
+            follow_redirects=False,
+        )
+
+    def _post(self, path, payload):
+        return self.client.post(
+            path,
+            json=payload,
+            headers={"X-CSRF-Token": self._csrf()},
+        )
+
+    def _create_bootstrap(self, **overrides):
+        body = {"vps_ip": "8.8.8.8"}
+        body.update(overrides)
+        with mock.patch.object(
+            gateway.wireguard, "ensure_keypair", return_value=(VALID_KEY, SERVER_KEY)
+        ):
+            response = self._post("/api/bootstrap", body)
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        return response.get_json()
+
+    def test_bootstrap_is_initially_inactive(self):
+        response = self.client.get("/api/bootstrap")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"active": False})
+
+    def test_bootstrap_builds_quoted_install_command(self):
+        data = self._create_bootstrap()
+        self.assertTrue(data["active"])
+        self.assertEqual(data["endpoint"], "8.8.8.8:51820")
+        self.assertEqual(data["api"], "http://10.0.0.1:8080")
+        self.assertEqual(data["public_key"], SERVER_KEY)
+        self.assertNotIn("token", data)
+        self.assertIn("--umbrel-pubkey", data["command"])
+        self.assertIn("--binary-base", data["command"])
+        self.assertIn("install.sh", data["command"])
+
+        tokens = shlex.split(data["command"])
+        self.assertEqual(tokens[tokens.index("--endpoint") + 1], "8.8.8.8")
+        self.assertEqual(tokens[tokens.index("--subnet") + 1], "10.0.0.0/24")
+        self.assertEqual(tokens[tokens.index("--umbrel-ip") + 1], "10.0.0.2")
+
+    def test_install_command_quotes_untrusted_values(self):
+        bootstrap = {
+            "vps_ip": "8.8.8.8",
+            "token": "a b'c",
+            "public_key": SERVER_KEY,
+            "subnet": "10.0.0.0/24",
+            "server_ip": "10.0.0.1",
+            "umbrel_ip": "10.0.0.2",
+            "api_port": 8080,
+            "wg_port": 51820,
+            "mtu": 1420,
+        }
+        tokens = shlex.split(gateway.install_command(bootstrap))
+        self.assertEqual(tokens[tokens.index("--token") + 1], "a b'c")
+
+    def test_bootstrap_rejects_private_vps_ip(self):
+        response = self._post("/api/bootstrap", {"vps_ip": "192.168.1.10"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["code"], "vps_ip_not_public")
+
+    def test_bootstrap_rejects_invalid_subnet(self):
+        response = self._post(
+            "/api/bootstrap", {"vps_ip": "8.8.8.8", "subnet": "10.0.0.0/31"}
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["code"], "pair_subnet")
+
+    def test_bootstrap_reuses_token_for_same_vps(self):
+        self._create_bootstrap()
+        first = state.load()["bootstrap"]["token"]
+        self._create_bootstrap()
+        second = state.load()["bootstrap"]["token"]
+        self.assertEqual(first, second)
+
+    def test_pasted_installer_block_is_accepted(self):
+        code = pair_code()
+        block = (
+            "--- umbrel-tunnel: emparejamiento ---\n"
+            f"Código: {code}\n"
+            "Pega este bloque en la app de Umbrel.\n"
+            "---------------------------------\n"
+        )
+        payload = gateway.decode_pair(block)
+        self.assertEqual(payload["token"], "tok")
+        self.assertEqual(payload["api"], "http://10.0.0.1:8080")
+
+    def test_pair_rejects_code_that_does_not_match_bootstrap(self):
+        self._create_bootstrap()
+        response = self._post("/api/pair", {"code": pair_code(token="other")})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["code"], "pair_bootstrap_mismatch")
+        self.assertTrue(state.load()["bootstrap"])
+
+    def test_matching_bootstrap_pairs_and_clears_it(self):
+        data = self._create_bootstrap()
+        token = state.load()["bootstrap"]["token"]
+        code = pair_code(
+            token=token,
+            endpoint=data["endpoint"],
+            api=data["api"],
+            umbrel_ip=data["umbrel_ip"],
+            subnet=data["subnet"],
+        )
+        sync_result = {
+            "ok": True,
+            "created": 0,
+            "updated": 0,
+            "deleted": 0,
+            "errors": [],
+            "vps_status": None,
+            "at": 1,
+        }
+        with (
+            mock.patch.object(
+                gateway.wireguard, "ensure_keypair", return_value=(VALID_KEY, SERVER_KEY)
+            ),
+            mock.patch.object(gateway.wireguard, "apply_saved", return_value=(True, "ok")),
+            mock.patch.object(gateway, "ensure_peer"),
+            mock.patch.object(gateway, "sync_now", return_value=sync_result),
+        ):
+            response = self._post("/api/pair", {"code": code})
+
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertTrue(response.get_json()["ok"])
+        config = state.load()
+        self.assertTrue(state.paired(config))
+        self.assertEqual(config["bootstrap"], {})
+        self.assertEqual(config["vps"]["token"], token)
+
+    def test_pair_without_bootstrap_still_works(self):
+        code = pair_code()
+        sync_result = {
+            "ok": True,
+            "created": 0,
+            "updated": 0,
+            "deleted": 0,
+            "errors": [],
+            "vps_status": None,
+            "at": 1,
+        }
+        with (
+            mock.patch.object(
+                gateway.wireguard, "ensure_keypair", return_value=(VALID_KEY, SERVER_KEY)
+            ),
+            mock.patch.object(gateway.wireguard, "apply_saved", return_value=(True, "ok")),
+            mock.patch.object(gateway, "ensure_peer"),
+            mock.patch.object(gateway, "sync_now", return_value=sync_result),
+        ):
+            response = self._post("/api/pair", {"code": code})
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertTrue(state.paired(state.load()))
+
+    def test_bootstrap_rejected_when_already_paired(self):
+        self._create_bootstrap()
+        token = state.load()["bootstrap"]["token"]
+        code = pair_code(token=token)
+        with (
+            mock.patch.object(
+                gateway.wireguard, "ensure_keypair", return_value=(VALID_KEY, SERVER_KEY)
+            ),
+            mock.patch.object(gateway.wireguard, "apply_saved", return_value=(True, "ok")),
+            mock.patch.object(gateway, "ensure_peer"),
+            mock.patch.object(
+                gateway,
+                "sync_now",
+                return_value={
+                    "ok": True,
+                    "created": 0,
+                    "updated": 0,
+                    "deleted": 0,
+                    "errors": [],
+                    "vps_status": None,
+                    "at": 1,
+                },
+            ),
+        ):
+            self._post("/api/pair", {"code": code})
+        response = self._post("/api/bootstrap", {"vps_ip": "8.8.8.8"})
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()["code"], "already_paired")
 
 
 class DetectTests(unittest.TestCase):
@@ -324,6 +542,19 @@ class AuthTests(unittest.TestCase):
         self.assertNotIn("<script>", html)
         csp = response.headers["Content-Security-Policy"]
         self.assertIn("script-src 'self'", csp)
+
+    def test_index_contains_app_first_onboarding(self):
+        self._login()
+        html = self.client.get("/").get_data(as_text=True)
+        for element_id in (
+            "onboarding",
+            "bootstrap-form",
+            "bootstrap-pending",
+            "bootstrap-command",
+            "bootstrap-link-form",
+            "pair-card",
+        ):
+            self.assertIn(f'id="{element_id}"', html)
 
     def test_unsafe_next_is_ignored(self):
         self.client.get("/login")

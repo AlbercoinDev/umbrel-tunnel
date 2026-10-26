@@ -38,9 +38,50 @@ Internet ──► VPS (IP fija) ──► wg0 ──► Umbrel ──► HAProx
 - La app se instala desde una Community App Store o copiando la carpeta
   `umbrel-tunnel/` a `app-data` en un entorno de desarrollo.
 
+## Flujo recomendado: primero la app, después el VPS
+
+La app genera las claves y el token, y te muestra el comando exacto que debes
+ejecutar en el VPS. No tienes que copiar claves a mano.
+
+1. Instala **Umbrel Tunnel** en Umbrel (ver
+   [Instalación de la app](#instalación-de-la-app-en-umbrel)).
+2. Abre la app. Si aún no hay VPS vinculado, la pestaña **Conexión** muestra el
+   asistente y te pide la **IP pública fija** del VPS.
+3. Pulsa **Generar comando de instalación**. La app crea su par de claves
+   WireGuard, un token nuevo y muestra un comando de una línea.
+4. Copia el comando y ejecútalo en el VPS como root.
+5. Al terminar, el instalador imprime un bloque de emparejamiento con
+   `Código: ut1.…` y lo guarda en `/root/umbrel-tunnel-pairing.txt`.
+6. Vuelve a la app, pega el **bloque completo** y pulsa **Vincular VPS**.
+7. La app comprueba que el código coincide con el comando que generó, levanta
+   WireGuard, registra su clave pública en el VPS y queda lista para abrir
+   puertos.
+
 ## Instalación del VPS
 
-### Opción A: desde este repositorio (recomendada mientras no haya GitHub)
+### Opción A: comando generado por la app (recomendada)
+
+El comando tiene esta forma (la app rellena todos los valores):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/main/vps/install.sh \
+  | sudo bash -s -- \
+      --endpoint 203.0.113.10 \
+      --token '<TOKEN>' \
+      --umbrel-pubkey '<CLAVE_PUBLICA_DE_LA_APP>' \
+      --subnet 10.0.0.0/24 \
+      --server-ip 10.0.0.1 \
+      --umbrel-ip 10.0.0.2 \
+      --api-port 8080 \
+      --wg-port 51820 \
+      --mtu 1420 \
+      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download
+```
+
+`--binary-base` descarga `umbrel-tunnel-linux-amd64` o
+`umbrel-tunnel-linux-arm64` según la arquitectura del VPS.
+
+### Opción B: desde este repositorio (desarrollo)
 
 En tu máquina local:
 
@@ -59,7 +100,7 @@ escribirla. Opciones útiles:
 ./scripts/push.sh root@vps --purge          # desinstala y borra datos
 ```
 
-### Opción B: tarball manual
+### Opción C: tarball manual
 
 ```bash
 cd vps
@@ -69,13 +110,6 @@ ssh root@203.0.113.10
 tar -xzf /tmp/umbrel-tunnel-1.0.0-linux-amd64.tar.gz -C /tmp
 cd /tmp/umbrel-tunnel-1.0.0-linux-amd64
 sudo ./install.sh --endpoint 203.0.113.10
-```
-
-### Opción C: una línea (cuando el proyecto esté en GitHub)
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/<OWNER>/<REPO>/main/vps/install.sh \
-  | sudo bash -s -- --binary https://github.com/<OWNER>/<REPO>/releases/latest/download/umbrel-tunnel-linux-amd64
 ```
 
 ### Qué hace el instalador
@@ -88,19 +122,25 @@ curl -fsSL https://raw.githubusercontent.com/<OWNER>/<REPO>/main/vps/install.sh 
    ninguna clave privada de Umbrel: la app genera la suya y registra su clave
    pública por la API.
 6. Verifica que la API responde en `10.0.0.1:8080` y que escucha solo en el túnel.
-7. Imprime el código de emparejamiento y lo guarda en
-   `/root/umbrel-tunnel-pairing.txt` (permisos `600`).
+7. Imprime el bloque de emparejamiento y lo guarda en
+   `/root/umbrel-tunnel-pairing.txt` (permisos `600`). Pega ese bloque en la
+   app para vincular el VPS.
 
 Opciones principales:
 
 ```text
 --endpoint IP        IP pública fija (si se omite, se detecta)
+--token TOKEN        token de API (la app lo genera; si se omite, se genera)
 --wg-port PORT       puerto UDP de WireGuard (51820)
 --api-port PORT      puerto de la API dentro del túnel (8080)
 --subnet CIDR        subred del túnel (10.0.0.0/24)
---umbrel-pubkey KEY  pre-registra la clave pública de Umbrel (opcional)
+--server-ip IP       IP del VPS dentro del túnel (10.0.0.1)
+--umbrel-ip IP       IP de Umbrel dentro del túnel (10.0.0.2)
+--mtu N              MTU del túnel (1420)
+--umbrel-pubkey KEY  pre-registra la clave pública de Umbrel (la app la genera)
 --public-api         expone la API fuera del túnel (no recomendado)
 --binary URL|RUTA    binario a instalar
+--binary-base URL    base de descarga; añade /umbrel-tunnel-linux-$ARCH
 --force              sustituye configuración existente (hace backup de wg0.conf)
 --no-start           instala sin arrancar
 --dry-run            muestra lo que haría
@@ -114,33 +154,35 @@ existentes salvo que uses `--force`.
 
 ### Community App Store
 
-1. Publica este repositorio en GitHub (o usa una URL accesible por Umbrel).
-2. En UmbrelOS: **App Store → … → Community App Stores → Add store**.
-3. Pega la URL del repositorio. El archivo `umbrel-app-store.yml` de la raíz
-   define el ID `umbrel-tunnel` y el nombre de la tienda.
-4. Instala **Umbrel Tunnel**.
-
-> **Imagen pendiente de publicación.** `umbrel-tunnel/docker-compose.yml` usa
-> `ghcr.io/umbrel-tunnel/umbrel-tunnel-gateway:1.0.0` como marcador. Antes de
-> instalar en un Umbrel real hay que publicar la imagen multi-arquitectura y
-> añadir su digest (`@sha256:…`). Consulta
-> [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#publicar-la-imagen-del-gateway).
+1. En UmbrelOS: **App Store → … → Community App Stores → Add store**.
+2. Pega la URL del repositorio:
+   `https://github.com/AlbercoinDev/umbrel-tunnel`.
+   El archivo `umbrel-app-store.yml` de la raíz define el ID `umbrel-tunnel` y
+   el nombre de la tienda.
+3. Instala **Umbrel Tunnel**. La imagen del gateway se publica en
+   `ghcr.io/albercoindev/umbrel-tunnel-gateway` y el compose la fija por digest
+   (`@sha256:…`) para que cada instalación use exactamente la misma imagen.
 
 ### Emparejar Umbrel
 
-1. Instala la app `umbrel-tunnel` en Umbrel.
-2. En el VPS ejecuta `umbrel-tunnel pair` (o usa el código que imprimió el
-   instalador).
-3. Abre la app, pestaña **Conexión**, pega el código `ut1.…` y pulsa
-   **Emparejar**.
+Sigue el [flujo recomendado](#flujo-recomendado-primero-la-app-después-el-vps):
 
-El código incluye la URL de la API (`http://10.0.0.1:8080`), el token, el
+1. Instala la app `umbrel-tunnel` en Umbrel.
+2. Abre la app y ve a **Conexión**. Introduce la IP pública del VPS y pulsa
+   **Generar comando de instalación**.
+3. Ejecuta ese comando en el VPS.
+4. Pega el bloque que imprime el instalador en la app y pulsa **Vincular VPS**.
+
+El código `ut1` incluye la URL de la API (`http://10.0.0.1:8080`), el token, el
 endpoint del VPS, la clave pública del servidor, la IP de Umbrel en el túnel, la
 subred y el MTU. **No incluye ninguna clave privada de WireGuard**: la app crea
 su par de claves y registra la pública en el VPS con `POST/PUT /api/peers`.
 
-La app valida que la URL de la API pertenezca a la subred del túnel y que la
-subred no solape con la red de Umbrel (`NETWORK_IP`, por defecto `10.21.0.0/16`).
+La app valida que el código coincida con el comando que generó (token, endpoint,
+API, subred, IP y MTU), que la URL de la API pertenezca a la subred del túnel y
+que la subred no solape con la red de Umbrel (`NETWORK_IP`, por defecto
+`10.21.0.0/16`). Si el VPS se reinstala con otro token, genera un comando nuevo
+con **Cambiar VPS**.
 
 ### Emparejamiento manual
 
@@ -398,6 +440,8 @@ Variables de entorno útiles en el gateway:
 | `UMBREL_TUNNEL_WG_CONF` | `/etc/wireguard/wg0.conf` | ruta de `wg0.conf` (tests) |
 | `UMBREL_TUNNEL_HAPROXY_CONF` | `/etc/haproxy/haproxy.cfg` | ruta de HAProxy (tests) |
 | `UMBREL_TUNNEL_HAPROXY_PID` | `/var/run/haproxy.pid` | PID de HAProxy (tests) |
+| `UMBREL_TUNNEL_INSTALL_URL` | `…/AlbercoinDev/umbrel-tunnel/main/vps/install.sh` | script que muestra el asistente |
+| `UMBREL_TUNNEL_BINARY_BASE` | `…/releases/latest/download` | base del binario del VPS |
 | `UMBREL_TUNNEL_DEV` | — | `1` permite arrancar sin `APP_PASSWORD` |
 
 Documentación adicional:
@@ -411,15 +455,12 @@ Documentación adicional:
 
 - El proxy local de Umbrel solo gestiona **TCP**. Para UDP usa
   `umbrel-tunnel forward add --protocol udp` en el VPS.
-- La imagen del gateway aún no está publicada; el compose usa un marcador. Hay
-  que publicarla y fijar el digest antes de instalar desde la tienda.
-- La app no se ha probado en un Umbrel real en este entorno (no hay Docker ni
-  HAProxy locales). El gateway tiene tests unitarios; el código Go tiene tests
-  unitarios y de integración.
+- La app no se ha probado en un Umbrel real en este entorno de desarrollo (no
+  hay Docker ni HAProxy locales). El gateway tiene tests unitarios; el código Go
+  tiene tests unitarios y de integración. Las pruebas reales en umbrelOS las
+  hace el usuario.
 - El nombre de la red compartida se asume `umbrel_main_network`; Umbrel lo
   inyecta en tiempo de ejecución.
-- El alojamiento en GitHub y las URLs del manifiesto son marcadores
-  (`umbrel-tunnel/umbrel-tunnel`) hasta que se publique el repositorio.
 
 ## Estructura
 

@@ -86,44 +86,34 @@ probar la nueva versión.
 ## Publicar la imagen del gateway
 
 El compose de la tienda **no usa `build:`**. Umbrel descarga una imagen ya
-publicada. Mientras no exista, `ghcr.io/umbrel-tunnel/umbrel-tunnel-gateway:1.0.0`
-es un marcador y la instalación fallará.
+publicada. El workflow `.github/workflows/gateway-image.yml` construye y publica
+`linux/amd64` + `linux/arm64` en GHCR cuando se empuja un tag `v*`:
 
-1. Crea el repositorio en GitHub y el paquete en GHCR.
-2. Autentícate:
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
 
-   ```bash
-   echo "$GITHUB_TOKEN" | docker login ghcr.io -u <OWNER> --password-stdin
-   ```
+El workflow publica `ghcr.io/albercoindev/umbrel-tunnel-gateway:1.0.0` y
+`:latest`. Después:
 
-3. Construye y publica `amd64` + `arm64`:
-
-   ```bash
-   cd umbrel-tunnel/gateway
-   docker buildx build \
-     --platform linux/amd64,linux/arm64 \
-     -t ghcr.io/<OWNER>/umbrel-tunnel-gateway:1.0.0 \
-     --push .
-   ```
-
-4. Obtén el digest del índice multi-arquitectura:
+1. Haz público el paquete en **GitHub → Packages → umbrel-tunnel-gateway →
+   Package settings → Change visibility**.
+2. Obtén el digest del índice multi-arquitectura:
 
    ```bash
-   docker buildx imagetools inspect ghcr.io/<OWNER>/umbrel-tunnel-gateway:1.0.0
+   docker buildx imagetools inspect \
+     ghcr.io/albercoindev/umbrel-tunnel-gateway:1.0.0
    ```
 
-5. Fija imagen + digest en `umbrel-tunnel/docker-compose.yml`:
+3. Fija imagen + digest en `umbrel-tunnel/docker-compose.yml`:
 
    ```yaml
-   image: ghcr.io/<OWNER>/umbrel-tunnel-gateway:1.0.0@sha256:<DIGEST>
+   image: ghcr.io/albercoindev/umbrel-tunnel-gateway:1.0.0@sha256:<DIGEST>
    ```
 
-6. Actualiza `repo`, `support`, `website`, `submitter` y `submission` en
-   `umbrel-tunnel/umbrel-app.yml` con las URLs reales.
-
-El linter oficial de Umbrel exige que la imagen tenga etiqueta **y** digest.
-Hasta que se publique, el linter reporta `image.pinned`; es el único error
-esperado.
+4. Sube el cambio. El linter oficial de Umbrel exige etiqueta **y** digest; sin
+   el digest reporta `image.pinned`.
 
 ## Linter de Umbrel
 
@@ -154,8 +144,9 @@ name: "Umbrel Tunnel"
 El ID de la app (`umbrel-tunnel`) debe empezar por el ID de la tienda. Para
 publicar:
 
-1. Sube el repositorio a GitHub.
-2. En UmbrelOS, añade la URL del repositorio como Community App Store.
+1. Sube el repositorio a GitHub (`AlbercoinDev/umbrel-tunnel`).
+2. En UmbrelOS, añade `https://github.com/AlbercoinDev/umbrel-tunnel` como
+   Community App Store.
 3. Instala la app.
 
 La app debe estar en una carpeta con el mismo nombre que su `id`
@@ -165,9 +156,11 @@ La app debe estar en una carpeta con el mismo nombre que su `id`
 
 1. Actualiza `vps/VERSION`.
 2. `cd vps && make dist`.
-3. Publica los tarballs y `SHA256SUMS` como assets del release.
-4. El instalador de una línea puede usar
-   `--binary https://github.com/<OWNER>/<REPO>/releases/latest/download/umbrel-tunnel-linux-amd64`.
+3. Publica los tarballs, los binarios sueltos y `SHA256SUMS` como assets del
+   release.
+4. El instalador de una línea usa
+   `--binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download`,
+   que resuelve `umbrel-tunnel-linux-$ARCH`.
 
 ## Convenciones
 

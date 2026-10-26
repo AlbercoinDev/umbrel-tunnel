@@ -24,15 +24,15 @@ releaseNotes: >-
   pairing, per-peer WireGuard key registration and rotation, local TCP proxying
   with HAProxy, and opening/closing public ports on the VPS. Spanish and English
   UI with automatic language detection.
-developer: umbrel-tunnel
-website: https://github.com/umbrel-tunnel/umbrel-tunnel
+developer: AlbercoinDev
+website: https://github.com/AlbercoinDev/umbrel-tunnel
 dependencies: []
-repo: https://github.com/umbrel-tunnel/umbrel-tunnel
-support: https://github.com/umbrel-tunnel/umbrel-tunnel/issues
+repo: https://github.com/AlbercoinDev/umbrel-tunnel
+support: https://github.com/AlbercoinDev/umbrel-tunnel/issues
 port: 8642
 gallery: []
 path: ""
 deterministicPassword: true
 torOnly: false
-submitter: umbrel-tunnel
-submission: https://github.com/umbrel-tunnel/umbrel-tunnel
+submitter: AlbercoinDev
+submission: https://github.com/AlbercoinDev/umbrel-tunnel

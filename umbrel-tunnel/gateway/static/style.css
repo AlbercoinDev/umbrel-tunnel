@@ -210,6 +210,12 @@ td .sub { display: block; color: var(--muted); font-size: .76rem; margin-top: 2p
 .details summary { cursor: pointer; color: var(--muted); font-size: .85rem; }
 .details summary:hover { color: var(--text); }
 
+.onboarding { border-color: rgba(247, 147, 26, .45); box-shadow: 0 10px 30px rgba(247, 147, 26, .08); }
+.steps { margin: 14px 0 0; padding-left: 22px; display: grid; gap: 20px; font-size: .88rem; }
+.steps > li { padding-left: 4px; }
+.steps > li > strong { display: block; margin-bottom: 8px; }
+.steps .kv { margin-top: 10px; }
+
 .notes { margin: 0; padding-left: 18px; display: grid; gap: 8px; font-size: .86rem; color: var(--muted); }
 .notes code, p code, li code { background: #0d1522; border: 1px solid var(--line); border-radius: 5px; padding: 1px 5px; font-size: .8em; }
 

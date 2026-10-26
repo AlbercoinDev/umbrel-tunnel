@@ -82,6 +82,14 @@ Por eso `validate_api_url` exige:
 La misma validación se aplica al cambiar la URL desde **Avanzado** cuando ya se
 conoce la subred.
 
+Además, el flujo app-first guarda un *bootstrap* pendiente con el token, el
+endpoint, la URL de la API, la subred, la IP de Umbrel y el MTU. Al pegar el
+código, la app rechaza (`pair_bootstrap_mismatch`) cualquier valor que no
+coincida con ese bootstrap. El token del bootstrap se guarda en
+`/data/config.json` (`600`) y se elimina al emparejar o desemparejar. El
+comando de instalación se construye con `shlex.quote` porque se pega en una
+shell de root.
+
 ## Recomendaciones operativas
 
 - Mantén el VPS actualizado y limita SSH por clave.

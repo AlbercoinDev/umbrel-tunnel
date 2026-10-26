@@ -16,6 +16,7 @@ LOCK = threading.RLock()
 
 DEFAULT = {
     "vps": {},
+    "bootstrap": {},
     "exposures": [],
     "manual_services": [],
     "settings": {
@@ -38,6 +39,8 @@ def _merge_defaults(data: dict) -> dict:
         merged["manual_services"] = []
     if not isinstance(merged.get("vps"), dict):
         merged["vps"] = {}
+    if not isinstance(merged.get("bootstrap"), dict):
+        merged["bootstrap"] = {}
     return merged
 
 

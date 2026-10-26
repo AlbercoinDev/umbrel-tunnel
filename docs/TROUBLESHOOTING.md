@@ -70,12 +70,16 @@ Si falla:
 
 ## El código `ut1` se rechaza
 
-- Debe empezar por `ut1.` y no tener espacios ni saltos de línea.
+- Puedes pegar el bloque completo del instalador; la app extrae el primer
+  `ut1.…`. Si pegas solo el código, debe empezar por `ut1.`.
+- Si la app muestra `pair_bootstrap_mismatch`, el código no corresponde al
+  comando que generó. Pulsa **Cambiar VPS**, genera un comando nuevo y
+  ejecútalo, o revisa que no hayas emparejado con otro VPS.
 - La URL de la API debe ser una IP dentro de la subred del túnel. Un código que
   apunte a `192.168.x.x`, `127.0.0.1` o un dominio se rechaza por seguridad.
 - La subred no puede solaparse con `NETWORK_IP` de Umbrel.
 - Si el código se generó antes de rotar el token, vuelve a ejecutar
-  `umbrel-tunnel pair`.
+  `umbrel-tunnel pair` o genera un bootstrap nuevo en la app.
 
 ## HAProxy no arranca o un puerto no responde
 

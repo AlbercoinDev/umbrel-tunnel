@@ -58,7 +58,11 @@ TOKEN=""
 API_PORT=8080
 WG_PORT=51820
 SUBNET=""
+SERVER_IP=""
+UMBREL_IP=""
+MTU=""
 UMBREL_PUBKEY=""
+BINARY_BASE=""
 PUBLIC_API=0
 FORCE=0
 DRY_RUN=0
@@ -86,9 +90,13 @@ Opciones:
   --api-port PORT      puerto de la API dentro del túnel (por defecto 8080)
   --wg-port PORT       puerto UDP de WireGuard (por defecto 51820)
   --subnet CIDR        subred del túnel (por defecto 10.0.0.0/24)
-  --umbrel-pubkey KEY  clave pública de Umbrel (emparejamiento manual)
+  --server-ip IP       IP del servidor dentro del túnel (por defecto 10.0.0.1)
+  --umbrel-ip IP       IP de Umbrel dentro del túnel (por defecto 10.0.0.2)
+  --mtu N              MTU del túnel (por defecto 1420)
+  --umbrel-pubkey KEY  clave pública de Umbrel (la genera la app)
   --public-api         expone la API fuera del túnel (no recomendado)
   --binary URL|RUTA    binario a instalar (por defecto, el que acompaña al script)
+  --binary-base URL    base de descarga; añade /umbrel-tunnel-linux-$ARCH
   --force              sustituye configuración y wg0.conf existentes
   --no-start           instala pero no arranca los servicios
   --dry-run            muestra lo que haría sin cambiar nada
@@ -113,10 +121,18 @@ parse_args() {
       --wg-port=*) WG_PORT="${1#*=}"; shift ;;
       --subnet) SUBNET="${2:-}"; shift 2 ;;
       --subnet=*) SUBNET="${1#*=}"; shift ;;
+      --server-ip) SERVER_IP="${2:-}"; shift 2 ;;
+      --server-ip=*) SERVER_IP="${1#*=}"; shift ;;
+      --umbrel-ip) UMBREL_IP="${2:-}"; shift 2 ;;
+      --umbrel-ip=*) UMBREL_IP="${1#*=}"; shift ;;
+      --mtu) MTU="${2:-}"; shift 2 ;;
+      --mtu=*) MTU="${1#*=}"; shift ;;
       --umbrel-pubkey) UMBREL_PUBKEY="${2:-}"; shift 2 ;;
       --umbrel-pubkey=*) UMBREL_PUBKEY="${1#*=}"; shift ;;
       --binary) BINARY="${2:-}"; shift 2 ;;
       --binary=*) BINARY="${1#*=}"; shift ;;
+      --binary-base) BINARY_BASE="${2:-}"; shift 2 ;;
+      --binary-base=*) BINARY_BASE="${1#*=}"; shift ;;
       --public-api) PUBLIC_API=1; shift ;;
       --force) FORCE=1; shift ;;
       --no-start) NO_START=1; shift ;;
@@ -134,6 +150,13 @@ parse_args() {
     || die "--api-port inválido: $API_PORT"
   [[ "$WG_PORT" =~ ^[0-9]+$ ]] && ((WG_PORT >= 1 && WG_PORT <= 65535)) \
     || die "--wg-port inválido: $WG_PORT"
+  if [[ -n "$MTU" ]]; then
+    [[ "$MTU" =~ ^[0-9]+$ ]] && ((MTU >= 1280 && MTU <= 1500)) \
+      || die "--mtu inválido: $MTU (1280-1500)"
+  fi
+  if [[ -n "$BINARY" && -n "$BINARY_BASE" ]]; then
+    die "usa --binary o --binary-base, no ambos"
+  fi
 }
 
 # ------------------------------------------------------------------- utils ---
@@ -381,6 +404,10 @@ install_packages() {
 }
 
 resolve_binary() {
+  if [[ -z "$BINARY" && -n "$BINARY_BASE" ]]; then
+    BINARY="${BINARY_BASE%/}/$PROGRAM-linux-$ARCH"
+    log "descarga desde la base indicada: $BINARY"
+  fi
   if [[ -n "$BINARY" ]]; then
     if [[ "$BINARY" =~ ^https?:// ]]; then
       if ((DRY_RUN)); then
@@ -524,6 +551,9 @@ init_config() {
   [[ -n "$ENDPOINT" ]] && args+=(--endpoint "$ENDPOINT")
   [[ -n "$TOKEN" ]] && args+=(--token "$TOKEN")
   [[ -n "$SUBNET" ]] && args+=(--subnet "$SUBNET")
+  [[ -n "$SERVER_IP" ]] && args+=(--server-ip "$SERVER_IP")
+  [[ -n "$UMBREL_IP" ]] && args+=(--umbrel-ip "$UMBREL_IP")
+  [[ -n "$MTU" ]] && args+=(--mtu "$MTU")
   [[ -n "$UMBREL_PUBKEY" ]] && args+=(--umbrel-pubkey "$UMBREL_PUBKEY")
   args+=(--api-port "$API_PORT" --wg-port "$WG_PORT")
   ((PUBLIC_API)) && args+=(--public-api)
@@ -632,20 +662,26 @@ print_pairing() {
   printf '\n%s================ EMPAREJAMIENTO ================%s\n' "$C_BOLD" "$C_RESET"
   cat "$PAIRING_FILE"
   printf '%s================================================%s\n' "$C_BOLD" "$C_RESET"
+  log "pega el bloque completo en la app de Umbrel (pestaña Conexión)"
   log "guardado en $PAIRING_FILE (solo root)"
 }
 
 print_summary() {
   local endpoint="$ENDPOINT"
+  local server_ip="${SERVER_IP:-10.0.0.1}"
   if [[ -z "$endpoint" ]]; then
     endpoint="$PUBLIC_IP"
   fi
   printf '\n%sInstalación completada%s\n' "$C_GREEN$C_BOLD" "$C_RESET"
   printf '  Versión:      %s\n' "$VERSION"
   printf '  Endpoint:     %s:%s/udp\n' "${endpoint:-?}" "$WG_PORT"
-  printf '  API (túnel):  http://10.0.0.1:%s\n' "$API_PORT"
-  printf '  Panel VPS:    http://10.0.0.1:%s (desde el túnel)\n' "$API_PORT"
-  printf '\nSiguiente paso: instala la app de Umbrel y pega el código ut1.\n'
+  printf '  API (túnel):  http://%s:%s\n' "$server_ip" "$API_PORT"
+  printf '  Panel VPS:    http://%s:%s (desde el túnel)\n' "$server_ip" "$API_PORT"
+  if [[ -n "$UMBREL_PUBKEY" ]]; then
+    printf '\nVuelve a la app de Umbrel y pega el bloque de emparejamiento.\n'
+  else
+    printf '\nSiguiente paso: instala la app de Umbrel y pega el código ut1.\n'
+  fi
   if ((FIREWALL_WARNING)); then
     printf '\n%sAviso:%s hay un firewall del sistema activo. Abre %s/udp y el tráfico\n' \
       "$C_YELLOW" "$C_RESET" "$WG_PORT"

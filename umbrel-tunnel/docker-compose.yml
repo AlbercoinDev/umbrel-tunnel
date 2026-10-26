@@ -8,10 +8,9 @@ services:
       APP_PORT: 8081
 
   gateway:
-    # Published multi-arch image (linux/amd64 + linux/arm64). The digest is
-    # added when the image is first published; replace the registry owner when
-    # the project gets its public GitHub repository.
-    image: ghcr.io/umbrel-tunnel/umbrel-tunnel-gateway:1.0.0
+    # Published multi-arch image (linux/amd64 + linux/arm64), pinned by digest
+    # so every install uses the exact same image.
+    image: ghcr.io/albercoindev/umbrel-tunnel-gateway:1.0.0
     # Restart after crashes. A clean exit is treated as an intentional stop.
     restart: on-failure
     stop_grace_period: 30s

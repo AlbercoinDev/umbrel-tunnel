@@ -99,6 +99,7 @@ func Block(p Pairing) string {
 	if code, err := Encode(p); err == nil {
 		fmt.Fprintf(&b, "Código: %s\n", code)
 	}
+	b.WriteString("Pega este bloque en la app de Umbrel.\n")
 	b.WriteString("---------------------------------\n")
 	return b.String()
 }
