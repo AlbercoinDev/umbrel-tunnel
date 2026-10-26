@@ -15,6 +15,7 @@ import json
 import os
 import shlex
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,8 +34,11 @@ os.environ.pop("UMBREL_TUNNEL_DEV", None)
 import app as gateway  # noqa: E402
 import detect  # noqa: E402
 import i18n  # noqa: E402
+import proxy  # noqa: E402
 import state  # noqa: E402
+import sync  # noqa: E402
 import wireguard  # noqa: E402
+from vps import VPSError  # noqa: E402
 
 
 VALID_KEY = "a" * 43 + "="
@@ -576,6 +580,331 @@ class AuthTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 302)
         self.assertEqual(self.client.get("/api/status").status_code, 401)
+
+
+class FakeVPS:
+    """In-memory VPS API used by the manual-service API tests."""
+
+    forwards: list[dict] = []
+    fail = ""
+    conflict_ports: set[int] = set()
+    block_started: threading.Event | None = None
+    block_release: threading.Event | None = None
+
+    @classmethod
+    def reset(cls):
+        cls.forwards = []
+        cls.fail = ""
+        cls.conflict_ports = set()
+        cls.block_started = None
+        cls.block_release = None
+
+    def __init__(self, api: str, token: str, timeout: float = 6.0):
+        self.api = api
+        self.token = token
+        self.timeout = timeout
+
+    def _maybe_block(self):
+        if self.block_started is not None and self.block_release is not None:
+            self.block_started.set()
+            self.block_release.wait(2)
+
+    def health(self):
+        return {"ok": True}
+
+    def status(self):
+        return {
+            "version": "test",
+            "peers_connected": 1,
+            "forwards_enabled": len(self.forwards),
+        }
+
+    def list_forwards(self):
+        self._maybe_block()
+        if self.fail:
+            raise VPSError(self.fail)
+        return [dict(item) for item in self.forwards]
+
+    def create_forward(self, payload: dict):
+        if int(payload["public_port"]) in self.conflict_ports:
+            raise VPSError(
+                f"VPS HTTP 409: puerto {payload['public_port']} en uso", status=409
+            )
+        forward = {"id": f"f{len(self.forwards) + 1}", **payload}
+        self.forwards.append(forward)
+        return dict(forward)
+
+    def update_forward(self, forward_id: str, patch: dict):
+        if int(patch.get("public_port", 0)) in self.conflict_ports:
+            raise VPSError(
+                f"VPS HTTP 409: puerto {patch['public_port']} en uso", status=409
+            )
+        for forward in self.forwards:
+            if forward["id"] == forward_id:
+                forward.update(patch)
+                return dict(forward)
+        raise VPSError("forward not found", status=404)
+
+    def delete_forward(self, forward_id: str):
+        self.forwards = [f for f in self.forwards if f["id"] != forward_id]
+
+    def list_peers(self):
+        return [
+            {
+                "id": "p1",
+                "allowed_ip": "10.0.0.2",
+                "public_key": "test-public-key",
+            }
+        ]
+
+    def create_peer(self, peer: dict):
+        return {"id": "p1", **peer}
+
+    def update_peer(self, peer_id: str, patch: dict):
+        return {"id": peer_id, **patch}
+
+    def delete_peer(self, peer_id: str):
+        return None
+
+
+class ManualServiceApiTests(unittest.TestCase):
+    def setUp(self):
+        state.CONFIG_FILE.unlink(missing_ok=True)
+        gateway._login_attempts.clear()
+        gateway._detect_cache["at"] = 0
+        FakeVPS.reset()
+        self.client = gateway.app.test_client()
+        self._login()
+        state.save(
+            {
+                "vps": {
+                    "api": "http://10.0.0.1:8080",
+                    "token": "secret-token",
+                    "umbrel_ip": "10.0.0.2",
+                    "subnet": "10.0.0.0/24",
+                    "peer_registered": True,
+                },
+                "bootstrap": {},
+                "exposures": [],
+                "manual_services": [],
+                "settings": {
+                    "sync_interval": 30,
+                    "tunnel_port_start": 20000,
+                    "tunnel_port_end": 29999,
+                },
+            }
+        )
+        self.patches = [
+            mock.patch.object(sync, "VPSClient", FakeVPS),
+            mock.patch.object(gateway, "VPSClient", FakeVPS),
+            mock.patch.object(sync.proxy, "apply", return_value="ok"),
+            mock.patch.object(sync.proxy, "stop"),
+            mock.patch.object(sync.wireguard, "address", return_value="10.0.0.2"),
+            mock.patch.object(detect, "detect_services", return_value=[]),
+            mock.patch.object(gateway.wireguard, "public_key", return_value="test-public-key"),
+        ]
+        for patcher in self.patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _csrf(self):
+        with self.client.session_transaction() as sess:
+            return sess.get("csrf", "")
+
+    def _login(self):
+        self.client.get("/login")
+        return self.client.post(
+            "/login",
+            data={"password": "test-password", "csrf_token": self._csrf()},
+            follow_redirects=False,
+        )
+
+    def _post(self, path, payload):
+        return self.client.post(
+            path,
+            json=payload,
+            headers={"X-CSRF-Token": self._csrf()},
+        )
+
+    def _patch(self, path, payload):
+        return self.client.patch(
+            path,
+            json=payload,
+            headers={"X-CSRF-Token": self._csrf()},
+        )
+
+    def _open_manual(self, **overrides):
+        payload = {
+            "name": "Demo",
+            "host": "demo_web_1",
+            "port": 8080,
+            "protocol": "tcp",
+            "open": True,
+        }
+        payload.update(overrides)
+        return self._post("/api/manual-services", payload)
+
+    def test_add_and_open_creates_forward_and_exposure(self):
+        response = self._open_manual(public_port=8080)
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        data = response.get_json()
+        self.assertTrue(data["ok"], data)
+        self.assertTrue(data["created"])
+        self.assertTrue(data["exposure"]["vps_forward_id"])
+        self.assertEqual(data["exposure"]["public_port"], 8080)
+        self.assertEqual(data["sync"]["error_count"], 0)
+        self.assertEqual(len(FakeVPS.forwards), 1)
+        self.assertEqual(FakeVPS.forwards[0]["public_port"], 8080)
+        self.assertEqual(
+            data["manual_service"]["exposure"]["id"], data["exposure"]["id"]
+        )
+
+    def test_open_auto_picks_a_free_public_port(self):
+        state_config = state.load()
+        state_config["exposures"].append(
+            {
+                "id": "existing",
+                "service_id": "other",
+                "name": "Existing",
+                "public_port": 8080,
+                "tunnel_port": 20000,
+                "target_ip": "other_web_1",
+                "target_port": 80,
+                "protocol": "tcp",
+                "enabled": True,
+            }
+        )
+        state.save(state_config)
+        response = self._open_manual(public_port=8080)
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        data = response.get_json()
+        self.assertTrue(data["port_changed"])
+        self.assertNotEqual(data["exposure"]["public_port"], 8080)
+        self.assertTrue(data["exposure"]["vps_forward_id"])
+
+    def test_vps_409_is_retried_on_another_port(self):
+        FakeVPS.conflict_ports = {8080}
+        response = self._open_manual(public_port=8080)
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        data = response.get_json()
+        self.assertTrue(data["ok"], data)
+        self.assertNotEqual(data["exposure"]["public_port"], 8080)
+        self.assertEqual(
+            data["sync"].get("retried_public_port"),
+            data["exposure"]["public_port"],
+        )
+        self.assertEqual(len(FakeVPS.forwards), 1)
+        self.assertEqual(
+            FakeVPS.forwards[0]["public_port"], data["exposure"]["public_port"]
+        )
+
+    def test_repeated_open_reuses_manual_service_and_exposure(self):
+        first = self._open_manual(public_port=8080).get_json()
+        second = self._open_manual(public_port=8080).get_json()
+        self.assertFalse(second["created"])
+        self.assertTrue(second["existing"])
+        self.assertEqual(first["exposure"]["id"], second["exposure"]["id"])
+        self.assertEqual(len(FakeVPS.forwards), 1)
+
+    def test_unreachable_vps_marks_exposure_as_failed(self):
+        FakeVPS.fail = "no se pudo contactar con el VPS"
+        response = self._open_manual()
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        data = response.get_json()
+        self.assertFalse(data["ok"])
+        self.assertTrue(data["sync"]["details"])
+        self.assertTrue(data["exposure"]["sync_error"])
+        listed = self.client.get("/api/exposures").get_json()
+        self.assertFalse(listed[0]["sync_ok"])
+        self.assertIn("no se pudo contactar", listed[0]["sync_error_detail"])
+
+    def test_proxy_failure_is_visible_on_the_exposure(self):
+        with mock.patch.object(
+            proxy, "apply", side_effect=proxy.ProxyError("haproxy no arranca")
+        ):
+            response = self._open_manual()
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        data = response.get_json()
+        self.assertFalse(data["ok"])
+        self.assertIn("proxy local", data["exposure"]["sync_error_detail"])
+
+    def test_proxy_failure_does_not_hide_the_vps_conflict_retry(self):
+        FakeVPS.conflict_ports = {8080}
+        with mock.patch.object(
+            proxy, "apply", side_effect=proxy.ProxyError("haproxy no arranca")
+        ):
+            response = self._open_manual(public_port=8080)
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        data = response.get_json()
+        self.assertNotEqual(data["exposure"]["public_port"], 8080)
+        self.assertEqual(
+            data["sync"].get("retried_public_port"),
+            data["exposure"]["public_port"],
+        )
+        self.assertIn("proxy local", data["exposure"]["sync_error_detail"])
+
+    def test_proxy_failure_is_cleared_after_a_successful_apply(self):
+        with mock.patch.object(
+            proxy, "apply", side_effect=proxy.ProxyError("haproxy no arranca")
+        ):
+            self._open_manual()
+        failed = self.client.get("/api/exposures").get_json()[0]
+        self.assertFalse(failed["sync_ok"])
+        self._post("/api/sync", {})
+        healed = self.client.get("/api/exposures").get_json()[0]
+        self.assertTrue(healed["sync_ok"], healed)
+        self.assertNotIn("proxy local", healed.get("sync_error_detail", ""))
+
+    def test_changing_to_a_conflicting_public_port_is_retried(self):
+        created = self._open_manual(public_port=8080).get_json()
+        exposure_id = created["exposure"]["id"]
+        FakeVPS.conflict_ports = {9090}
+        response = self._patch(
+            f"/api/exposures/{exposure_id}", {"public_port": 9090}
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        data = response.get_json()
+        self.assertTrue(data["ok"], data)
+        self.assertTrue(data["port_changed"])
+        self.assertNotEqual(data["exposure"]["public_port"], 9090)
+        self.assertEqual(
+            data["sync"].get("retried_public_port"),
+            data["exposure"]["public_port"],
+        )
+
+    def test_diagnostics_checks_vps_without_leaking_the_token(self):
+        self._open_manual(public_port=8080)
+        response = self.client.get("/api/diagnostics")
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertTrue(data["vps"]["reachable"])
+        self.assertEqual(data["forwards"]["total"], 1)
+        self.assertEqual(data["forwards"]["ours"], 1)
+        self.assertTrue(data["peer"]["matches"])
+        self.assertIn("vps", {check["id"] for check in data["checks"]})
+        self.assertNotIn("secret-token", response.get_data(as_text=True))
+
+    def test_sync_does_not_hold_the_state_lock_during_network_calls(self):
+        FakeVPS.block_started = threading.Event()
+        FakeVPS.block_release = threading.Event()
+        worker = threading.Thread(target=gateway.sync_now)
+        worker.start()
+        self.assertTrue(FakeVPS.block_started.wait(2), "sync never reached the VPS")
+        loaded = threading.Event()
+
+        def read_state():
+            state.load()
+            loaded.set()
+
+        reader = threading.Thread(target=read_state)
+        reader.start()
+        self.assertTrue(
+            loaded.wait(1),
+            "state.load() blocked while sync was waiting for the VPS",
+        )
+        FakeVPS.block_release.set()
+        worker.join(3)
+        self.assertFalse(worker.is_alive())
 
 
 if __name__ == "__main__":

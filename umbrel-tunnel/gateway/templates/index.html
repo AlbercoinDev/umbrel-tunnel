@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ t('app.title') }} · Umbrel</title>
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v={{ app_version }}">
 </head>
 <body>
 <header class="topbar">
@@ -34,8 +34,7 @@
 </nav>
 
 <main>
-  <div id="global-error" class="alert error" role="alert" hidden></div>
-  <div id="global-ok" class="alert ok" role="status" hidden></div>
+  <div id="toast-stack" class="toast-stack" aria-live="polite" aria-atomic="false"></div>
 
   <section id="tab-services" class="tab-panel active">
     <div class="cards">
@@ -241,7 +240,11 @@
             <option value="udp">UDP</option>
           </select>
         </label>
-        <div class="row"><button type="submit">{{ t('advanced.manual_add') }}</button></div>
+        <label>{{ t('advanced.manual_public_port') }}<input id="manual-service-public-port" type="number" min="1" max="65535" placeholder="{{ t('advanced.manual_public_port_placeholder') }}"></label>
+        <div class="row">
+          <button type="submit" data-mode="open">{{ t('advanced.manual_add_open') }}</button>
+          <button type="submit" class="ghost" data-mode="add">{{ t('advanced.manual_add_only') }}</button>
+        </div>
       </form>
       <p id="manual-service-msg" class="msg" hidden></p>
       <div class="table-wrap">
@@ -251,6 +254,7 @@
               <th>{{ t('advanced.manual_col.name') }}</th>
               <th>{{ t('advanced.manual_col.target') }}</th>
               <th>{{ t('advanced.manual_col.protocol') }}</th>
+              <th>{{ t('advanced.manual_col.status') }}</th>
               <th>{{ t('advanced.manual_col.actions') }}</th>
             </tr>
           </thead>
@@ -258,6 +262,17 @@
         </table>
       </div>
       <p id="manual-services-empty" class="muted empty" hidden>{{ t('advanced.manual_empty') }}</p>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <div>
+          <h2>{{ t('advanced.diag_title') }}</h2>
+          <p class="muted">{{ t('advanced.diag_help') }}</p>
+        </div>
+        <button id="run-diagnostics" class="ghost" type="button">{{ t('advanced.diag_run') }}</button>
+      </div>
+      <div id="diagnostics-result" class="diag muted">{{ t('advanced.diag_help') }}</div>
     </section>
 
     <section class="card">
@@ -280,6 +295,6 @@
 <script type="application/json" id="ut-config">
   {{ config_json|safe }}
 </script>
-<script src="/static/app.js"></script>
+<script src="/static/app.js?v={{ app_version }}"></script>
 </body>
 </html>

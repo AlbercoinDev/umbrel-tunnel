@@ -66,6 +66,52 @@ def remove_all(config: dict) -> None:
         pass
 
 
+def _mark_error(exposure: dict, message: str, status: int | None = None) -> None:
+    exposure["sync_error"] = message
+    exposure["sync_error_status"] = status
+    exposure["last_sync"] = time.time()
+
+
+def _clear_error(exposure: dict) -> None:
+    exposure["sync_error"] = ""
+    exposure["sync_error_status"] = None
+    exposure.pop("proxy_error", None)
+
+
+def _strip_proxy_error(exposure: dict) -> None:
+    """Remove a previous local proxy failure without touching VPS errors.
+
+    ``sync_error_status`` carries the HTTP status of the VPS failure (a 409 is
+    retried on a free public port). Replacing the whole error here used to wipe
+    that status, so the automatic retry never ran.
+    """
+    previous = str(exposure.pop("proxy_error", "") or "")
+    if not previous:
+        return
+    current = str(exposure.get("sync_error") or "")
+    if current == previous:
+        _clear_error(exposure)
+    elif current.endswith(f"; {previous}"):
+        exposure["sync_error"] = current[: -len(f"; {previous}")]
+
+
+def _mark_proxy_error(exposure: dict, message: str) -> None:
+    exposure["proxy_error"] = message
+    current = str(exposure.get("sync_error") or "")
+    if current and not current.startswith("proxy local:"):
+        # Keep the VPS error as the primary reason: it is the one the retry
+        # logic understands.
+        exposure["sync_error"] = f"{current}; {message}"
+        exposure["last_sync"] = time.time()
+    else:
+        _mark_error(exposure, message)
+
+
+def _mark_all(config: dict, message: str, status: int | None = None) -> None:
+    for exposure in config.get("exposures", []):
+        _mark_error(exposure, message, status)
+
+
 def sync(config: dict) -> dict:
     result = {
         "ok": False,
@@ -78,7 +124,9 @@ def sync(config: dict) -> dict:
     }
     vps = config.get("vps") or {}
     if not (vps.get("api") and vps.get("token")):
-        result["errors"].append("no emparejado con un VPS")
+        message = "no emparejado con un VPS"
+        result["errors"].append(message)
+        _mark_all(config, message)
         _apply_proxy(config, result)
         return result
 
@@ -87,7 +135,10 @@ def sync(config: dict) -> dict:
         remote = client.list_forwards()
         result["vps_status"] = client.status()
     except VPSError as exc:
+        # Every exposure is unverified when the VPS cannot be reached. Keeping
+        # the old "synchronized" badge would hide the real failure.
         result["errors"].append(str(exc))
+        _mark_all(config, str(exc), exc.status)
         _apply_proxy(config, result)
         return result
 
@@ -114,12 +165,11 @@ def sync(config: dict) -> dict:
                     result["deleted"] += 1
                 except VPSError as exc:
                     if exc.status != 404:
-                        exposure["sync_error"] = str(exc)
+                        _mark_error(exposure, str(exc), exc.status)
                         result["errors"].append(f"{exposure.get('name')}: {exc}")
-                        exposure["last_sync"] = time.time()
                         continue
             exposure["vps_forward_id"] = None
-            exposure["sync_error"] = ""
+            _clear_error(exposure)
             exposure["last_sync"] = time.time()
             continue
 
@@ -138,9 +188,9 @@ def sync(config: dict) -> dict:
                 if not _same(current, desired):
                     client.update_forward(current["id"], desired)
                     result["updated"] += 1
-            exposure["sync_error"] = ""
+            _clear_error(exposure)
         except VPSError as exc:
-            exposure["sync_error"] = str(exc)
+            _mark_error(exposure, str(exc), exc.status)
             result["errors"].append(f"{exposure.get('name')}: {exc}")
         exposure["last_sync"] = time.time()
 
@@ -172,11 +222,23 @@ def _apply_proxy(config: dict, result: dict) -> None:
         for e in config.get("exposures", [])
         if e.get("enabled", True) and str(e.get("protocol") or "tcp") == "tcp"
     ]
+    # A previous local proxy failure must not survive a successful apply.
+    for exposure in enabled:
+        _strip_proxy_error(exposure)
     if not enabled:
-        proxy.stop()
+        try:
+            proxy.stop()
+        except Exception as exc:  # noqa: BLE001 - se reporta, no rompe el sync
+            result["errors"].append(f"proxy local: {exc}")
         return
     bind_ip = wireguard.address() or "10.0.0.2"
     try:
         proxy.apply(enabled, bind_ip)
     except proxy.ProxyError as exc:
-        result["errors"].append(f"proxy local: {exc}")
+        message = f"proxy local: {exc}"
+        result["errors"].append(message)
+        # The VPS DNAT can be perfectly healthy and the service still be
+        # unreachable when HAProxy fails. Mark the exposure instead of showing
+        # a misleading "synchronized" badge.
+        for exposure in enabled:
+            _mark_proxy_error(exposure, message)

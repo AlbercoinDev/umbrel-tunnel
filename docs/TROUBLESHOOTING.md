@@ -140,6 +140,34 @@ la siguiente sincronización. También puedes borrarlos a mano:
 sudo umbrel-tunnel forward rm <id>
 ```
 
+## Abrir un servicio manual falla
+
+En **Avanzado → Servicios manuales** cada fila muestra el estado real y, si hay
+error, el detalle y un botón **Reintentar**. Antes de tocar el VPS, pulsa
+**Avanzado → Diagnóstico → Comprobar ahora**; comprueba emparejamiento,
+WireGuard, API del VPS, peer, forwards y HAProxy sin abrir ni cerrar puertos.
+
+Mensajes habituales:
+
+- **`public port ... already in use` (HTTP 409)**: otro forward usa ese puerto en
+  el VPS. La app reintenta sola en un puerto libre y avisa del cambio. Si vuelve
+  a fallar, elige un puerto distinto o revisa `umbrel-tunnel forward list`.
+- **`target ... is not a peer` (HTTP 400)**: el `target_ip` del forward no es la
+  IP del peer de Umbrel. Vuelve a emparejar o corrige el peer en el VPS.
+- **`no se pudo contactar con el VPS`**: el túnel no está levantado o la API no
+  responde. Revisa `wg show` y `systemctl status umbrel-tunnel`.
+- **`proxy local: ...`**: el VPS sí creó el forward, pero HAProxy no arrancó o no
+  pudo escribir su configuración. Revisa el log del contenedor:
+
+  ```bash
+  docker logs --tail 100 albercoin-store-umbrel-tunnel_gateway_1
+  ```
+
+  El destino debe resolver por DNS de Docker (`<app-id>_<servicio>_1`) y el
+  puerto interno debe estar escuchando dentro del contenedor.
+- **`service_not_found` / `manual_service_not_found`**: el servicio se borró o la
+  detección aún no lo ve. Pulsa **Refrescar** y vuelve a añadirlo.
+
 ## `no se pudo aplicar nftables: ... specify 'dnat ip'`
 
 Las versiones 1.0.0 y anteriores generaban `dnat to` dentro de una tabla

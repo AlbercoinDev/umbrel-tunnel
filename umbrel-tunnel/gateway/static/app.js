@@ -47,13 +47,60 @@
   }
 
   function showGlobal(kind, message) {
-    const box = kind === 'ok' ? $('global-ok') : $('global-error');
-    const other = kind === 'ok' ? $('global-error') : $('global-ok');
-    other.hidden = true;
-    box.textContent = message;
-    box.hidden = false;
-    window.clearTimeout(showGlobal._timer);
-    showGlobal._timer = window.setTimeout(() => { box.hidden = true; }, 8000);
+    const stack = $('toast-stack');
+    if (!stack) return;
+    // Errors stay until the user dismisses them: the old 8-second alert made
+    // failed opens look like nothing had happened.
+    while (stack.children.length >= 4) stack.firstElementChild.remove();
+    const toast = el('div', `toast ${kind === 'ok' ? 'ok' : 'error'}`);
+    toast.setAttribute('role', kind === 'ok' ? 'status' : 'alert');
+    toast.append(el('div', 'toast-text', message));
+    const close = el('button', 'toast-close', '×');
+    close.type = 'button';
+    close.setAttribute('aria-label', t('common.close'));
+    close.addEventListener('click', () => toast.remove());
+    toast.append(close);
+    stack.append(toast);
+    if (kind === 'ok') {
+      window.setTimeout(() => toast.remove(), 8000);
+    }
+  }
+
+  function syncFeedback(result, okMessage, changedMessage) {
+    // ``/api/sync`` returns the sync result directly; other endpoints wrap it
+    // in ``{sync: ...}``. Accept both so a failed manual sync is never
+    // reported as successful.
+    const sync = (result && result.sync) || result || {};
+    const details = sync.details || [];
+    if (details.length) {
+      showGlobal('error', details.join('\n'));
+      return false;
+    }
+    const errors = sync.errors || [];
+    if (errors.length) {
+      showGlobal('error', errors.join(' · '));
+      return false;
+    }
+    if (result && result.port_changed && result.requested_public_port) {
+      showGlobal('warn', changedMessage || t('open.port_changed', {
+        requested: result.requested_public_port,
+        port: result.exposure ? result.exposure.public_port : '',
+      }));
+    }
+    if (okMessage) showGlobal('ok', okMessage);
+    return true;
+  }
+
+  function setPending(button, pending, label) {
+    if (!button) return;
+    if (pending) {
+      button.dataset.label = button.textContent;
+      button.disabled = true;
+      button.textContent = label;
+    } else {
+      button.disabled = false;
+      if (button.dataset.label) button.textContent = button.dataset.label;
+    }
   }
 
   function showMsg(id, message, ok) {
@@ -137,7 +184,7 @@
 
     if (!st.paired) {
       setPill('pill-vps', t('status.vps_unpaired'), 'bad');
-    } else if (sync.ok) {
+    } else if (sync.ok && !Number(st.exposures_failed || 0)) {
       setPill('pill-vps', t('status.vps_ok'), 'ok');
     } else {
       setPill('pill-vps', t('status.vps_errors'), 'bad');
@@ -288,6 +335,7 @@
           svc.exposure_enabled ? t('services.badge.open') : t('services.badge.off'),
           svc.exposure_enabled ? 'ok' : 'warn',
         ));
+        if (svc.exposure_error) notes.append(badge(t('open.badge.error'), 'bad'));
       } else if (svc.protocol === 'udp') {
         notes.append(badge(t('services.badge.udp'), 'info'));
       } else {
@@ -302,7 +350,9 @@
       input.type = 'number';
       input.min = '1';
       input.max = '65535';
-      input.value = String(svc.default_public_port || svc.target_port);
+      input.value = String(svc.exposed && svc.public_port
+        ? svc.public_port
+        : (svc.default_public_port || svc.target_port));
       input.dataset.portFor = svc.id;
       input.disabled = Boolean(svc.exposed) || !svc.can_open;
       input.setAttribute('aria-label', t('services.aria.port', { name: displayName }));
@@ -324,7 +374,7 @@
       button.disabled = Boolean(svc.exposed) || !svc.can_open;
       if (!svc.exposed && !svc.can_open) button.title = t('services.udp_unsupported');
       if (!svc.exposed && svc.can_open) {
-        button.addEventListener('click', () => exposeService(svc));
+        button.addEventListener('click', () => exposeService(svc, button));
       }
       actionCell.append(button);
       tr.append(actionCell);
@@ -368,6 +418,12 @@
         const detail = exposure.sync_error_detail || exposure.sync_error;
         statusCell.title = detail;
         statusCell.append(el('span', 'sub', exposure.sync_error));
+        if (detail && detail !== exposure.sync_error) {
+          const wrap = el('details', 'details');
+          wrap.append(el('summary', '', t('sync.details')));
+          wrap.append(el('div', 'error-line', detail));
+          statusCell.append(wrap);
+        }
       } else {
         statusCell.append(badge(t('open.badge.synced'), 'ok'));
         if (exposure.vps_forward_id) statusCell.append(el('span', 'sub', `VPS ${exposure.vps_forward_id}`));
@@ -375,6 +431,12 @@
       tr.append(statusCell);
 
       const actions = document.createElement('td');
+      if (exposure.sync_error) {
+        const retry = el('button', 'ghost small', t('open.retry'));
+        retry.type = 'button';
+        retry.addEventListener('click', () => retryExposure(exposure, retry));
+        actions.append(retry);
+      }
       const change = el('button', 'ghost small', t('open.change_port'));
       change.type = 'button';
       change.addEventListener('click', () => changePublicPort(exposure));
@@ -394,10 +456,54 @@
     $('manual-services-empty').hidden = state.manualServices.length > 0;
     for (const item of state.manualServices) {
       const tr = document.createElement('tr');
-      tr.append(el('td', '', item.name || `${item.host}:${item.port}`));
-      tr.append(el('td', '', `${item.host}:${item.port}`));
+      const nameCell = document.createElement('td');
+      nameCell.append(el('strong', '', item.name || `${item.host}:${item.port}`));
+      nameCell.append(el('span', 'sub', item.id ? `ID ${item.id}` : ''));
+      tr.append(nameCell);
+      tr.append(el('td', '', item.target || `${item.host}:${item.port}`));
       tr.append(el('td', '', String(item.protocol || 'tcp').toUpperCase()));
+
+      const statusCell = document.createElement('td');
+      const exposure = item.exposure || null;
+      if (!exposure) {
+        statusCell.append(badge(t('advanced.manual_status_closed'), 'info'));
+      } else if (exposure.sync_error) {
+        statusCell.append(badge(t('advanced.manual_exposure_error'), 'bad'));
+        statusCell.append(el('span', 'sub', exposure.sync_error_detail || exposure.sync_error));
+      } else {
+        statusCell.append(badge(t('advanced.manual_status_open', {
+          port: exposure.public_port,
+        }), 'ok'));
+      }
+      tr.append(statusCell);
+
       const actions = document.createElement('td');
+      if (!exposure && (item.protocol || 'tcp') === 'tcp') {
+        const open = el('button', 'small', t('advanced.manual_open'));
+        open.type = 'button';
+        open.addEventListener('click', () => openManualService(item, open));
+        actions.append(open);
+      } else if (exposure && exposure.sync_error) {
+        const retry = el('button', 'ghost small', t('advanced.manual_retry'));
+        retry.type = 'button';
+        retry.addEventListener('click', () => retryExposure(exposure, retry));
+        actions.append(retry);
+      } else if (!exposure) {
+        const disabled = el('button', 'ghost small', t('services.badge.udp'));
+        disabled.type = 'button';
+        disabled.disabled = true;
+        disabled.title = t('advanced.manual_udp_open');
+        actions.append(disabled);
+      }
+      if (exposure) {
+        const view = el('button', 'ghost small', t('advanced.manual_view'));
+        view.type = 'button';
+        view.addEventListener('click', () => switchTab('open'));
+        const close = el('button', 'danger ghost small', t('open.close'));
+        close.type = 'button';
+        close.addEventListener('click', () => deleteExposure(exposure));
+        actions.append(view, close);
+      }
       const remove = el('button', 'danger ghost small', t('advanced.manual_remove'));
       remove.type = 'button';
       remove.addEventListener('click', () => deleteManualService(item));
@@ -412,39 +518,81 @@
       .find((node) => node.dataset.portFor === serviceId) || null;
   }
 
-  async function exposeService(service) {
+  async function exposeService(service, button) {
     if (!service.can_open) {
       showGlobal('error', t('services.udp_unsupported'));
       return;
     }
     const input = findPortInput(service.id);
-    const publicPort = input ? Number(input.value) : service.default_public_port;
+    const publicPort = input && input.value ? Number(input.value) : null;
+    setPending(button, true, t('advanced.manual_open_pending'));
     try {
       const result = await api('/api/exposures', {
         method: 'POST',
         body: JSON.stringify({ service_id: service.id, public_port: publicPort }),
       });
-      const errors = (result.sync && result.sync.errors) || [];
-      if (errors.length) {
-        showGlobal('error', errors.join(' · '));
-      } else {
-        showGlobal('ok', t('services.port_opened', { port: publicPort, name: serviceName(service) }));
-      }
+      result.requested_public_port = publicPort;
+      const port = result.exposure ? result.exposure.public_port : publicPort;
+      syncFeedback(result, t('services.port_opened', { port, name: serviceName(service) }));
       await refreshAll();
     } catch (err) {
       showGlobal('error', err.message);
+    } finally {
+      setPending(button, false);
     }
   }
 
   async function updateExposure(id, patch) {
     try {
       const result = await api(`/api/exposures/${id}`, { method: 'PATCH', body: JSON.stringify(patch) });
-      const errors = (result.sync && result.sync.errors) || [];
-      if (errors.length) showGlobal('error', errors.join(' · '));
+      syncFeedback(result, '');
       await refreshAll();
     } catch (err) {
       showGlobal('error', err.message);
       await refreshAll();
+    }
+  }
+
+  async function retryExposure(exposure, button) {
+    setPending(button, true, t('open.retrying'));
+    try {
+      const result = await api(`/api/exposures/${exposure.id}/retry`, { method: 'POST' });
+      const ok = syncFeedback(result, t('open.retry_ok', { port: exposure.public_port }));
+      if (!ok) showGlobal('error', t('open.retry_failed'));
+      await refreshAll();
+    } catch (err) {
+      showGlobal('error', err.message);
+      await refreshAll();
+    } finally {
+      setPending(button, false);
+    }
+  }
+
+  async function openManualService(item, button) {
+    const input = $('manual-service-public-port');
+    const requested = input && input.value ? Number(input.value) : null;
+    setPending(button, true, t('advanced.manual_open_pending'));
+    try {
+      const result = await api(`/api/manual-services/${item.id}/open`, {
+        method: 'POST',
+        body: JSON.stringify({ public_port: requested }),
+      });
+      result.requested_public_port = requested;
+      const port = result.exposure ? result.exposure.public_port : '';
+      const ok = syncFeedback(
+        result,
+        result.existing
+          ? t('advanced.manual_port_opened', { port })
+          : t('advanced.manual_opened', { port }),
+        t('advanced.manual_public_changed', { requested, port }),
+      );
+      if (!ok) showGlobal('error', t('advanced.manual_open_hint'));
+      await refreshAll();
+    } catch (err) {
+      showGlobal('error', err.message);
+      await refreshAll();
+    } finally {
+      setPending(button, false);
     }
   }
 
@@ -463,9 +611,7 @@
     if (!window.confirm(t('open.close_confirm', { port: exposure.public_port }))) return;
     try {
       const result = await api(`/api/exposures/${exposure.id}`, { method: 'DELETE' });
-      const errors = (result.sync && result.sync.errors) || [];
-      if (errors.length) showGlobal('error', errors.join(' · '));
-      else showGlobal('ok', t('services.port_closed'));
+      syncFeedback(result, t('services.port_closed'));
       await refreshAll();
     } catch (err) {
       showGlobal('error', err.message);
@@ -485,6 +631,83 @@
         ? t('advanced.manual_in_use')
         : err.message;
       showMsg('manual-service-msg', message, false);
+    }
+  }
+
+  function renderDiagnostics(data) {
+    const box = $('diagnostics-result');
+    if (!box) return;
+    box.replaceChildren();
+    box.classList.remove('muted');
+    const checks = data.checks || [];
+    const failed = checks.filter((check) => !check.ok);
+    box.append(el(
+      'div',
+      failed.length ? 'error-line' : 'ok-line',
+      failed.length ? t('advanced.diag_failed') : t('advanced.diag_ok'),
+    ));
+
+    const list = el('div', 'diag-checks');
+    for (const check of checks) {
+      const row = el('div', `diag-check ${check.ok ? 'ok' : 'bad'}`);
+      row.append(badge(check.ok ? t('common.ok') : t('common.error'), check.ok ? 'ok' : 'bad'));
+      row.append(el('span', '', t(`advanced.diag_check.${check.id}`)));
+      if (check.detail) row.append(el('span', 'sub', check.detail));
+      list.append(row);
+    }
+    box.append(list);
+
+    const vps = data.vps || {};
+    const forwards = data.forwards || {};
+    if (vps.status) {
+      box.append(el('div', 'muted', t('advanced.diag_vps', {
+        version: vps.status.version || '?',
+        peers: vps.status.peers_connected || 0,
+        forwards: forwards.ours || 0,
+      })));
+    }
+    if (vps.error) box.append(el('div', 'error-line', vps.error));
+    const peer = data.peer || {};
+    const vpsInfo = (state.status && state.status.vps) || {};
+    if (data.paired && peer.present === false) {
+      box.append(el('div', 'error-line', t('advanced.diag_peer_missing', {
+        ip: vpsInfo.umbrel_ip || '',
+      })));
+    }
+    if (data.paired && peer.present && peer.matches === false) {
+      box.append(el('div', 'error-line', t('advanced.diag_peer_mismatch')));
+    }
+    if (!forwards.error) {
+      box.append(el('div', 'muted', t('advanced.diag_forwards', {
+        ours: forwards.ours || 0,
+        total: forwards.total || 0,
+      })));
+    }
+    if (data.proxy && !data.proxy.running) {
+      box.append(el('div', 'muted', t('advanced.diag_proxy_off')));
+    }
+    for (const exposure of (data.exposures || []).filter((item) => !item.sync_ok)) {
+      box.append(el('div', 'error-line', t('advanced.diag_exposure_error', {
+        name: exposure.name || exposure.id,
+        error: exposure.sync_error || '',
+      })));
+    }
+  }
+
+  async function runDiagnostics(button) {
+    setPending(button, true, t('advanced.diag_running'));
+    try {
+      const data = await api('/api/diagnostics');
+      renderDiagnostics(data);
+    } catch (err) {
+      const box = $('diagnostics-result');
+      if (box) {
+        box.classList.remove('muted');
+        box.replaceChildren(el('div', 'error-line', err.message));
+      }
+      showGlobal('error', err.message);
+    } finally {
+      setPending(button, false);
     }
   }
 
@@ -592,8 +815,7 @@
     $('sync-now').addEventListener('click', async () => {
       try {
         const result = await api('/api/sync', { method: 'POST' });
-        if (result.errors && result.errors.length) showGlobal('error', result.errors.join(' · '));
-        else showGlobal('ok', t('open.synced'));
+        syncFeedback(result, t('open.synced'));
         await refreshAll();
       } catch (err) {
         showGlobal('error', err.message);
@@ -764,29 +986,74 @@
 
     $('manual-service-form').addEventListener('submit', async (event) => {
       event.preventDefault();
+      const mode = event.submitter && event.submitter.dataset.mode === 'add' ? 'add' : 'open';
+      const protocol = $('manual-service-protocol').value;
+      const publicPortValue = $('manual-service-public-port').value;
+      if (mode === 'open' && protocol !== 'tcp') {
+        showMsg('manual-service-msg', t('advanced.manual_udp_open'), false);
+        return;
+      }
+      const buttons = Array.from(event.target.querySelectorAll('button[type="submit"]'));
+      buttons.forEach((button) => { button.disabled = true; });
+      const pendingLabel = mode === 'open'
+        ? t('advanced.manual_open_pending')
+        : t('advanced.manual_add_pending');
+      const submitter = event.submitter;
+      if (submitter) submitter.textContent = pendingLabel;
       try {
-        await api('/api/manual-services', {
+        const requested = publicPortValue ? Number(publicPortValue) : null;
+        const result = await api('/api/manual-services', {
           method: 'POST',
           body: JSON.stringify({
             name: $('manual-service-name').value.trim(),
             host: $('manual-service-host').value.trim(),
             port: Number($('manual-service-port').value),
-            protocol: $('manual-service-protocol').value,
+            protocol,
+            public_port: requested,
+            open: mode === 'open',
           }),
         });
         $('manual-service-name').value = '';
         $('manual-service-host').value = '';
         $('manual-service-port').value = '';
-        showMsg('manual-service-msg', t('advanced.manual_added'), true);
-        await refreshManualServices();
+        $('manual-service-public-port').value = '';
+        if (mode === 'open') {
+          result.requested_public_port = requested;
+          const port = result.exposure ? result.exposure.public_port : '';
+          const openedMessage = result.created === false
+            ? t('advanced.manual_port_opened', { port })
+            : t('advanced.manual_opened', { port });
+          const ok = syncFeedback(
+            result,
+            openedMessage,
+            t('advanced.manual_public_changed', { requested, port }),
+          );
+          if (!ok) showGlobal('error', t('advanced.manual_open_hint'));
+          showMsg('manual-service-msg', ok ? openedMessage : t('advanced.manual_open_hint'), ok);
+        } else {
+          showMsg('manual-service-msg', t('advanced.manual_added'), true);
+        }
+        await refreshAll();
         await refreshServices(true);
       } catch (err) {
-        const message = err.code === 'invalid_manual_service'
-          ? t('advanced.manual_invalid')
-          : err.message;
+        let message = err.message;
+        if (err.code === 'invalid_manual_service') message = t('advanced.manual_invalid');
+        if (err.code === 'no_public_port') message = t('error.no_public_port');
+        if (err.code === 'unsupported_protocol') message = t('advanced.manual_udp_open');
         showMsg('manual-service-msg', message, false);
+        showGlobal('error', message);
+        await refreshManualServices().catch(() => {});
+      } finally {
+        buttons.forEach((button) => { button.disabled = false; });
+        if (submitter) {
+          submitter.textContent = submitter.dataset.mode === 'add'
+            ? t('advanced.manual_add_only')
+            : t('advanced.manual_add_open');
+        }
       }
     });
+
+    $('run-diagnostics').addEventListener('click', () => runDiagnostics($('run-diagnostics')));
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') refreshAll().catch(() => {});

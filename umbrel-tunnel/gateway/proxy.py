@@ -126,6 +126,18 @@ def stop() -> None:
         pass
 
 
+def status() -> dict:
+    """Report whether HAProxy is running without touching its configuration."""
+    pid = _read_pid()
+    running = bool(pid and _alive(pid))
+    return {
+        "running": running,
+        "pid": pid if running else None,
+        "config": str(DATA_CFG),
+        "config_present": DATA_CFG.is_file(),
+    }
+
+
 def _run(args: list[str], timeout: float = 15.0) -> subprocess.CompletedProcess:
     try:
         return subprocess.run(args, capture_output=True, text=True, timeout=timeout)

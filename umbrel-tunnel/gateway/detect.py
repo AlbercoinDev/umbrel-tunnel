@@ -352,30 +352,43 @@ def _detect_host() -> list[dict]:
     return services
 
 
+def manual_entry(item: dict) -> dict | None:
+    """Build the service entry for one stored manual service.
+
+    Manual services are looked up directly instead of through the deduplicated
+    detection list: a manual entry that points at the same container/port as a
+    detected app would otherwise disappear and the UI would report
+    ``service_not_found`` when the user tries to open it.
+    """
+    if not isinstance(item, dict):
+        return None
+    host = str(item.get("host") or "").strip()
+    name = str(item.get("name") or "").strip()[:80]
+    protocol = str(item.get("protocol") or "tcp").lower()
+    try:
+        port = int(item.get("port"))
+    except (TypeError, ValueError):
+        return None
+    entry = _entry(
+        "manual",
+        "Manual",
+        name or f"manual-{port}",
+        host,
+        port,
+        protocol,
+        source="manual",
+        sensitive=True,
+    )
+    if entry:
+        entry["id"] = f"manual:{item.get('id') or name or port}:{port}:{protocol}"
+    return entry
+
+
 def _manual_entries(manual: list[dict] | None) -> list[dict]:
     result: list[dict] = []
     for item in manual or []:
-        if not isinstance(item, dict):
-            continue
-        host = str(item.get("host") or "").strip()
-        name = str(item.get("name") or "").strip()[:80]
-        protocol = str(item.get("protocol") or "tcp").lower()
-        try:
-            port = int(item.get("port"))
-        except (TypeError, ValueError):
-            continue
-        entry = _entry(
-            "manual",
-            "Manual",
-            name or f"manual-{port}",
-            host,
-            port,
-            protocol,
-            source="manual",
-            sensitive=True,
-        )
+        entry = manual_entry(item)
         if entry:
-            entry["id"] = f"manual:{item.get('id') or name or port}:{port}:{protocol}"
             result.append(entry)
     return result
 

@@ -216,8 +216,8 @@ automático.
   el puerto público o cerrarlo.
 - **Conexión**: estado del túnel y del handshake, configuración de WireGuard
   (redactada), emparejamiento manual y rotación de claves.
-- **Avanzado**: URL/token de la API, intervalo de sincronización y servicios
-  manuales.
+- **Avanzado**: URL/token de la API, intervalo de sincronización, servicios
+  manuales y diagnóstico.
 
 Los servicios del sistema (SSH, panel de UmbrelOS por HTTP/HTTPS) se marcan como
 **sistema** y **sensible**. El puerto público `22` está bloqueado para no pisar
@@ -225,7 +225,26 @@ el SSH del VPS; para SSH de Umbrel se propone `2222`.
 
 La sincronización es declarativa: la app compara lo que quieres exponer con los
 forwards del VPS y crea, actualiza o elimina lo necesario. Se ejecuta al cambiar
-algo y cada `sync_interval` segundos (30 por defecto).
+algo y cada `sync_interval` segundos (30 por defecto). Cada exposición muestra su
+estado real: si el VPS rechaza el puerto o HAProxy no arranca, la fila queda en
+error con el detalle y un botón **Reintentar**, en vez de un falso
+"sincronizado".
+
+### Servicios manuales
+
+En **Avanzado → Servicios manuales** puedes exponer un contenedor que la
+detección automática no reconoce. Indica nombre (opcional), host o contenedor,
+puerto, protocolo y, si quieres, un puerto público concreto:
+
+- **Añadir y abrir** crea el servicio y abre el puerto en el VPS en un solo paso.
+- **Solo añadir** guarda el servicio sin abrirlo; luego puedes pulsar **Abrir**
+  en su fila.
+
+Si el puerto público solicitado ya está ocupado en el VPS, la app reintenta una
+vez en un puerto libre y te avisa del cambio. Los errores se muestran como
+notificaciones persistentes con el detalle del VPS o de HAProxy, y cada fila
+ofrece **Reintentar** y **Cerrar**. El panel **Diagnóstico** comprueba túnel,
+API del VPS, peer, forwards y HAProxy sin abrir ni cerrar puertos.
 
 ### Detección de servicios
 
@@ -453,7 +472,7 @@ Variables de entorno útiles en el gateway:
 | Variable | Por defecto | Uso |
 | --- | --- | --- |
 | `APP_PASSWORD` | — | contraseña de login; Umbrel la inyecta |
-| `APP_VERSION` | `1.0.0` | versión mostrada |
+| `APP_VERSION` | `1.0.2` | versión mostrada |
 | `UMBREL_TUNNEL_DATA` | `/data` | estado, claves y configuración |
 | `UMBREL_APP_DATA` | `/umbrel-app-data` | manifiestos de apps (solo lectura) |
 | `NETWORK_IP` | `10.21.0.0` | red de Umbrel para detectar solapes |
