@@ -156,7 +156,7 @@ es preferible la app. La API de control no se publica bajo ningún dominio HTTPS
 
 Actualiza **VPS y gateway conjuntamente**. Los binarios antiguos no conocen los
 campos nuevos. Antes de actualizar, haz una copia de seguridad verificable.
-Esta versión necesita actualizar también la unidad systemd del VPS:
+Si vienes de una versión anterior a 1.2.0, actualiza también la unidad systemd:
 `CAP_NET_BIND_SERVICE` permite escuchar en 80/443 bajo el endurecimiento existente.
 **Sustituir solo el binario con `update` no actualiza dicha unidad**. Reejecuta el
 instalador de **1.3.0** (sin `--force`, sin `--purge`), que conserva configuración
