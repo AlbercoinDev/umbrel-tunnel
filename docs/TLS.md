@@ -52,8 +52,9 @@ nunca se elimina una regla ajena ni se busca otro puerto TLS silenciosamente.
    sustituyen automáticamente si hay un conflicto.
 7. Consulta el estado del certificado en la fila o en Configuración; la primera
    emisión puede tardar minutos.
-   **Reintentar emisión** programa otra comprobación con límite por dominio;
-   no borra certificados ni fuerza reemisiones de certificados válidos.
+   **Reintentar emisión** comprueba de inmediato, sin esperar el límite
+   automático por dominio; no borra certificados ni fuerza reemisiones de
+   certificados válidos.
 
 Los controles habituales permiten pausar/reanudar o dejar de publicar. Pausar
 retira el listener/ruta pública, pero conserva la configuración y la caché de
