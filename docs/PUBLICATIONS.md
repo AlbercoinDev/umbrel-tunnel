@@ -90,10 +90,14 @@ En Debian/Ubuntu, actualiza primero el VPS:
 
 ```sh
 sudo umbrel-tunnel backup
-sudo umbrel-tunnel update
+# Una instalación anterior a 1.3.2 aún no tiene el update automático:
+sudo umbrel-tunnel update \
+  --from "https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download/umbrel-tunnel-linux-$(dpkg --print-architecture)"
 umbrel-tunnel version
 sudo umbrel-tunnel doctor
 ```
+
+Desde 1.3.2 basta `sudo umbrel-tunnel update`.
 
 Comprueba que la copia se creó antes de continuar. `update` conserva la
 configuración y reinicia el servicio. Después actualiza la app a 1.1.0 desde la
