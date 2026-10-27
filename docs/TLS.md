@@ -40,8 +40,10 @@ nunca se elimina una regla ajena ni se busca otro puerto TLS silenciosamente.
    después no reescribe nombres completos de publicaciones existentes.
 3. Si el servicio no aparece, usa **Añadir servicio manual → Solo añadir**.
 4. En la fila del servicio, pulsa **Añadir publicación**. Configura por separado
-   puerto público, dominio opcional, tipo TCP/UDP o web HTTP y terminación TLS
-   opcional. Web + TLS usa HTTPS en 443; TCP + TLS usa un puerto dedicado.
+   dominio opcional, tipo TCP/UDP o web HTTP y terminación TLS opcional. Un
+   servicio detectado como web se publica por subdominio: HTTP en 80 y HTTPS en
+   443, sin usar su puerto interno como público. Los servicios que no son web
+   eligen un puerto público personalizable; TCP + TLS usa un puerto dedicado.
    El destino habla HTTP o TCP sin TLS respectivamente. El subdominio vacío
    permite usar el propio dominio base.
 5. Si activas TLS, acepta las condiciones de Let's Encrypt. Confirma la

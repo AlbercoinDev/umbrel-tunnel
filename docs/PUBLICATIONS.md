@@ -112,12 +112,20 @@ destino permite varias entradas independientes, como Electrs con el mismo domini
 en 50001 sin TLS y 50002 con TLS, ambas hacia el puerto interno 50001.
 Las entradas existentes se conservan; cambiar el dominio base no las reescribe.
 
+Los servicios detectados como web (`Web / HTTP`) se publican siempre por
+subdominio: **HTTP en el puerto 80** y **HTTPS en el 443**. El puerto interno de
+la app (por ejemplo 3006 o 8080) no es el puerto público; el VPS enruta por
+`Host` y el proxy local conecta con el puerto real del contenedor. El puerto
+público de estas publicaciones es fijo y la API rechaza intentar cambiarlo con
+`error.web_port_fixed`. Solo las publicaciones que no son web (TCP/UDP/TLS)
+tienen puerto público personalizable.
+
 - `https`: varios dominios comparten 443; el VPS termina HTTPS y conecta por HTTP
   al servicio a través del proxy local de Umbrel y WireGuard.
 - `tls`: un puerto TCP dedicado termina TLS en el VPS; por ejemplo,
   `electrs.umbrel.nodobitcoin.org:50002` conecta con Electrs TCP en 50001.
-- `http`: proxy web por dominio sin certificado; varios nombres pueden compartir
-  el puerto. TCP/UDP directo también admite un dominio como dirección pública,
+- `http`: proxy web por dominio sin certificado; varios nombres comparten el
+  puerto 80. TCP/UDP directo también admite un dominio como dirección pública,
   pero no puede multiplexar destinos por nombre en el mismo puerto.
 - Los certificados individuales de Let's Encrypt se emiten y renuevan con ACME.
   No se solicitan certificados wildcard ni credenciales DNS.

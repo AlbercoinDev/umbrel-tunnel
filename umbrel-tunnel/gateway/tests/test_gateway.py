@@ -29,6 +29,7 @@ os.environ["APP_VERSION"] = "test"
 os.environ["UMBREL_TUNNEL_WG_CONF"] = os.path.join(TMP, "wg0.conf")
 os.environ["UMBREL_TUNNEL_HAPROXY_CONF"] = os.path.join(TMP, "haproxy.cfg")
 os.environ["UMBREL_TUNNEL_HAPROXY_PID"] = os.path.join(TMP, "haproxy.pid")
+os.environ["UMBREL_TUNNEL_SCAN"] = "0"
 os.environ.pop("UMBREL_TUNNEL_DEV", None)
 
 import app as gateway  # noqa: E402
@@ -477,8 +478,9 @@ class DetectTests(unittest.TestCase):
         self.assertEqual(electrum[0]["target_ip"], "electrs_node_1")
 
     def test_destination_ip_is_informational(self):
-        with mock.patch.object(detect, "_detect_apps", return_value=[detect._entry("x", "X", "web", "x_web_1", 80)]), mock.patch.object(detect, "_detect_host", return_value=[]), mock.patch.object(detect.socket, "gethostbyname", return_value="10.21.0.20"):
-            entry = detect.detect_services()[0]
+        entry = detect._entry("x", "X", "web", "x_web_1", 80)
+        with mock.patch.object(detect, "_detect_apps_impl", return_value=([entry], {})), mock.patch.object(detect, "_detect_host", return_value=[]), mock.patch.object(detect.socket, "gethostbyname", return_value="10.21.0.20"):
+            entry = detect.detect_services(scan_network=False)[0]
         self.assertEqual(entry["target_ip"], "x_web_1")
         self.assertEqual(entry["resolved_ip"], "10.21.0.20")
 
@@ -676,6 +678,15 @@ class DetectTests(unittest.TestCase):
                 "    ports:\n"
                 "      - \"${APP_BITCOIN_P2P_PORT}:${APP_BITCOIN_P2P_PORT}\"\n"
                 "      - \"${APP_BITCOIN_RPC_PORT}:${APP_BITCOIN_RPC_PORT}\"\n"
+                "    environment:\n"
+                "      P2P_PORT: \"${APP_BITCOIN_P2P_PORT}\"\n"
+                "      P2P_WHITEBIND_PORT: \"${APP_BITCOIN_P2P_WHITEBIND_PORT}\"\n"
+                "      RPC_PORT: \"${APP_BITCOIN_RPC_PORT}\"\n"
+                "      ZMQ_RAWBLOCK_PORT: \"${APP_BITCOIN_ZMQ_RAWBLOCK_PORT}\"\n"
+                "      ZMQ_RAWTX_PORT: \"${APP_BITCOIN_ZMQ_RAWTX_PORT}\"\n"
+                "      ZMQ_HASHBLOCK_PORT: \"${APP_BITCOIN_ZMQ_HASHBLOCK_PORT}\"\n"
+                "      ZMQ_SEQUENCE_PORT: \"${APP_BITCOIN_ZMQ_SEQUENCE_PORT}\"\n"
+                "      ZMQ_HASHTX_PORT: \"${APP_BITCOIN_ZMQ_HASHTX_PORT}\"\n"
                 "    networks:\n"
                 "      default:\n"
                 "        ipv4_address: $APP_BITCOIN_NODE_IP\n"
@@ -720,6 +731,105 @@ class DetectTests(unittest.TestCase):
         self.assertTrue(by_port[8335]["sensitive"])
         self.assertIn("ZMQ", by_port[28332]["name"])
         self.assertEqual(by_port[8332]["target_ip"], "bitcoin_app_1")
+
+    def test_scan_rejects_public_and_loopback_addresses(self):
+        # The active scan must never leave the Umbrel Docker network or hit the
+        # host itself: public and loopback resolutions are discarded.
+        for address in ("8.8.8.8", "127.0.0.1", "::1", "0.0.0.0"):
+            with mock.patch.object(
+                detect.scan.socket, "gethostbyname", return_value=address
+            ):
+                self.assertIsNone(detect.scan._private_address("example"))
+        with mock.patch.object(
+            detect.scan.socket, "gethostbyname", return_value="10.21.0.10"
+        ):
+            self.assertEqual(detect.scan._private_address("app_web_1"), "10.21.0.10")
+
+    def test_inference_ignores_thresholds_and_shared_project_settings(self):
+        # ``ADDR`` in the middle of a name is a threshold, not a bind address.
+        thresholds = {
+            "environment": {
+                "NODE_ADDR_FILTER_THRESHOLD": "1000",
+                "NODE_ADDR_DERIVATION_THRESHOLD": "10",
+            }
+        }
+        self.assertEqual(detect._ports_from_listeners(thresholds, {}, "node"), [])
+        # A YAML anchor shared by every service of an app (Plane) is not a port
+        # of the database, the worker or the API.
+        shared = {
+            "environment": {
+                "NGINX_PORT": "8762",
+                "LISTEN_HTTP_PORT": "8762",
+                "AP_WEBHOOK_TIMEOUT_SECONDS": "30",
+            }
+        }
+        self.assertEqual(detect._ports_from_listeners(shared, {}, "api"), [])
+        # A variable owned by the service still counts.
+        owned = {"image": "mempool/backend:v3", "environment": {"MEMPOOL_HTTP_PORT": "8999"}}
+        self.assertEqual(
+            [item[0] for item in detect._ports_from_listeners(owned, {}, "api")],
+            [8999],
+        )
+
+    def test_client_environment_ports_are_not_attributed_to_frontend(self):
+        service = {
+            "environment": {
+                "RPC_HOST": "elements_node_1",
+                "RPC_PORT": "8332",
+                "P2P_PORT": "18332",
+            }
+        }
+        self.assertEqual(detect._ports_from_listeners(service, {}, "web"), [])
+
+    def test_zmq_command_ports_are_classified_as_zmq(self):
+        service = {
+            "command": [
+                "bitcoind -regtest -rpcbind=0.0.0.0 -rpcport=18443 "
+                "-zmqpubrawblock=tcp://0.0.0.0:28332 "
+                "-zmqpubrawtx=tcp://0.0.0.0:28333"
+            ]
+        }
+        declared = {
+            port: (source, hint)
+            for port, protocol, source, hint in detect._declared_ports(
+                service, {}, "bitcoin"
+            )
+        }
+        self.assertEqual(declared[18443][0], "command")
+        self.assertEqual(declared[28332][0], "command")
+        for port, expected in ((18443, "rpc"), (28332, "zmq"), (28333, "zmq")):
+            kind, _ = detect._classify(
+                "bitcoin-regtest-dashboard",
+                "Bitcoin Regtest",
+                "bitcoin",
+                service,
+                port,
+                "tcp",
+                hint=declared[port][1],
+            )
+            self.assertEqual(kind, expected)
+
+    def test_lnd_rest_port_is_rpc_and_lightning_port_is_lightning(self):
+        service = {
+            "ports": [
+                "$APP_LIGHTNING_NODE_PORT:$APP_LIGHTNING_NODE_PORT",
+                "$APP_LIGHTNING_NODE_REST_PORT:$APP_LIGHTNING_NODE_REST_PORT",
+                "$APP_LIGHTNING_NODE_GRPC_PORT:$APP_LIGHTNING_NODE_GRPC_PORT",
+            ]
+        }
+        values = {
+            "APP_LIGHTNING_NODE_PORT": "9735",
+            "APP_LIGHTNING_NODE_REST_PORT": "8080",
+            "APP_LIGHTNING_NODE_GRPC_PORT": "10009",
+        }
+        kinds = {}
+        for port, protocol, source, hint in detect._declared_ports(
+            service, values, "lnd"
+        ):
+            kinds[port] = detect._classify(
+                "lightning", "Lightning", "lnd", service, port, protocol, hint=hint
+            )[0]
+        self.assertEqual(kinds, {9735: "lightning", 8080: "rpc", 10009: "rpc"})
 
     def test_electrs_detects_dashboard_and_electrum_server(self):
         self._write_app(
@@ -782,14 +892,9 @@ class DetectTests(unittest.TestCase):
         with mock.patch.object(detect, "_default_gateway", return_value="10.21.0.1"):
             entries = detect._detect_apps()
         targets = {(e["target_ip"], e["target_port"], e["protocol"]) for e in entries}
-        self.assertEqual(
-            targets,
-            {
-                ("10.21.0.1", 8095, "tcp"),
-                ("10.21.0.1", 53, "tcp"),
-                ("10.21.0.1", 53, "udp"),
-            },
-        )
+        # Host-network apps cannot be scanned without hitting the Umbrel host
+        # itself, so only the manifest port is known before the active scan.
+        self.assertEqual(targets, {("10.21.0.1", 8095, "tcp")})
 
     def test_host_network_app_keeps_declared_tcp_and_udp_ports(self):
         self._write_app(

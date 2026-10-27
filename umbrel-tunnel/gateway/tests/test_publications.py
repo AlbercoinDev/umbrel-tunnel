@@ -94,6 +94,37 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(state.load()["exposures"][0]["domains"], ["web.example.org"])
 
+    def test_http_is_always_published_on_80_and_https_on_443(self):
+        self._post('/api/settings', {"base_domain": "umbrel.example.org"})
+        self._open_manual(port=3006, open=False)
+        manual = state.load()["manual_services"][0]
+
+        plain = self._new_publication(
+            manual, access_mode="http", subdomain="web", public_port=3006
+        )
+        self.assertEqual(plain.status_code, 201, plain.get_data(as_text=True))
+        self.assertEqual(plain.get_json()["exposure"]["public_port"], 80)
+        self.assertEqual(fixtures.FakeVPS.forwards[0]["public_port"], 80)
+        self.assertEqual(fixtures.FakeVPS.forwards[0]["domain"], "web.umbrel.example.org")
+
+        secure = self._new_publication(
+            manual, access_mode="https", subdomain="secure",
+            public_port=3006, accept_acme_terms=True,
+        )
+        self.assertEqual(secure.status_code, 201, secure.get_data(as_text=True))
+        self.assertEqual(secure.get_json()["exposure"]["public_port"], 443)
+        self.assertEqual(
+            {f["public_port"] for f in fixtures.FakeVPS.forwards}, {80, 443}
+        )
+
+        fixed = self._patch(
+            '/api/exposures/' + plain.get_json()["exposure"]["id"],
+            {"public_port": 8080},
+        )
+        self.assertEqual(fixed.status_code, 400)
+        self.assertEqual(fixed.get_json()["code"], "web_port_fixed")
+        self.assertEqual(state.load()["exposures"][0]["public_port"], 80)
+
     def test_tls_port_conflict_is_not_reassigned(self):
         rule = self._open_manual(port=50001, public_port=50001).get_json()["exposure"]
         fixtures.FakeVPS.conflict_ports.add(50002)

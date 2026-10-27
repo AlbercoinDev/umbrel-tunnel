@@ -60,6 +60,22 @@
         <button class="ghost small" data-filter="published" aria-pressed="false">{{ t('ui.published') }}</button>
         <button class="ghost small" data-filter="closed" aria-pressed="false">{{ t('ui.unpublished') }}</button>
         <button class="ghost small" data-filter="errors" aria-pressed="false">{{ t('ui.errors') }}</button>
+        <label class="inline-field">{{ t('services.filter_kind') }}
+          <select id="service-kind-filter">
+            <option value="all">{{ t('services.kind.all') }}</option>
+            <option value="http">{{ t('services.kind.http') }}</option>
+            <option value="tcp">{{ t('services.kind.tcp') }}</option>
+            <option value="udp">{{ t('services.kind.udp') }}</option>
+            <option value="rpc">{{ t('services.kind.rpc') }}</option>
+            <option value="p2p">{{ t('services.kind.p2p') }}</option>
+            <option value="zmq">{{ t('services.kind.zmq') }}</option>
+            <option value="electrum">{{ t('services.kind.electrum') }}</option>
+            <option value="lightning">{{ t('services.kind.lightning') }}</option>
+            <option value="metrics">{{ t('services.kind.metrics') }}</option>
+            <option value="database">{{ t('services.kind.database') }}</option>
+          </select>
+        </label>
+        <label class="inline-field checkbox"><input id="hide-internal" type="checkbox"> {{ t('services.hide_internal') }}</label>
       </div>
       <div id="manual-service-slot"></div>
       <div class="table-wrap">
@@ -68,6 +84,7 @@
             <tr>
               <th>{{ t('services.col.app') }}</th>
               <th>{{ t('services.col.target') }}</th>
+              <th>{{ t('services.col.kind') }}</th>
               <th>{{ t('services.col.notes') }}</th>
               <th>{{ 'Publicaciones (dirección · puerto · cifrado)' if lang == 'es' else 'Publications (address · port · encryption)' }}</th>
               <th>{{ t('services.col.actions') }}</th>
@@ -77,6 +94,21 @@
         </table>
       </div>
       <p id="services-empty" class="muted empty" hidden>{{ t('services.empty') }}</p>
+      <div class="kind-legend" aria-label="{{ t('services.legend') }}">
+        <span class="kind-chip kind-http">{{ t('services.kind.http') }}</span>
+        <span class="kind-chip kind-rpc">{{ t('services.kind.rpc') }}</span>
+        <span class="kind-chip kind-p2p">{{ t('services.kind.p2p') }}</span>
+        <span class="kind-chip kind-zmq">{{ t('services.kind.zmq') }}</span>
+        <span class="kind-chip kind-electrum">{{ t('services.kind.electrum') }}</span>
+        <span class="kind-chip kind-lightning">{{ t('services.kind.lightning') }}</span>
+        <span class="kind-chip kind-metrics">{{ t('services.kind.metrics') }}</span>
+        <span class="kind-chip kind-database">{{ t('services.kind.database') }}</span>
+        <span class="kind-chip kind-tcp">{{ t('services.kind.tcp') }}</span>
+        <span class="kind-chip kind-udp">{{ t('services.kind.udp') }}</span>
+        <span class="badge muted-badge">{{ t('services.badge.internal') }}</span>
+        <span class="badge warn">{{ t('services.badge.sensitive') }}</span>
+        <span class="muted legend-help">{{ t('services.legend_help') }}</span>
+      </div>
     </section>
   </section>
 
@@ -116,6 +148,46 @@
   <section id="tab-connection" class="tab-panel">
     <div class="card-head"><h2>{{ t('ui.settings') }}</h2><button id="back-services" class="ghost" type="button">← {{ t('ui.services') }}</button></div>
     <div id="diagnostics-slot"></div>
+    <section class="card domain-card" id="domain-settings-card">
+      <div class="card-head">
+        <div>
+          <h2>{{ 'Dominio base y certificados' if lang == 'es' else 'Base domain and certificates' }}</h2>
+          <p class="muted">{{ 'Configura el dominio una vez. Al publicar un servicio web eliges el subdominio; los puertos 80/443 los gestiona el VPS. Guardar no abre puertos ni solicita certificados.' if lang == 'es' else 'Configure the domain once. When you publish a web service you choose the subdomain; the VPS handles ports 80/443. Saving does not open ports or request certificates.' }}</p>
+        </div>
+      </div>
+      <div class="domain-layout">
+        <div class="domain-column">
+          <h3>{{ 'Dominio' if lang == 'es' else 'Domain' }}</h3>
+          <form id="domain-settings-form" class="stack">
+            <label>{{ 'Dominio base (opcional)' if lang == 'es' else 'Base domain (optional)' }}
+              <input id="base-domain" placeholder="umbrel.nodobitcoin.org" maxlength="253">
+            </label>
+            <button type="submit">{{ 'Guardar dominio' if lang == 'es' else 'Save domain' }}</button>
+          </form>
+          <p id="domain-message" role="status" class="msg"></p>
+          <div class="dns-checklist">
+            <h3>{{ 'Comprobación DNS' if lang == 'es' else 'DNS checklist' }}</h3>
+            <ul>
+              <li><span class="dns-dot" aria-hidden="true"></span>{{ 'Registro A del dominio base hacia la IP del VPS.' if lang == 'es' else 'A record for the base domain pointing to the VPS IP.' }}</li>
+              <li><span class="dns-dot" aria-hidden="true"></span>{{ 'Comodín (*.dominio) hacia la misma IP.' if lang == 'es' else 'Wildcard (*.domain) pointing to the same IP.' }}</li>
+              <li><span class="dns-dot" aria-hidden="true"></span>{{ 'TCP 80 accesible para el reto de Let’s Encrypt.' if lang == 'es' else 'TCP 80 reachable for the Let’s Encrypt challenge.' }}</li>
+              <li><span class="dns-dot" aria-hidden="true"></span>{{ 'TCP 443 abierto para los servicios web HTTPS.' if lang == 'es' else 'TCP 443 open for HTTPS web services.' }}</li>
+            </ul>
+            <p class="muted">{{ 'Solo son comprobaciones de DNS: los puertos se abren publicación a publicación.' if lang == 'es' else 'These are DNS checks only: ports are opened per publication.' }}</p>
+          </div>
+        </div>
+        <div class="domain-column">
+          <div class="card-head compact">
+            <h3>{{ 'Certificados' if lang == 'es' else 'Certificates' }}</h3>
+            <div class="row">
+              <button id="certificate-refresh" type="button" class="ghost small">{{ 'Actualizar' if lang == 'es' else 'Refresh' }}</button>
+              <button id="certificate-retry" type="button" class="ghost small">{{ 'Reintentar emisión' if lang == 'es' else 'Retry issuance' }}</button>
+            </div>
+          </div>
+          <div id="certificate-status" class="cert-grid"></div>
+        </div>
+      </div>
+    </section>
     <section id="onboarding" class="card onboarding" hidden>
       <h2>{{ t('onboarding.title') }}</h2>
       <p class="muted">{{ t('onboarding.help') }}</p>
@@ -228,17 +300,6 @@
   </section>
 
   <section id="tab-advanced" class="tab-panel">
-    <section class="card" id="domain-settings-card">
-      <h2>{{ 'Dominio base y certificados' if lang == 'es' else 'Base domain and certificates' }}</h2>
-      <p class="muted">{{ 'Configura el dominio una vez y elige subdominio, puerto y cifrado al publicar cada servicio. Guardarlo no abre puertos ni solicita certificados. Los cambios no modifican publicaciones existentes.' if lang == 'es' else 'Configure the domain once; choose subdomain, port and encryption for each publication. Saving does not open ports or request certificates. Changes do not modify existing publications.' }}</p>
-      <form id="domain-settings-form" class="stack">
-        <label>{{ 'Dominio base (opcional)' if lang == 'es' else 'Base domain (optional)' }} <input id="base-domain" placeholder="umbrel.nodobitcoin.org" maxlength="253"></label>
-        <p class="muted">{{ 'DNS: dominio base y wildcard hacia el VPS, Solo DNS. Para certificados, mantén TCP 80 accesible. El DNS no selecciona puertos.' if lang == 'es' else 'DNS: base domain and wildcard pointing to the VPS, DNS only. Certificates require reachable TCP 80. DNS does not select ports.' }}</p>
-        <button type="submit">{{ 'Guardar dominio' if lang == 'es' else 'Save domain' }}</button>
-      </form>
-      <p id="domain-message" role="status"></p>
-      <details><summary>{{ 'Estado de certificados' if lang == 'es' else 'Certificate status' }}</summary><div id="certificate-status"></div><button id="certificate-refresh" type="button">{{ 'Actualizar' if lang == 'es' else 'Refresh' }}</button><button id="certificate-retry" type="button">{{ 'Reintentar emisión' if lang == 'es' else 'Retry issuance' }}</button></details>
-    </section>
     <details class="card" id="api-settings-card">
       <summary>{{ t('ui.advanced') }}</summary>
       <h2>{{ t('advanced.api_title') }}</h2>

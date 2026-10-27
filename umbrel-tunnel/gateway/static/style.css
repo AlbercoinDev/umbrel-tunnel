@@ -318,3 +318,76 @@ td .sub { display: block; color: var(--muted); font-size: .76rem; margin-top: 2p
   main { padding: 14px 16px 40px; }
   th, td { padding: 9px 10px; }
 }
+
+/* Service type chips: one compact label per detected port. */
+.kind-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: .72rem;
+  font-weight: 700;
+  white-space: nowrap;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, .03);
+  color: var(--text);
+}
+.kind-chip .kind-proto {
+  font-size: .6rem;
+  font-weight: 600;
+  color: var(--muted);
+  padding-left: 4px;
+  border-left: 1px solid var(--line);
+}
+.kind-http { color: #7dd3fc; border-color: rgba(56, 189, 248, .45); background: rgba(56, 189, 248, .1); }
+.kind-rpc { color: #fcd34d; border-color: rgba(245, 158, 11, .45); background: rgba(245, 158, 11, .1); }
+.kind-p2p { color: #86efac; border-color: rgba(34, 197, 94, .45); background: rgba(34, 197, 94, .1); }
+.kind-zmq { color: #c4b5fd; border-color: rgba(167, 139, 250, .45); background: rgba(167, 139, 250, .1); }
+.kind-electrum { color: #67e8f9; border-color: rgba(34, 211, 238, .45); background: rgba(34, 211, 238, .1); }
+.kind-lightning { color: #fde68a; border-color: rgba(250, 204, 21, .45); background: rgba(250, 204, 21, .1); }
+.kind-metrics { color: #f9a8d4; border-color: rgba(244, 114, 182, .45); background: rgba(244, 114, 182, .1); }
+.kind-database { color: #fdba74; border-color: rgba(251, 146, 60, .45); background: rgba(251, 146, 60, .1); }
+.kind-tcp, .kind-udp { color: var(--muted); }
+.badge.muted-badge { color: var(--muted); background: rgba(255, 255, 255, .04); border-color: var(--line); }
+
+.inline-field { display: inline-flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--muted); }
+.inline-field select { padding: 6px 9px; font-size: .78rem; }
+.inline-field.checkbox { cursor: pointer; }
+.kind-legend {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.legend-help { font-size: .76rem; margin-left: 4px; }
+
+/* Domain and certificate card: two columns, DNS checklist and cert cards. */
+.domain-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr); gap: 20px; }
+.domain-column { min-width: 0; display: grid; gap: 10px; align-content: start; }
+.domain-column h3 { font-size: .95rem; }
+.card-head.compact { margin-bottom: 4px; }
+.dns-checklist { margin-top: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .02); }
+.dns-checklist h3 { margin-bottom: 8px; }
+.dns-checklist ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 7px; font-size: .82rem; }
+.dns-checklist li { display: flex; gap: 8px; align-items: flex-start; }
+.dns-dot { flex: 0 0 auto; width: 8px; height: 8px; margin-top: 5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 3px rgba(247, 147, 26, .15); }
+.cert-grid { display: grid; gap: 10px; }
+.cert-card {
+  display: grid;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, .02);
+}
+.cert-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.cert-head strong { overflow-wrap: anywhere; }
+.publication-target { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: .86rem; }
+.publication-note { padding: 9px 12px; border-left: 3px solid var(--accent); background: rgba(247, 147, 26, .06); border-radius: 0 8px 8px 0; font-size: .8rem; }
+@media (max-width: 860px) {
+  .domain-layout { grid-template-columns: 1fr; }
+}

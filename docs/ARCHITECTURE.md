@@ -51,7 +51,10 @@ puerto por `wg0`; `--public-api` es una excepción explícita y no recomendada.
 
 - `app.py`: rutas HTTP, login, CSRF, API interna, emparejamiento y sincronización.
 - `detect.py`: detección de apps y servicios del host sin socket de Docker.
-- `catalog.py`: nombres, puertos y marcas de sensibilidad conocidos.
+- `scan.py`: escaneo TCP en segundo plano y sonda HTTP/TLS con caché por host.
+- `catalog.py`: nombres, descripciones y marcas de sensibilidad de servicios
+  conocidos, y valores por defecto para interpolar el compose. No añade puertos
+  por sí mismo.
 - `proxy.py`: renderizado, validación y recarga de HAProxy.
 - `udp.py`: relay de datagramas con sesiones independientes, límites y caducidad.
 - `wireguard.py`: generación/validación estricta de `wg0.conf`, claves y estado.
@@ -88,16 +91,26 @@ revierte la clave anterior.
 
 ## Flujo de una exposición
 
-1. La app detecta un servicio (`target_ip`, `target_port`, protocolo).
-2. El usuario elige un puerto público. La app asigna un puerto interno del
-   túnel (`20000–29999`) y guarda la exposición.
-3. `sync.py` pide al VPS un forward `public_port → 10.0.0.2:tunnel_port`.
+1. La app detecta un servicio (`target_ip`, `target_port`, protocolo, tipo).
+2. El usuario elige el puerto público. Si el servicio es web (`kind = http`) se
+   publica por subdominio en el puerto 80 (HTTP) o 443 (HTTPS) y el puerto
+   interno no se usa como público. Para el resto (TCP/UDP/TLS) elige un puerto
+   personalizable y la app asigna un puerto interno del túnel (`20000–29999`).
+3. `sync.py` pide al VPS un forward `public_port → 10.0.0.2:tunnel_port` con el
+   modo de acceso (`direct`, `http`, `https` o `tls`) y el dominio.
 4. El VPS crea la regla nftables DNAT y la aplica.
 5. La app configura HAProxy (TCP) o el relay (UDP) escuchando en
    `10.0.0.2:tunnel_port` y reenvía al contenedor por su nombre DNS de Docker.
 6. Al desactivar o cerrar, se elimina el forward del VPS y HAProxy se
    reconfigura. Los forwards con prefijo `umbrel:` que ya no corresponden a
    ninguna exposición se limpian de forma conservadora.
+
+En los modos web, el VPS recibe la petición en 80/443, elige el forward por la
+cabecera `Host` del dominio y la envía a `10.0.0.2:<tunnel_port>`; HAProxy
+termina la última conexión contra el puerto real del contenedor. Varias
+publicaciones HTTPS comparten el 443 y se distinguen por dominio. El puerto
+público de una exposición `http`/`https` es fijo: editarlo devuelve
+`error.web_port_fixed`.
 
 Las reglas nuevas incluyen propiedad explícita `managed_by`; las independientes
 del VPS se conservan. Una copia de los valores remotos aplicados permite detectar
@@ -138,12 +151,38 @@ El compose se interpreta de forma estática:
 - Con `network_mode: service:…` o `container:…` se usa el contenedor que posee
   el espacio de red compartido.
 
-El destino preferido es el contenedor de `app_proxy` (el puerto web real). Los
-puertos publicados o expuestos explícitamente en compose se ofrecen como
-endpoints de protocolo (P2P, RPC, etc.). Los puertos conocidos del catálogo
-(Bitcoin/Knots, Electrs, LND, Mempool, Pi-hole…) se añaden solo si se pueden
-atar a un servicio concreto del compose; nunca se asignan a un contenedor web
-arbitrario.
+La detección combina tres capas:
+
+1. **Declarativa.** El destino web preferido es el contenedor de `app_proxy`
+   (el puerto real tras el proxy de UmbrelOS). Los puertos de `ports`/`expose`
+   y los del manifiesto se ofrecen como endpoints de protocolo.
+2. **Inferencia desde el entorno y el comando.** Se aceptan direcciones de
+   escucha (`0.0.0.0:3000`, `[::]:8082`), variables `BIND`/`LISTEN`/`ADDR*` y
+   flags de servidor (`--port`, `--bind`, `--rpcbind`, `-zmqpub*`). Las
+   variables compartidas por todo el proyecto (`LISTEN_HTTP_PORT` de un ancla
+   YAML), los puertos de cliente (`*_HOST`/`*_URL` que apuntan a otro
+   contenedor), los umbrales numéricos y los sidecars que no escuchan
+   (`worker`, `migrate`, `setup`…) se descartan. Un puerto ya declarado por otro
+   servicio de la misma app no se vuelve a atribuir por entorno.
+3. **Escaneo activo.** `scan.py` resuelve el nombre DNS de cada contenedor y
+   prueba conexiones TCP solo contra direcciones privadas de la red Docker. Los
+   puertos abiertos se prueban con una petición HTTP y se cachean durante
+   `UMBREL_TUNNEL_SCAN_TTL` segundos (300 por defecto). Nunca escanea apps con
+   `network_mode: host`, así que no toca el host de Umbrel. Se puede desactivar
+   con `UMBREL_TUNNEL_SCAN=0`; `UMBREL_TUNNEL_SCAN_FULL=1` amplía el rango de
+   1–10000 al rango completo. Los puertos declarados siguen apareciendo aunque
+   el contenedor esté parado. **Refrescar servicios** invalida la caché y
+   relanza el escaneo en segundo plano; la UI recoge el resultado en el
+   siguiente sondeo.
+
+Cada puerto recibe un **tipo** (`http`, `rpc`, `p2p`, `zmq`, `electrum`,
+`lightning`, `metrics`, `database`, `tcp`, `udp`) y una **confianza**
+(`high`/`medium`/`low`) a partir de la evidencia: proxy web, puerto declarado,
+sonda HTTP/Prometheus, nombre del servicio, flags RPC/P2P/ZMQ o el propio
+puerto. Los tipos `database` y `metrics` se marcan como **internos** para poder
+ocultarlos en la UI. El catálogo ya no aporta puertos: solo nombres,
+descripciones, marcas de sensibilidad y valores por defecto para interpolar el
+compose. Si una app no se detecta, el usuario puede añadir un servicio manual.
 
 Nunca se devuelven variables de entorno ni rutas de datos de otras apps por la
 API.

@@ -41,12 +41,13 @@ import detect
 import i18n
 import proxy
 import reachability
+import scan
 import state
 import sync
 import wireguard
 from vps import VPSClient, VPSError
 
-VERSION = os.environ.get("APP_VERSION", "1.3.3")
+VERSION = os.environ.get("APP_VERSION", "1.4.0")
 RESERVED_PUBLIC_PORTS = {22}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
 DEV_MODE = os.environ.get("UMBREL_TUNNEL_DEV") == "1"
@@ -887,11 +888,16 @@ def configure_publication_access(config: dict, exposure: dict, body: dict) -> No
     if mode != "http" and body.get("accept_acme_terms") is not True and not (exposure.get("access_mode") == mode and exposure.get("tls", {}).get("mode") == "acme" and exposure.get("domains") == [domain]):
         raise ValueError("Acepta las condiciones de Let's Encrypt / Accept Let's Encrypt terms")
     port = _requested_public_port(body)
-    if mode == "https":
-        if port not in {None, 443}:
-            raise ValueError("HTTPS usa el puerto público 443 / HTTPS uses public port 443")
+    if mode == "http":
+        # A web app is published by subdomain on port 80. The internal port is
+        # irrelevant: the VPS routes by Host and the local proxy forwards to
+        # the real container port.
+        port = 80
+    elif mode == "https":
         port = 443
-    if not port or port == 22 or (mode != "http" and port == 80) or (mode in {"http", "tls"} and port == 443):
+    elif not port:
+        raise ValueError("invalid_public_port")
+    if port == 22 or (mode == "tls" and port in {80, 443}):
         raise ValueError("Puerto incompatible con el modo / Port incompatible with access mode")
     for other in config.get("exposures", []):
         if other.get("id") == exposure["id"]:
@@ -1213,6 +1219,9 @@ def services():
 
 @app.post("/api/services/refresh")
 def refresh_services():
+    # An explicit refresh means "look again": drop the per-host scan cache so
+    # newly opened ports appear even within the TTL.
+    scan.invalidate()
     detect_cached(force=True)
     return jsonify(detect_cached())
 
@@ -1278,8 +1287,13 @@ def create_exposure():
     if service.get("protocol", "tcp") not in {"tcp", "udp"}:
         return api_error("unsupported_protocol", 400)
 
+    mode = str(body.get("access_mode") or "direct")
     try:
-        requested_port = _requested_public_port(body)
+        # HTTP/HTTPS are published by subdomain on a fixed port (80/443); the
+        # internal port of the app is never the public port.
+        requested_port = (
+            None if mode in {"http", "https"} else _requested_public_port(body)
+        )
     except ValueError as exc:
         return api_error(str(exc), 400)
 
@@ -1339,6 +1353,8 @@ def update_exposure(exposure_id: str):
                 exposure["strict_port"] = True
 
             if "public_port" in body and "access_mode" not in body:
+                if exposure.get("access_mode") in {"http", "https"}:
+                    return api_error("web_port_fixed", 400)
                 try:
                     public_port = int(body["public_port"])
                     validate_public_port(public_port, exposure.get("protocol", "tcp"))

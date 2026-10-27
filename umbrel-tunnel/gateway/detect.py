@@ -23,6 +23,7 @@ import struct
 from pathlib import Path
 
 import catalog
+import scan
 
 try:  # PyYAML is installed in the image; the fallback keeps imports testable.
     import yaml
@@ -80,6 +81,28 @@ DYNAMIC_SHELL_RE = re.compile(r"[`]|\$\(|\|\||&&|;\s|>\s|<\s")
 HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,251}[A-Za-z0-9])?$")
 SENSITIVE_HINTS = ("postgres", "mysql", "mariadb", "mongo", "redis", "admin", "rpc", "grpc", "docker", "portainer")
 LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+# Services that expose infrastructure ports we must never infer from a
+# command line: they are usually sidecars, databases or the Tor daemon.
+INFERRED_SKIP_SERVICES = re.compile(
+    r"(?i)(?:^|[-_])(?:db|database|postgres|postgresql|mysql|mariadb|mongo|mongodb|"
+    r"redis|valkey|memcached|tor|i2pd|relay|queue|rabbitmq|kafka|zookeeper)(?:[-_]|$)"
+)
+# Sidecars that never listen: a bare ``PORT`` in their environment is a client
+# setting, a timeout or a batch size, not a listening socket.
+NON_LISTENER_SERVICE_RE = re.compile(
+    r"(?i)(?:^|[-_])(?:worker|sidekiq|celery|beat|scheduler|cron|job|jobs|task|"
+    r"tasks|migrate|migration|setup|init|initializer)(?:[-_]|$)"
+)
+# Ports that are commonly bound by infrastructure sidecars. They are still
+# listed when they come from an explicit ``ports``/``expose`` declaration; the
+# list only filters heuristic listeners in ``environment``/``command``.
+INFERRED_BLOCK_PORTS = {
+    22, 25, 53, 67, 68, 123, 137, 138, 139, 161, 162, 389, 445, 465, 514,
+    587, 636, 993, 995, 2181, 3306, 5432, 5672, 6379, 7656, 9050, 9051,
+    9092, 9901, 11211, 27017, 29051,
+}
+INTERNAL_KINDS = {"database", "metrics"}
 
 
 def _interpolate(value, values: dict | None = None) -> str:
@@ -254,6 +277,308 @@ def _compose_values(
     return values
 
 
+def _command_texts(value) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [str(item) for item in value if item is not None]
+    return []
+
+
+def _last_host_port(value: str) -> int | None:
+    text = str(value or "").strip().strip("'\"")
+    if not text:
+        return None
+    text = re.sub(r"(?i)^(?:tcp|udp|ws|wss|http|https)://", "", text)
+    match = re.search(r"(?:^|:)(\d{2,5})$", text)
+    if not match:
+        return None
+    port = int(match.group(1))
+    return port if 1 <= port <= 65535 else None
+
+
+WILDCARD_RE = re.compile(r"(?<![\d.])(?:0\.0\.0\.0|\[::\]|\*|(?<!:)::):(\d{2,5})(?!\d)")
+SCHEME_RE = re.compile(r"(?i)\b(?:tcp|udp|ws|wss|http|https)://(?:0\.0\.0\.0|\[::\]|\*|::):(\d{2,5})")
+BARE_PORT_RE = re.compile(r"^\s*(\d{2,5})\s*$")
+# Bind keys that make a bare number a listener: BIND, BIND_PORT, LISTEN_ADDR...
+# ``ADDR``/``ADDRESS`` only count at the very end of the name:
+# ``NODE_ADDR_FILTER_THRESHOLD`` is a numeric threshold, not a listener.
+STRONG_BIND_KEY_RE = re.compile(r"(?i)^(?:BIND|LISTEN)(?:_(?:PORT|ADDR|ADDRESS))?$")
+# Keys like ``PORT`` are container conventions and always mean the listen port.
+UNCONDITIONAL_PORT_KEYS = frozenset(
+    {"PORT", "HTTP_PORT", "HTTPS_PORT", "SERVER_PORT", "WEB_PORT"}
+)
+# Tokens that describe the protocol, not the owner of the variable. A key such
+# as ``MEMPOOL_HTTP_PORT`` belongs to the service whose image is ``mempool``;
+# ``LISTEN_HTTP_PORT`` (a project-wide setting reused by every service of an
+# app) has no owner and is ignored.
+GENERIC_ENV_TOKENS = frozenset(
+    {
+        "PORT", "PORTS", "HTTP", "HTTPS", "WS", "WSS", "GRPC", "RPC", "P2P",
+        "API", "WEB", "DASHBOARD", "METRICS", "ELECTRUM", "LIGHTNING", "ZMQ",
+        "ADMIN", "REST", "TCP", "UDP", "SERVER", "SERVICE", "LISTEN", "BIND",
+        "ADDR", "ADDRESS", "HOST", "URL", "URI", "PUBLIC", "INTERNAL",
+        "EXTERNAL", "LOCAL", "REMOTE", "NODE", "SITE", "APP", "BACKEND",
+        "FRONTEND", "PROXY", "CONFIG", "DEFAULT", "SYSTEM", "MAIN",
+    }
+)
+ZMQ_RE = re.compile(r"(?i)-zmq[a-z0-9]+=(?:tcp|udp)://(?:0\.0\.0\.0|\[::\]|\*|::):(\d{2,5})")
+BIND_FLAG_RE = re.compile(
+    r"(?i)(?:^|\s)--?(?:bind|listen|rpcbind)(?:-[\w.-]+)?(?:=|\s+)([^\s,]+)"
+)
+PORT_FLAG_RE = re.compile(r"(?i)(?:^|\s)--?([\w.-]*port[\w.-]*)(?:=|\s+)(\d{2,5})\b")
+CLIENT_FLAG_RE = re.compile(
+    r"(?i)bitcoin-rpcport|daemon|remote|upstream|target|proxy|connect|addnode|seednode"
+)
+
+
+def _env_port_belongs(key: str, service_text: str) -> bool:
+    """Return whether a ``*_PORT`` variable belongs to this service.
+
+    Compose files reuse a YAML anchor (``x-environment``) across every service
+    of an app. Sharing ``LISTEN_HTTP_PORT`` does not mean the database or the
+    worker listens on it, so a bare value is only accepted when the key names
+    the service (``MEMPOOL_HTTP_PORT`` in the mempool backend) or uses a generic
+    container convention (``PORT``).
+
+    The *last* meaningful token has to name the service: in
+    ``CANARY_MEMPOOL_PORT`` the port belongs to mempool, so the canary backend
+    must not claim it, while ``MEMPOOL_HTTP_PORT`` belongs to mempool.
+    """
+    upper = key.upper()
+    if upper in UNCONDITIONAL_PORT_KEYS:
+        return True
+    if not re.search(r"_(?:PORT|PORTS)$", upper):
+        return False
+    stem = re.sub(r"_(?:PORT|PORTS)$", "", upper)
+    tokens = [
+        token
+        for token in stem.split("_")
+        if token not in GENERIC_ENV_TOKENS and len(token) >= 3
+    ]
+    # Protocol sockets that are always listeners on the publishing side. The
+    # variable name does not contain the app name (``ZMQ_RAWBLOCK_PORT`` in the
+    # Bitcoin wrapper), but the protocol itself is the evidence.
+    if "ZMQ" in stem.split("_") or "WHITEBIND" in stem.split("_"):
+        return True
+    if not tokens:
+        return False
+    return tokens[-1].lower() in service_text
+
+
+def _ports_from_listeners(
+    service: dict, values: dict | None = None, name: str = ""
+) -> list[tuple[int, str, str, str]]:
+    """Infer listener ports from ``environment``/``command``/``entrypoint``.
+
+    Only strong evidence is accepted: a wildcard bind address, an explicit
+    ``BIND``/``LISTEN`` variable, a server flag or a bind/listen command-line
+    option. Client addresses and infrastructure sidecars are rejected so a
+    service is never shown a port it only consumes.
+    """
+    found: list[tuple[int, str, str, str]] = []
+    seen: set[tuple[int, str]] = set()
+    service_text = f"{name} {service.get('image') or ''}".lower()
+
+    def add(raw_port, protocol: str, evidence: str, origin: str) -> None:
+        try:
+            port = int(raw_port)
+        except (TypeError, ValueError):
+            return
+        protocol = "udp" if protocol == "udp" else "tcp"
+        if not (1 <= port <= 65535) or (port, protocol) in seen:
+            return
+        seen.add((port, protocol))
+        found.append((port, protocol, evidence[:120], origin))
+
+    env = _environment(service)
+    for key, raw_value in env.items():
+        value = _interpolate(raw_value, values).strip()
+        if not value:
+            continue
+        protocol = "udp" if "udp://" in value.lower() else "tcp"
+        matches = [match.group(1) for match in SCHEME_RE.finditer(value)]
+        matches += [match.group(1) for match in WILDCARD_RE.finditer(value)]
+        upper = key.upper()
+        bare = BARE_PORT_RE.match(value)
+        if STRONG_BIND_KEY_RE.match(upper) or upper.endswith(("_BIND", "_LISTEN")):
+            if bare:
+                matches.append(bare.group(1))
+            elif not matches:
+                last = _last_host_port(value)
+                if last:
+                    matches.append(str(last))
+        elif bare and _env_port_belongs(upper, service_text):
+            matches.append(bare.group(1))
+        for match in matches:
+            add(match, protocol, f"{key}={value}", "env")
+
+    for field in ("command", "entrypoint"):
+        for text in _command_texts(service.get(field)):
+            text = _interpolate(text, values)
+            if not text.strip():
+                continue
+            for match in ZMQ_RE.finditer(text):
+                add(match.group(1), "tcp", match.group(0), "command")
+            for match in BIND_FLAG_RE.finditer(text):
+                last = _last_host_port(match.group(1))
+                if last:
+                    add(last, "tcp", match.group(0), "command")
+            has_rpcbind = "-rpcbind" in text.lower()
+            for match in PORT_FLAG_RE.finditer(text):
+                flag = match.group(1).lower()
+                if CLIENT_FLAG_RE.search(flag) and not (has_rpcbind and flag == "rpcport"):
+                    continue
+                add(match.group(2), "tcp", match.group(0), "command")
+    return found
+
+
+def _port_hints(service: dict, values: dict | None = None) -> dict[tuple[int, str], str]:
+    """Keep the variable names next to each declared port for classification."""
+    hints: dict[tuple[int, str], str] = {}
+    for field, parser in (("ports", _ports_from_service), ("expose", _ports_from_expose)):
+        raw = service.get(field)
+        if not isinstance(raw, list):
+            continue
+        for item in raw:
+            raw_text = json.dumps(item) if isinstance(item, dict) else str(item)
+            names = re.findall(r"[A-Z][A-Z0-9_]{2,}", raw_text)
+            hint = " ".join(name for name in names if re.search(
+                r"PORT|BIND|LISTEN|RPC|GRPC|ZMQ|P2P|HTTP|WS|ELECTRUM|LIGHTNING|METRICS|ADMIN",
+                name,
+            ))
+            temp = {field: [item]}
+            for port, protocol in parser(temp, values):
+                key = (port, protocol)
+                hints[key] = (hints.get(key, "") + " " + hint).strip()
+    return hints
+
+
+def _declared_ports(
+    service: dict, values: dict | None = None, name: str = ""
+) -> list[tuple[int, str, str, str]]:
+    """Return ``(port, protocol, source, hint)`` in priority order."""
+    hints = _port_hints(service, values)
+    entries: list[tuple[int, str, str, str]] = []
+    for source, parser in (("compose", _ports_from_service), ("expose", _ports_from_expose)):
+        for port, protocol in parser(service, values):
+            entries.append((port, protocol, source, hints.get((port, protocol), "")))
+    for port, protocol, evidence, origin in _ports_from_listeners(service, values, name):
+        entries.append((port, protocol, origin, evidence))
+    unique: list[tuple[int, str, str, str]] = []
+    seen: set[tuple[int, str]] = set()
+    for entry in entries:
+        key = (entry[0], entry[1])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(entry)
+    return unique
+
+
+def _looks_http(service_text: str, full_text: str, port: int) -> bool:
+    if port in {80, 443}:
+        return True
+    if re.search(
+        r"nginx|caddy|traefik|httpd|apache|tomcat|wordpress|grafana|swagger|openapi",
+        full_text,
+    ):
+        return True
+    if re.search(
+        r"uvicorn|gunicorn|flask|django|next\b|nuxt\b|vite\b|npm\b|pnpm\b|yarn\b|"
+        r"http-server|serve\b|php-fpm",
+        full_text,
+    ):
+        return True
+    return bool(
+        port > 1024
+        and re.search(
+            r"(?:^|[-_])(?:web|www|frontend|ui|dashboard|panel|api|app|server)(?:[-_]|$)",
+            service_text,
+        )
+    )
+
+
+def _classify(
+    app_id: str,
+    app: str,
+    service_name: str,
+    service: dict,
+    port: int,
+    protocol: str,
+    hint: str = "",
+    http_probe: bool = False,
+    prometheus: bool = False,
+    proxy: bool = False,
+) -> tuple[str, str]:
+    """Return ``(kind, confidence)`` for one detected port."""
+    if proxy:
+        return "http", "high"
+    if protocol == "udp":
+        return "udp", "medium"
+    if prometheus:
+        return "metrics", "high"
+    if http_probe:
+        return "http", "high"
+
+    hint_lower = hint.lower()
+    if "zmq" in hint_lower:
+        return "zmq", "high"
+    if "grpc" in hint_lower:
+        return "rpc", "high"
+    if "electrum" in hint_lower:
+        return "electrum", "high"
+    if re.search(r"(?:^|[^a-z0-9])rest(?:[^a-z0-9]|$)", hint_lower) or re.search(
+        r"(?:^|[^a-z0-9])admin(?:[^a-z0-9]|$)", hint_lower
+    ):
+        return "rpc", "high"
+    if "metrics" in hint_lower or "prometheus" in hint_lower:
+        return "metrics", "high"
+    if "p2p" in hint_lower or "whitebind" in hint_lower:
+        return "p2p", "high"
+    if "http" in hint_lower or "web" in hint_lower or "dashboard" in hint_lower:
+        return "http", "high"
+    if "lightning" in hint_lower:
+        return "lightning", "high"
+    if "rpc" in hint_lower:
+        return "rpc", "high"
+
+    service_text = f"{service_name} {service.get('image') or ''}".lower()
+    full_text = " ".join(
+        [
+            app_id,
+            app,
+            service_text,
+            hint,
+            " ".join(_command_texts(service.get("command"))),
+            " ".join(_command_texts(service.get("entrypoint"))),
+        ]
+    ).lower()
+
+    if re.search(r"zmq", full_text):
+        return "zmq", "high" if "zmq" in hint.lower() else "medium"
+    if re.search(
+        r"postgres|postgresql|mysql|mariadb|mongodb|mongo|redis|valkey|memcached|clickhouse",
+        full_text,
+    ):
+        return "database", "high"
+    if re.search(r"prometheus|metrics|telemetry|node_exporter", full_text):
+        return "metrics", "medium"
+    if re.search(r"grpc", full_text):
+        return "rpc", "high"
+    if re.search(r"electrumx|electrs|fulcrum", service_text):
+        return "electrum", "high"
+    if re.search(r"lightningd|\blnd\b|core-lightning|clightning", service_text):
+        return "lightning", "high"
+    if re.search(r"\brpc\b|json-rpc|rpcport|rpcbind|clnrest|rest-port|admin-port", full_text):
+        return "rpc", "medium"
+    if re.search(r"\bp2p\b|peer|whitelist|whitebind|addnode|seednode", full_text):
+        return "p2p", "medium"
+    if _looks_http(service_text, full_text, port):
+        return "http", "medium"
+    return "tcp", "low"
+
+
 def _sensitive(app_id: str, service: str, port: int) -> bool:
     meta = catalog.service_for(app_id, port)
     if meta and meta.get("sensitive"):
@@ -275,6 +600,9 @@ def _entry(
     description: str = "",
     name_key: str = "",
     meta: dict | None = None,
+    kind: str = "tcp",
+    confidence: str = "low",
+    internal: bool | None = None,
 ) -> dict | None:
     host = (host or "").strip()
     if not HOST_RE.match(host) or not (1 <= int(port) <= 65535):
@@ -286,6 +614,8 @@ def _entry(
     if meta is None:
         meta = catalog.service_for(app_id, port)
     name = (meta or {}).get("name") or f"{service} ({port})"
+    if internal is None:
+        internal = kind in INTERNAL_KINDS
     return {
         "id": f"{app_id}:{service}:{port}:{protocol}",
         "app_id": app_id,
@@ -296,6 +626,9 @@ def _entry(
         "target_ip": host,
         "target_port": int(port),
         "protocol": protocol,
+        "kind": kind,
+        "confidence": confidence,
+        "internal": bool(internal),
         "sensitive": bool(sensitive if sensitive is not None else _sensitive(app_id, service, int(port))),
         "system": system,
         "description": (meta or {}).get("description", description),
@@ -510,10 +843,11 @@ def _service_target(
     return _service_container(app_id, name, service, values)
 
 
-def _detect_apps() -> list[dict]:
+def _detect_apps_impl() -> tuple[list[dict], dict[str, tuple[str, str, str]]]:
     services: list[dict] = []
+    contexts: dict[str, tuple[str, str, str]] = {}
     if not APP_DATA.is_dir():
-        return services
+        return services, contexts
     for app_dir in sorted(APP_DATA.iterdir()):
         if app_dir.name.startswith(".") or app_dir.is_symlink() or not app_dir.is_dir():
             continue
@@ -585,12 +919,17 @@ def _detect_apps() -> list[dict]:
                 )
             else:
                 service_name, container, target = "unidentified", "", host
-            entry = _entry(app_id, app, service_name, target, port)
+            entry = _entry(
+                app_id, app, service_name, target, port,
+                kind="http", confidence="high", source="proxy", sensitive=True,
+            )
             if entry:
                 entry["container_name"] = target if identity else ""
                 entry["service_identified"] = identity is not None
                 app_entries.append(entry)
                 seen.add((entry["target_ip"], port, "tcp"))
+                if entry["target_ip"] != host_ip:
+                    contexts.setdefault(entry["target_ip"], (app_id, app, service_name))
 
         # Published and exposed container ports are intentional protocol
         # endpoints (P2P, RPC, ZMQ, databases, …). Only the container side is
@@ -603,27 +942,57 @@ def _detect_apps() -> list[dict]:
             target = _service_target(app_id, service_name, service, compose_services, host_ip, values)
             if not target:
                 continue
-            for port, protocol in _ports_from_service(service, values) + _ports_from_expose(service, values):
-                key = (target, port, protocol)
-                if key in seen or port in IGNORED_PORTS:
+            for port, protocol, source, hint in _declared_ports(service, values, service_name):
+                if port in IGNORED_PORTS:
                     continue
-                entry = _entry(app_id, app, service_name, target, port, protocol)
+                if source in {"env", "command"} and (
+                    INFERRED_SKIP_SERVICES.search(service_name)
+                    or NON_LISTENER_SERVICE_RE.search(service_name)
+                    or port in INFERRED_BLOCK_PORTS
+                ):
+                    continue
+                key = (target, port, protocol)
+                if key in seen:
+                    continue
+                kind, confidence = _classify(
+                    app_id, app, service_name, service, port, protocol, hint=hint
+                )
+                entry = _entry(
+                    app_id, app, service_name, target, port, protocol,
+                    source=source, kind=kind, confidence=confidence,
+                )
                 if entry:
                     entry["container_name"] = target
                     entry["service_identified"] = True
                     app_entries.append(entry)
                     seen.add(key)
+                    if target != host_ip:
+                        contexts.setdefault(target, (app_id, app, service_name))
 
         # Host-network apps have no app_proxy in most cases (Home Assistant,
         # Pi-hole, Plex, …). Their published ports are on the Umbrel host and
         # the manifest port is the web UI.
         if host_network_services and host_ip:
             for service_name, service in host_network_services:
-                for port, protocol in _ports_from_service(service, values):
-                    key = (host_ip, port, protocol)
-                    if key in seen or port in IGNORED_PORTS:
+                for port, protocol, source, hint in _declared_ports(service, values, service_name):
+                    if port in IGNORED_PORTS:
                         continue
-                    entry = _entry(app_id, app, service_name, host_ip, port, protocol)
+                    if source in {"env", "command"} and (
+                        INFERRED_SKIP_SERVICES.search(service_name)
+                        or NON_LISTENER_SERVICE_RE.search(service_name)
+                        or port in INFERRED_BLOCK_PORTS
+                    ):
+                        continue
+                    key = (host_ip, port, protocol)
+                    if key in seen:
+                        continue
+                    kind, confidence = _classify(
+                        app_id, app, service_name, service, port, protocol, hint=hint
+                    )
+                    entry = _entry(
+                        app_id, app, service_name, host_ip, port, protocol,
+                        source=source, kind=kind, confidence=confidence,
+                    )
                     if entry:
                         entry["container_name"] = host_ip
                         entry["service_identified"] = True
@@ -633,39 +1002,51 @@ def _detect_apps() -> list[dict]:
             key = (host_ip, manifest_port, "tcp")
             if manifest_port and not proxy_entry and key not in seen and manifest_port not in IGNORED_PORTS:
                 service_name = host_network_services[0][0]
-                entry = _entry(app_id, app, service_name, host_ip, manifest_port)
+                entry = _entry(
+                    app_id, app, service_name, host_ip, manifest_port,
+                    source="manifest", kind="http", confidence="medium",
+                )
                 if entry:
                     entry["container_name"] = host_ip
                     entry["service_identified"] = True
                     app_entries.append(entry)
                     seen.add(key)
 
-        # Catalog extras cover ports that are listening inside the container but
-        # are not published or exposed in compose (for example Bitcoin Core's
-        # ZMQ streams or its whitebind listener). They are always attached to an
-        # explicit compose service, never to an arbitrary web container.
-        for meta in catalog.extra_services(app_id, values):
-            service_name = str(meta.get("service") or "")
-            service = compose_services.get(service_name)
-            if not isinstance(service, dict):
-                continue
-            target = _service_target(app_id, service_name, service, compose_services, host_ip, values)
-            if not target:
-                continue
-            port = int(meta["port"])
-            protocol = str(meta.get("protocol") or "tcp").lower()
-            key = (target, port, protocol)
-            if key in seen or port in IGNORED_PORTS:
-                continue
-            entry = _entry(app_id, app, service_name, target, port, protocol, meta=meta)
-            if entry:
-                entry["container_name"] = target
-                entry["service_identified"] = True
-                app_entries.append(entry)
-                seen.add(key)
+        # A client setting is never the service's own listener. When another
+        # service of the same app declares the port (``ports``/``expose``, the
+        # app proxy, a manifest or a server command flag), drop the weak
+        # ``environment`` inference from this one. This keeps, for example,
+        # ``BITCOIN_RPC_PORT=18443`` off the dashboard container.
+        strong = {
+            (entry["target_port"], entry["protocol"], entry["target_ip"])
+            for entry in app_entries
+            if entry["source"] in {"compose", "expose", "proxy", "manifest", "command"}
+        }
+        if strong:
+            app_entries = [
+                entry
+                for entry in app_entries
+                if not (
+                    entry["source"] == "env"
+                    and any(
+                        port == entry["target_port"]
+                        and protocol == entry["protocol"]
+                        and target != entry["target_ip"]
+                        for port, protocol, target in strong
+                    )
+                )
+            ]
 
+        # The catalog is no longer a source of ports. Ports come from the app's
+        # own Compose/environment/command declarations or from the active scan,
+        # so unknown apps and future versions are detected the same way.
         services.extend(app_entries)
 
+    return services, contexts
+
+
+def _detect_apps() -> list[dict]:
+    services, _ = _detect_apps_impl()
     return services
 
 
@@ -720,6 +1101,8 @@ def _detect_host() -> list[dict]:
             sensitive=True,
             description=svc.get("description", ""),
             name_key=f"system.{svc['id']}",
+            kind="http" if str(svc["id"]).startswith("umbrel-dashboard") else "tcp",
+            confidence="high" if str(svc["id"]).startswith("umbrel-dashboard") else "medium",
         )
         if entry:
             services.append(entry)
@@ -752,6 +1135,7 @@ def manual_entry(item: dict) -> dict | None:
         protocol,
         source="manual",
         sensitive=True,
+        kind="udp" if protocol == "udp" else "tcp",
     )
     if entry:
         entry["id"] = f"manual:{item.get('id') or name or port}:{port}:{protocol}"
@@ -767,10 +1151,71 @@ def _manual_entries(manual: list[dict] | None) -> list[dict]:
     return result
 
 
-def detect_services(manual: list[dict] | None = None) -> list[dict]:
-    services = _detect_apps()
+def _merge_scan(
+    services: list[dict],
+    contexts: dict[str, tuple[str, str, str]],
+) -> list[dict]:
+    """Merge active-scan results with the declarative detection.
+
+    Declarative entries win: a scan can only confirm/upgrade an existing port or
+    add a port that no file declared (for example an image-only ``EXPOSE``).
+    """
+    if not contexts:
+        return services
+    priority = {
+        int(svc["target_port"])
+        for svc in services
+        if svc.get("target_ip") in contexts and svc.get("protocol") == "tcp"
+    }
+    scan.ensure(list(contexts), priority)
+    found = scan.snapshot()
+    if not found:
+        return services
+
+    by_key = {
+        (svc["target_ip"], int(svc["target_port"]), svc.get("protocol", "tcp")): svc
+        for svc in services
+    }
+    for host, ports in found.items():
+        meta = contexts.get(host)
+        if not meta:
+            continue
+        app_id, app, service_name = meta
+        for port, info in sorted(ports.items()):
+            key = (host, int(port), "tcp")
+            current = by_key.get(key)
+            if current is not None:
+                if info.get("http") and current.get("kind") in {"tcp", "http"}:
+                    current["kind"] = "metrics" if info.get("prometheus") else "http"
+                    current["confidence"] = "high"
+                    current["internal"] = current.get("kind") in INTERNAL_KINDS
+                continue
+            kind = "metrics" if info.get("prometheus") else ("http" if info.get("http") else "tcp")
+            entry = _entry(
+                app_id,
+                app,
+                service_name,
+                host,
+                int(port),
+                "tcp",
+                source="scan",
+                kind=kind,
+                confidence="high" if kind in {"http", "metrics"} else "low",
+            )
+            if entry:
+                entry["container_name"] = host
+                entry["service_identified"] = True
+                services.append(entry)
+                by_key[key] = entry
+    return services
+
+
+def detect_services(manual: list[dict] | None = None, scan_network: bool = True) -> list[dict]:
+    services, contexts = _detect_apps_impl()
     services.extend(_detect_host())
     services.extend(_manual_entries(manual))
+    if scan_network and scan.ENABLED:
+        services = _merge_scan(services, contexts)
 
     unique: dict[tuple[str, int, str], dict] = {}
     for svc in services:
@@ -781,7 +1226,10 @@ def detect_services(manual: list[dict] | None = None) -> list[dict]:
         if host not in resolved:
             resolved[host] = _resolved_ip(host)
         svc["resolved_ip"] = resolved[host]
-    return sorted(unique.values(), key=lambda s: (s["system"], s["app"].lower(), s["target_port"], s["protocol"]))
+    return sorted(
+        unique.values(),
+        key=lambda s: (s["system"], s["app"].lower(), s["target_port"], s["protocol"]),
+    )
 
 
 def find_service(service_id: str, manual: list[dict] | None = None) -> dict | None:

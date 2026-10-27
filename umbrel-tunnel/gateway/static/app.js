@@ -24,6 +24,8 @@
     bootstrap: null,
     search: '',
     filter: 'all',
+    kindFilter: 'all',
+    hideInternal: false,
   };
   let pollTimer = null;
 
@@ -46,6 +48,37 @@
 
   function badge(text, cls) {
     return el('span', `badge ${cls || 'info'}`, text);
+  }
+
+  const KIND_LABELS = {
+    http: ['Web / HTTP', 'Web / HTTP'],
+    tcp: ['TCP', 'TCP'],
+    udp: ['UDP', 'UDP'],
+    rpc: ['RPC', 'RPC'],
+    p2p: ['P2P', 'P2P'],
+    zmq: ['ZMQ', 'ZMQ'],
+    electrum: ['Electrum', 'Electrum'],
+    lightning: ['Lightning', 'Lightning'],
+    metrics: ['Métricas', 'Metrics'],
+    database: ['Base de datos', 'Database'],
+  };
+
+  function serviceKind(svc) {
+    const kind = String((svc && svc.kind) || 'tcp').toLowerCase();
+    const labels = KIND_LABELS[kind];
+    return {
+      kind,
+      label: labels ? say(labels[0], labels[1]) : kind.toUpperCase(),
+      internal: Boolean(svc && svc.internal),
+    };
+  }
+
+  function kindChip(svc) {
+    const info = serviceKind(svc);
+    const chip = el('span', `kind-chip kind-${info.kind}`, info.label);
+    if (svc && svc.confidence) chip.title = say(`Confianza: ${svc.confidence}`, `Confidence: ${svc.confidence}`);
+    if (svc && svc.protocol) chip.append(el('span', 'kind-proto', String(svc.protocol).toUpperCase()));
+    return chip;
   }
 
   function ask(message, value) {
@@ -365,7 +398,11 @@
       if (!candidates.some((svc) => publicationsFor(svc).some(e => e.id === exposure.id))) {
         candidates.push({ id: exposure.service_id || exposure.id, app: exposure.app || exposure.name,
           name: exposure.name, target_ip: exposure.target_ip, target_port: exposure.target_port,
-          protocol: exposure.protocol, exposed: true, exposure_id: exposure.id,
+          protocol: exposure.protocol,
+          kind: ['http', 'https'].includes(exposure.access_mode)
+            ? 'http'
+            : (exposure.protocol === 'udp' ? 'udp' : 'tcp'),
+          exposed: true, exposure_id: exposure.id,
           exposure_enabled: exposure.enabled, exposure_error: Boolean(exposure.sync_error),
           public_port: exposure.public_port, can_open: true });
       }
@@ -375,12 +412,14 @@
       svc.exposed = pubs.length > 0;
       svc.exposure_enabled = pubs.some(e => e.enabled);
       svc.exposure_error = pubs.some(e => e.sync_error);
-      const haystack = `${svc.app} ${serviceName(svc)} ${svc.service} ${svc.target_port}`.toLowerCase();
+      const haystack = `${svc.app} ${serviceName(svc)} ${svc.service} ${svc.target_port} ${svc.kind || ''}`.toLowerCase();
       const matches = state.filter === 'all'
         || (state.filter === 'published' && svc.exposed)
         || (state.filter === 'closed' && !svc.exposed)
         || (state.filter === 'errors' && svc.exposure_error);
-      return matches && (!query || haystack.includes(query));
+      const kindOk = state.kindFilter === 'all' || String(svc.kind || 'tcp') === state.kindFilter;
+      const internalOk = !state.hideInternal || !svc.internal;
+      return matches && kindOk && internalOk && (!query || haystack.includes(query));
     });
     $('services-empty').hidden = list.length > 0;
 
@@ -404,9 +443,21 @@
       })));
       tr.append(destination);
 
+      const kindCell = document.createElement('td');
+      kindCell.append(kindChip(svc));
+      tr.append(kindCell);
+
       const notes = document.createElement('td');
-      notes.append(badge(String(svc.protocol || 'tcp').toUpperCase(), 'info'));
-      if (svc.sensitive) notes.append(badge(t('services.badge.sensitive'), 'warn'));
+      if (svc.internal) {
+        const internalBadge = badge(t('services.badge.internal'), 'muted-badge');
+        internalBadge.title = t('services.internal_help');
+        notes.append(internalBadge);
+      }
+      if (svc.sensitive) {
+        const sensitiveBadge = badge(t('services.badge.sensitive'), 'warn');
+        sensitiveBadge.title = t('ui.sensitive');
+        notes.append(sensitiveBadge);
+      }
       if (svc.system) notes.append(badge(t('services.badge.system'), 'info'));
       if (svc.exposed) {
         notes.append(badge(
@@ -414,10 +465,6 @@
           svc.exposure_enabled ? 'ok' : 'warn',
         ));
         if (svc.exposure_error) notes.append(badge(t('open.badge.error'), 'bad'));
-      } else if (svc.protocol === 'udp') {
-        notes.append(badge(t('services.badge.udp'), 'info'));
-      } else {
-        notes.append(badge(t('services.badge.tcp'), 'info'));
       }
       const description = serviceDescription(svc);
       if (description) notes.title = description;
@@ -429,7 +476,10 @@
         const publication = el('div', 'publication');
         const host = (exposure.domains || [])[0] || (((state.status || {}).vps || {}).endpoint || '').replace(/:\d+$/, '') || 'VPS';
         const mode = exposure.access_mode || 'direct';
-        publication.append(el('strong', '', `${host}:${exposure.public_port}`));
+        const published = ['http', 'https'].includes(mode)
+          ? `${mode}://${host}`
+          : `${host}:${exposure.public_port}`;
+        publication.append(el('strong', '', published));
         publication.append(el('span', 'sub', `${mode === 'direct' ? say('Sin cifrado añadido', 'No added encryption') : mode.toUpperCase()} · ${exposure.enabled ? (exposure.sync_error ? say('Error', 'Error') : say('Aplicado', 'Applied')) : say('Pausado', 'Paused')}`));
         if (['tls','https'].includes(mode)) {
           const cert = state.certificates.find(c => c.domain === host);
@@ -531,7 +581,10 @@
       const remove = el('button', 'danger ghost small', t('open.close'));
       remove.type = 'button';
       remove.addEventListener('click', () => deleteExposure(exposure));
-      actions.append(change, remove);
+      // HTTP/HTTPS are published on 80/443 by subdomain; the public port is
+      // not editable for those rules.
+      if (!['http', 'https'].includes(exposure.access_mode)) actions.append(change);
+      actions.append(remove);
       tr.append(actions);
 
       body.append(tr);
@@ -637,24 +690,43 @@
     const base = (settings.settings || {}).base_domain || '';
     const domain = exposure && (exposure.domains || [])[0] || '';
     const fullDomain = Boolean(domain && (!base || (domain !== base && !domain.endsWith('.' + base))));
-    const mode = exposure && exposure.access_mode || 'direct';
+    const existingMode = exposure && exposure.access_mode || '';
+    // Detected web ports are published by subdomain on 80/443. The internal
+    // port is never the public one: the VPS routes by Host and the local proxy
+    // forwards to the container port.
+    const forcedWeb = String(service.kind || '') === 'http';
     const dialog = el('dialog', 'action-dialog publication-dialog');
     dialog.setAttribute('aria-label', say('Publicar servicio', 'Publish service'));
     const form = el('form', 'stack');
     form.append(el('h2', '', say(exposure ? 'Editar publicación' : 'Añadir publicación', exposure ? 'Edit publication' : 'Add publication')));
-    form.append(el('p', 'muted', `${serviceName(service)} → ${service.target_ip}:${service.target_port} · ${String(service.protocol || 'tcp').toUpperCase()}`));
+    const summary = el('p', 'publication-target');
+    summary.append(el('span', 'muted', `${serviceName(service)} → ${service.target_ip}:${service.target_port} · `));
+    summary.append(kindChip(service));
+    form.append(summary);
     const field = (label, node) => { const l = el('label', '', label); l.append(node); form.append(l); return l; };
+
     const kind = el('select');
     for (const [value,label] of [['direct',say('Servicio TCP/UDP', 'TCP/UDP service')],['web',say('Servicio web HTTP', 'HTTP web service')]]) {
       const option = el('option','',label); option.value=value; kind.append(option);
     }
-    kind.value = ['http','https'].includes(mode) ? 'web' : 'direct';
-    kind.disabled = service.protocol === 'udp'; field(say('Tipo de servicio', 'Service type'),kind);
+    kind.value = forcedWeb || ['http','https'].includes(existingMode) ? 'web' : 'direct';
+    kind.disabled = forcedWeb;
+    const kindField = field(say('Tipo de servicio', 'Service type'), kind);
+    kindField.hidden = forcedWeb;
+
+    const encrypted = el('input'); encrypted.type='checkbox';
+    encrypted.checked = existingMode ? ['https','tls'].includes(existingMode) : forcedWeb;
+    const encryptedField = field(say('Cifrar con certificado automático', 'Encrypt with automatic certificate'), encrypted);
+
     const port = el('input'); port.type='number'; port.min='1'; port.max='65535'; port.required=true;
     port.value=String(exposure ? exposure.public_port : (service.default_public_port || service.target_port));
-    field(say('Puerto público', 'Public port'),port);
-    const useDomain=el('input'); useDomain.type='checkbox'; useDomain.checked=Boolean(domain);
-    field(say('Usar dominio / subdominio', 'Use domain / subdomain'),useDomain);
+    const portField = field(say('Puerto público', 'Public port'), port);
+
+    const webNote = el('p', 'muted publication-note');
+    form.append(webNote);
+
+    const useDomain=el('input'); useDomain.type='checkbox'; useDomain.checked=Boolean(domain) || forcedWeb;
+    const useDomainField = field(say('Usar dominio / subdominio', 'Use domain / subdomain'), useDomain);
     const sub=el('input'); sub.maxLength=253;
     sub.value=fullDomain ? domain : domain === base ? '' : domain.endsWith('.'+base) ? domain.slice(0,-base.length-1) : '';
     sub.placeholder=fullDomain ? 'electrs.example.org' : 'electrs';
@@ -662,37 +734,63 @@
     domainField.append(el('span','sub',fullDomain ? '' : (base ? '.'+base : say('Configura primero el dominio base.', 'Configure the base domain first.'))));
     const configure=el('button','ghost small',say('Configurar dominio base', 'Configure base domain')); configure.type='button';
     configure.onclick=()=>{dialog.close();switchTab('connection');$('base-domain').focus();}; form.append(configure);
-    const encrypted=el('input'); encrypted.type='checkbox'; encrypted.checked=['tls','https'].includes(mode);
-    field(say('Terminar SSL/TLS en el VPS (certificado automático)', 'Terminate SSL/TLS on VPS (automatic certificate)'),encrypted);
+
     const terms=el('input'); terms.type='checkbox'; terms.checked=Boolean(exposure && exposure.tls && exposure.tls.mode==='acme');
     const termsField=field(say('Acepto las condiciones de Let’s Encrypt; los nombres del certificado serán públicos.', 'I accept Let’s Encrypt terms; certificate names will be public.'),terms);
     const termsLink=el('a','','Let’s Encrypt'); termsLink.href='https://letsencrypt.org/repository/'; termsLink.target='_blank'; termsLink.rel='noopener noreferrer'; termsField.append(termsLink);
     const preview=el('p','publication-preview'); form.append(preview);
-    form.append(el('p','muted',say('Sin cifrado añadido no desactiva el TLS propio del servicio. Un mismo destino puede tener varias publicaciones; añadir no sustituye las existentes.', 'No added encryption does not disable a service’s own TLS. One destination can have multiple publications; adding does not replace existing ones.')));
+    const note=el('p','muted'); form.append(note);
     const confirm=el('input');confirm.type='checkbox';confirm.required=true;
     field(say('Confirmo publicar este servicio en Internet.', 'I confirm publishing this service on the Internet.'),confirm);
     const error=el('p','error-line');error.setAttribute('role','alert'); form.append(error);
     const buttons=el('div','row'); const cancel=el('button','ghost',t('common.close'));cancel.type='button';cancel.onclick=()=>dialog.close();
     const save=el('button','',say('Guardar publicación','Save publication'));save.type='submit';buttons.append(cancel,save);form.append(buttons);
     const update=()=>{
-      encrypted.disabled=service.protocol==='udp';
-      if(encrypted.checked || kind.value==='web') useDomain.checked=true;
+      const webMode = kind.value === 'web';
+      if (webMode) {
+        port.value = encrypted.checked ? '443' : '80';
+        useDomain.checked = true;
+        kind.disabled = true;
+      } else {
+        kind.disabled = forcedWeb;
+      }
+      if (!webMode) port.required = true;
+      port.disabled = webMode;
+      useDomainField.hidden = webMode;
+      encrypted.disabled = service.protocol === 'udp' && !webMode;
       const needsDomain=useDomain.checked;
-      domainField.hidden=!needsDomain; sub.required=fullDomain && needsDomain;
+      domainField.hidden=!needsDomain; sub.required=webMode || (fullDomain && needsDomain);
       configure.hidden=Boolean(base) || fullDomain;
-      termsField.hidden=!encrypted.checked;terms.required=encrypted.checked;
-      port.disabled=kind.value==='web' && encrypted.checked;
+      termsField.hidden=!encrypted.checked;terms.required=encrypted.checked && (webMode || needsDomain);
       const fqdn=needsDomain ? (fullDomain ? sub.value : [sub.value,base].filter(Boolean).join('.')) : (((state.status||{}).vps||{}).endpoint||'VPS').replace(/:\d+$/,'');
-      preview.textContent=`${fqdn}:${port.value} · ${kind.value==='web' ? (encrypted.checked?'HTTPS':'HTTP') : (encrypted.checked?'TLS':String(service.protocol||'tcp').toUpperCase())} → ${service.target_ip}:${service.target_port}`;
+      if (webMode) {
+        const scheme = encrypted.checked ? 'https' : 'http';
+        portField.hidden = true;
+        preview.textContent=`${scheme}://${fqdn || '…'} → ${service.target_ip}:${service.target_port}`;
+        webNote.hidden = false;
+        webNote.textContent = say(
+          `Se publica por subdominio en el puerto ${port.value}. El puerto interno ${service.target_port} no se expone en Internet.`,
+          `Published by subdomain on port ${port.value}. The internal port ${service.target_port} is never exposed on the Internet.`,
+        );
+        note.textContent = say('El VPS recibe la petición en 80/443, enruta por Host y el proxy local conecta con el puerto real de la app.', 'The VPS receives the request on 80/443, routes by Host, and the local proxy connects to the real app port.');
+      } else {
+        portField.hidden = false;
+        preview.textContent=`${fqdn}:${port.value} · ${encrypted.checked?'TLS':String(service.protocol||'tcp').toUpperCase()} → ${service.target_ip}:${service.target_port}`;
+        webNote.hidden = true;
+        note.textContent = say('Sin cifrado añadido no desactiva el TLS propio del servicio. Un mismo destino puede tener varias publicaciones; añadir no sustituye las existentes.', 'No added encryption does not disable a service’s own TLS. One destination can have multiple publications; adding does not replace existing ones.');
+      }
     };
-    kind.onchange=()=>{ if(kind.value==='web')port.value=encrypted.checked?'443':'80';update(); };
+    kind.onchange=()=>{update();};
     encrypted.onchange=()=>{if(kind.value==='web')port.value=encrypted.checked?'443':'80';update();};
     useDomain.onchange=update;sub.oninput=update;port.oninput=update;update();
     form.onsubmit=async event=>{
       event.preventDefault();save.disabled=true;error.textContent='';
       try {
-        if(useDomain.checked && !base && !fullDomain)throw new Error(say('Configura primero el dominio base.', 'Configure the base domain first.'));
-        const payload={access_mode:kind.value==='web'?(encrypted.checked?'https':'http'):(encrypted.checked?'tls':'direct'), public_port:Number(port.value),accept_acme_terms:terms.checked, domain:''};
+        const webMode = kind.value === 'web';
+        if (webMode && !base && !fullDomain)throw new Error(say('Configura primero el dominio base.', 'Configure the base domain first.'));
+        if (useDomain.checked && !base && !fullDomain)throw new Error(say('Configura primero el dominio base.', 'Configure the base domain first.'));
+        const accessMode = webMode ? (encrypted.checked ? 'https' : 'http') : (encrypted.checked ? 'tls' : 'direct');
+        const payload={access_mode:accessMode, public_port: webMode ? (encrypted.checked ? 443 : 80) : Number(port.value), accept_acme_terms:terms.checked, domain:''};
         if(useDomain.checked){if(fullDomain)payload.domain=sub.value;else payload.subdomain=sub.value;}
         const result=await api(exposure?`/api/exposures/${exposure.id}`:'/api/exposures',{method:exposure?'PATCH':'POST',body:JSON.stringify({...payload,service_id:service.id,new_publication:!exposure})});
         await refreshAll();
@@ -913,22 +1011,40 @@
 
   async function refreshCertificates() {
     state.certificates = await api('/api/certificates');
-    $('certificate-status').replaceChildren();
+    const host = $('certificate-status');
+    host.replaceChildren();
+    if (!state.certificates.length) {
+      host.append(el('p', 'muted empty', say(
+        'Aún no hay certificados. Publica un servicio web con HTTPS para solicitar uno.',
+        'No certificates yet. Publish a web service over HTTPS to request one.',
+      )));
+      return;
+    }
+    const labels = {
+      ready: say('Válido', 'Ready'),
+      pending: say('Pendiente', 'Pending'),
+      error: say('Error', 'Error'),
+      expired: say('Caducado', 'Expired'),
+    };
     for (const c of state.certificates) {
-      const item = el('div', 'publication');
-      item.append(el('strong', '', `${c.domain} · ${c.state}`));
-      if (c.not_after) item.append(el('span', 'sub', `${say('Válido hasta', 'Valid until')}: ${new Date(c.not_after).toLocaleString()}`));
-      if (c.checked_at) item.append(el('span', 'sub', `${say('Último intento', 'Last attempt')}: ${new Date(c.checked_at).toLocaleString()}`));
+      const card = el('article', 'cert-card');
+      const head = el('div', 'cert-head');
+      head.append(el('strong', '', c.domain));
+      const stateName = String(c.state || 'pending');
+      head.append(badge(labels[stateName] || stateName, stateName === 'ready' ? 'ok' : stateName === 'error' ? 'bad' : 'warn'));
+      card.append(head);
+      if (c.not_after) card.append(el('span', 'sub', `${say('Válido hasta', 'Valid until')}: ${new Date(c.not_after).toLocaleString()}`));
+      if (c.checked_at) card.append(el('span', 'sub', `${say('Último intento', 'Last attempt')}: ${new Date(c.checked_at).toLocaleString()}`));
       if (c.error) {
-        item.append(el('span', 'error-line', c.error));
-        if (c.hint) item.append(el('span', 'sub', c.hint));
-        if (c.reachable) item.append(el('span', 'sub', portSummary(c.reachable)));
+        card.append(el('span', 'error-line', c.error));
+        if (c.hint) card.append(el('span', 'sub', c.hint));
+        if (c.reachable) card.append(el('span', 'sub', portSummary(c.reachable)));
       }
       if (c.renewal_error) {
-        item.append(el('span', 'error-line', `${say('Renovación', 'Renewal')}: ${c.renewal_error}`));
-        if (c.renewal_hint) item.append(el('span', 'sub', c.renewal_hint));
+        card.append(el('span', 'error-line', `${say('Renovación', 'Renewal')}: ${c.renewal_error}`));
+        if (c.renewal_hint) card.append(el('span', 'sub', c.renewal_hint));
       }
-      $('certificate-status').append(item);
+      host.append(card);
     }
   }
 
@@ -984,7 +1100,6 @@
   }
 
   function bind() {
-    $('settings-slot').prepend($('domain-settings-card'));
     $('domain-settings-form').onsubmit=async event=>{
       event.preventDefault();
       try { await api('/api/settings',{method:'POST',body:JSON.stringify({base_domain:$('base-domain').value})});$('domain-message').textContent=say('Dominio guardado. Las publicaciones existentes no se modifican.', 'Domain saved. Existing publications are unchanged.'); }
@@ -1018,6 +1133,14 @@
         document.querySelectorAll('[data-filter]').forEach((node) => node.setAttribute('aria-pressed', String(node === button)));
         renderServices();
       });
+    });
+    $('service-kind-filter').addEventListener('change', (event) => {
+      state.kindFilter = event.target.value;
+      renderServices();
+    });
+    $('hide-internal').addEventListener('change', (event) => {
+      state.hideInternal = event.target.checked;
+      renderServices();
     });
     const help = {
       'manual-service-name': 'name', 'bootstrap-vps-ip': 'vps',

@@ -213,8 +213,16 @@ automático.
 ## Uso
 
 - **Servicios y puertos**: servicios detectados y manuales en una sola lista,
-  con búsqueda y filtros. Permite publicar TCP/UDP, pausar, reanudar, cambiar el
-  puerto o dejar de publicar sin borrar el servicio.
+  con búsqueda, filtro por tipo de puerto y opción de ocultar los internos.
+  Cada puerto muestra qué es (Web/HTTP, RPC, P2P, ZMQ, Electrum, Lightning,
+  métricas, base de datos o TCP/UDP) y si es **sensible** o **interno**.
+  Permite publicar TCP/UDP, pausar, reanudar, cambiar el puerto o dejar de
+  publicar sin borrar el servicio.
+- **Servicios web**: se publican por subdominio en el puerto 80 (HTTP) o 443
+  (HTTPS). El puerto interno de la app no se usa como puerto público: el VPS
+  enruta por `Host` y el proxy local conecta con el puerto real del contenedor.
+  Solo los servicios que no son web (TCP/UDP/TLS) tienen puerto público
+  personalizable.
 - **Añadir servicio manual**: guarda un servicio o lo publica directamente.
   TCP + UDP crea dos reglas independientes y muestra el resultado de cada una.
 - **Configuración y diagnóstico**: botón separado para conexión, diagnóstico,
@@ -286,16 +294,32 @@ La detección interpreta el compose de forma estática, sin ejecutar nada:
   umbreld. Así se resuelven, por ejemplo, los puertos de Bitcoin (`8332`,
   `8333`) y Electrs (`50001`), que en origen son `${APP_BITCOIN_RPC_PORT}` y
   similares.
-- **Puertos del catálogo** para apps conocidas (Bitcoin/Knots, Electrs, LND,
-  Mempool, Pi-hole, DNS…) solo cuando se pueden asociar a un servicio concreto
-  del compose; nunca se inventan destinos.
+- **Inferencia desde el entorno y el comando**: direcciones de escucha
+  (`0.0.0.0:3000`, `[::]:8082`), variables `BIND`/`LISTEN`/`ADDR*` y flags de
+  servidor (`--port`, `--bind`, `--rpcbind`, `-zmqpub*`). Las variables
+  compartidas por todas las apps de un proyecto, los puertos de cliente
+  (`*_HOST`/`*_URL` apuntando a otro contenedor) y los umbrales numéricos no se
+  atribuyen al servicio equivocado.
+- **Escaneo activo (en segundo plano)**: la app resuelve el nombre DNS de cada
+  contenedor y prueba conexiones TCP solo contra direcciones privadas de la red
+  Docker. Los puertos abiertos se prueban con una petición HTTP y se cachean
+  durante `UMBREL_TUNNEL_SCAN_TTL` segundos (300 por defecto). Nunca escanea
+  apps con `network_mode: host`, así que no toca el host de Umbrel. Se puede
+  desactivar con `UMBREL_TUNNEL_SCAN=0`. Los puertos declarados en el compose
+  siguen apareciendo aunque el contenedor esté parado; el escaneo solo añade
+  los que la imagen abre por su cuenta.
+
+Cada puerto detectado recibe un **tipo** y una **confianza** a partir de la
+evidencia disponible (proxy web, puerto declarado, sonda HTTP, Prometheus,
+nombre del servicio, ZMQ/RPC/P2P/Electrum/Lightning…). Los puertos de base de
+datos y métricas se marcan como **internos** para poder ocultarlos.
 
 Usa los nombres DNS de Docker (`<app-id>_<servicio>_1`) como destino, de modo
 que el proxy sigue funcionando aunque cambie la IP del contenedor. Los servicios
 detectados muestran debajo la IP resuelta, solo como información. Las IPs de
 `app-gateway.json` se asocian al contenedor declarado en el compose cuando es
-posible; no se asignan puertos del catálogo a contenedores web arbitrariamente.
-Si una app no se detecta, añade un servicio manual en **Servicios y puertos**.
+posible. Si una app no se detecta, añade un servicio manual en
+**Servicios y puertos**.
 
 ## CLI del VPS
 
@@ -528,7 +552,7 @@ Variables de entorno útiles en el gateway:
 | Variable | Por defecto | Uso |
 | --- | --- | --- |
 | `APP_PASSWORD` | — | contraseña de login; Umbrel la inyecta |
-| `APP_VERSION` | `1.3.3` | versión mostrada |
+| `APP_VERSION` | `1.4.0` | versión mostrada |
 | `UMBREL_TUNNEL_DATA` | `/data` | estado, claves y configuración |
 | `UMBREL_APP_DATA` | `/umbrel-app-data` | manifiestos de apps (solo lectura) |
 | `NETWORK_IP` | `10.21.0.0` | red de Umbrel para detectar solapes |

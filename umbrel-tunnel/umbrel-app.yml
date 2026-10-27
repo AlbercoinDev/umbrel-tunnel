@@ -4,7 +4,7 @@ storage:
   dataRoot: data
 category: networking
 name: Umbrel Tunnel
-version: "1.3.3"
+version: "1.4.0"
 tagline: Expose Umbrel services through your own VPS over WireGuard
 icon: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iZyIgeDE9IjAlIiB5MT0iMCUiIHgyPSIxMDAlIiB5Mj0iMTAwJSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0eWxlPSJzdG9wLWNvbG9yOiMzOGJkZjgiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdHlsZT0ic3RvcC1jb2xvcjojNjM2NmYxIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgcng9IjIwIiBmaWxsPSJ1cmwoI2cpIi8+CiAgPHBhdGggZD0iTTMwIDUwIEw1MCAzMCBMNzAgNTAgTDUwIDcwIFoiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjgiIGZpbGw9IndoaXRlIi8+CiAgPGxpbmUgeDE9IjUwIiB5MT0iMzAiIHgyPSI1MCIgeTI9IjIwIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxsaW5lIHgxPSI1MCIgeTE9IjcwIiB4Mj0iNTAiIHkyPSI4MCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8bGluZSB4MT0iMzAiIHkxPSI1MCIgeDI9IjIwIiB5Mj0iNTAiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPGxpbmUgeDE9IjcwIiB5MT0iNTAiIHgyPSI4MCIgeTI9IjUwIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K"
 description: >-
@@ -20,16 +20,17 @@ description: >-
   with a fixed public IP. Run the one-line installer on the VPS, then paste the
   pairing code in the app.
 releaseNotes: >-
-  Update the VPS to 1.3.3 before updating this app. Port detection now covers
-  every declaration form used by Umbrel apps, so fewer services need to be
-  added by hand: Compose short and long syntax, container-only,
-  host:container, host IP and IPv6, /tcp and /udp, protocol variables,
-  expose, ranges and ports written without quotes. It also reads .env and
-  .env.app_proxy and follows network_mode: host, service: and container:
-  namespaces. Only files are read; exports.sh is never executed and app
-  environment values are never returned. New known ports for AdGuard Home,
-  Technitium DNS, OpenThread Border Router, Music Assistant and Node-RED
-  standalone. Unknown apps remain available through the manual service form.
+  Port detection is now dynamic: the app classifies every port of every app
+  (web dashboard, RPC, P2P, ZMQ, Electrum, Lightning, metrics, database, TCP or
+  UDP) from the Compose files, environment and command flags, plus a bounded
+  active TCP/HTTP scan of the Docker network. Ports are no longer read from a
+  static catalog. Web services are published by subdomain on ports 80/443
+  instead of their internal port: the VPS routes by Host and the local proxy
+  forwards to the real container port. HTTP/HTTPS public ports are fixed;
+  TCP/UDP/TLS keep a custom public port. The services table has a type column,
+  type filter, internal/sensitive badges and an option to hide internal ports.
+  The base domain and certificate section is reorganized into two columns.
+  Unknown apps remain available through the manual service form.
 developer: AlbercoinDev
 website: https://github.com/AlbercoinDev/umbrel-tunnel
 dependencies: []
