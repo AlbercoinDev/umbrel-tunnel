@@ -66,6 +66,37 @@ La configuración de una publicación indica intención, **no** que la CA haya
 emitido el certificado ni que el servicio sea accesible desde Internet.
 Comprueba por separado sincronización, certificado y respuesta de la aplicación.
 
+### Solución de problemas de certificados
+
+Antes de contactar con Let's Encrypt, el VPS comprueba que el dominio resuelve
+A/AAAA. Si no resuelve, la publicación muestra un error `DNS: ... no resuelve`
+y no se intenta la emisión. Corrige el DNS y pulsa **Reintentar emisión**; el
+reintento ya no espera el límite automático de 30 minutos.
+
+El mensaje `acme/autocert: ... no viable challenge type found` significa que
+**HTTP-01 y TLS-ALPN-01 ya se intentaron y ambos fallaron**. No es un fallo del
+tipo de reto. Comprueba, en este orden:
+
+```sh
+dig +short web.umbrel.nodobitcoin.org A @1.1.1.1    # debe devolver la IP del VPS
+dig +short web.umbrel.nodobitcoin.org AAAA @1.1.1.1 # no debe haber AAAA incorrectos
+dig +short umbrel.nodobitcoin.org CAA @1.1.1.1      # si existe, debe permitir letsencrypt.org
+curl -sSI http://web.umbrel.nodobitcoin.org/        # 308 si la ruta HTTP llega al VPS
+sudo journalctl -u umbrel-tunnel -n 50 --no-pager
+```
+
+Causas habituales:
+
+- Falta el registro wildcard (`*.umbrel`) o el nombre concreto en el DNS.
+- El wildcard está proxificado en Cloudflare; debe ser **Solo DNS**.
+- Hay un AAAA que apunta a otro sitio; Let's Encrypt intenta IPv6 primero.
+- El puerto TCP 80 o 443 está cerrado en el firewall del proveedor.
+- Se agotó el límite de Let's Encrypt; espera antes de reintentar.
+
+`state: pending` sin error significa que aún no hay un intento fallido.
+`state: error` incluye el detalle y una sugerencia; un certificado válido con
+`renewal_error` sigue funcionando hasta su fecha de caducidad.
+
 ### Dominio sin certificado
 
 Un nombre DNS no implica TLS ni decide el puerto. Puedes publicar TCP/UDP directo
@@ -159,7 +190,7 @@ campos nuevos. Antes de actualizar, haz una copia de seguridad verificable.
 Si vienes de una versión anterior a 1.2.0, actualiza también la unidad systemd:
 `CAP_NET_BIND_SERVICE` permite escuchar en 80/443 bajo el endurecimiento existente.
 **Sustituir solo el binario con `update` no actualiza dicha unidad**. Reejecuta el
-instalador de **1.3.0** (sin `--force`, sin `--purge`), que conserva configuración
+instalador de **1.3.1** (sin `--force`, sin `--purge`), que conserva configuración
 y claves. El siguiente bloque hace backup, descarga el paquete de tu arquitectura,
 verifica su checksum y actualiza binario y unidades systemd. Se interrumpe si falla
 algún paso. El túnel y las publicaciones tendrán una interrupción breve.
@@ -169,20 +200,20 @@ Ejecuta en el VPS antes de actualizar la app de Umbrel:
 ```sh
 sudo bash <<'SH'
 set -euo pipefail
-backup="/root/umbrel-tunnel-before-1.3.0-$(date +%Y%m%d-%H%M%S).tar.gz"
+backup="/root/umbrel-tunnel-before-1.3.1-$(date +%Y%m%d-%H%M%S).tar.gz"
 umbrel-tunnel backup --output "$backup"
 test -s "$backup"
 arch="$(dpkg --print-architecture)"
 case "$arch" in amd64|arm64) ;; *) echo "Arquitectura no soportada: $arch" >&2; exit 1 ;; esac
-work="$(mktemp -d /root/umbrel-tunnel-upgrade-1.3.0.XXXXXX)"
+work="$(mktemp -d /root/umbrel-tunnel-upgrade-1.3.1.XXXXXX)"
 cd "$work"
-base="https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.3.0"
-file="umbrel-tunnel-1.3.0-linux-$arch.tar.gz"
+base="https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.3.1"
+file="umbrel-tunnel-1.3.1-linux-$arch.tar.gz"
 curl -fLsS --retry 2 "$base/$file" -o "$file"
 curl -fLsS --retry 2 "$base/SHA256SUMS" -o SHA256SUMS
 grep -F "  $file" SHA256SUMS | sha256sum --check --strict -
 tar -xzf "$file"
-cd "umbrel-tunnel-1.3.0-linux-$arch"
+cd "umbrel-tunnel-1.3.1-linux-$arch"
 bash ./install.sh
 umbrel-tunnel version
 umbrel-tunnel doctor
@@ -191,7 +222,7 @@ echo "Backup conservado: $backup"
 SH
 ```
 
-Después actualiza **Umbrel Tunnel a 1.3.0** desde la tienda de Umbrel. No
+Después actualiza **Umbrel Tunnel a 1.3.1** desde la tienda de Umbrel. No
 desinstales, no borres los datos y no vuelvas a vincular el VPS. En instalaciones
 con puertos de API/WireGuard personalizados, pasa los mismos valores al instalador
 (`--api-port`, `--wg-port`) para que sus comprobaciones utilicen los puertos reales.

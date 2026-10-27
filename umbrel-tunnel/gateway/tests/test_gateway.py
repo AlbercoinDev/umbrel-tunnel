@@ -669,6 +669,7 @@ class FakeVPS:
     """In-memory VPS API used by the manual-service API tests."""
 
     forwards: list[dict] = []
+    certificate_items: list[dict] = []
     fail = ""
     conflict_ports: set[int] = set()
     block_started: threading.Event | None = None
@@ -677,6 +678,7 @@ class FakeVPS:
     @classmethod
     def reset(cls):
         cls.forwards = []
+        cls.certificate_items = []
         cls.fail = ""
         cls.conflict_ports = set()
         cls.block_started = None
@@ -691,6 +693,12 @@ class FakeVPS:
         if self.block_started is not None and self.block_release is not None:
             self.block_started.set()
             self.block_release.wait(2)
+
+    def certificates(self):
+        return [dict(item) for item in self.certificate_items]
+
+    def retry_certificates(self):
+        return {"scheduled": True}
 
     def health(self):
         return {"ok": True}
@@ -826,6 +834,25 @@ class ManualServiceApiTests(unittest.TestCase):
         }
         payload.update(overrides)
         return self._post("/api/manual-services", payload)
+
+    def test_certificate_status_exposes_dns_diagnostics_and_retry(self):
+        FakeVPS.certificate_items = [
+            {
+                "domain": "web.umbrel.example.org",
+                "enabled": True,
+                "state": "error",
+                "error": "DNS: web.umbrel.example.org no resuelve",
+                "hint": "Crea un registro A o wildcard hacia el VPS en Solo DNS",
+                "checked_at": "2026-10-27T18:00:00Z",
+            }
+        ]
+        data = self.client.get("/api/certificates").get_json()
+        self.assertEqual(data[0]["state"], "error")
+        self.assertIn("Solo DNS", data[0]["hint"])
+        self.assertEqual(data[0]["checked_at"], "2026-10-27T18:00:00Z")
+        response = self._post("/api/certificates/retry", {})
+        self.assertEqual(response.status_code, 202)
+        self.assertTrue(response.get_json()["scheduled"])
 
     def test_add_and_open_creates_forward_and_exposure(self):
         response = self._open_manual(public_port=8080)

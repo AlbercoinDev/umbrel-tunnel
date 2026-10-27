@@ -8,8 +8,8 @@ services:
       APP_PORT: 8081
 
   gateway:
-    # Published multi-arch image (linux/amd64 + linux/arm64), pinned by digest.
-    image: ghcr.io/albercoindev/umbrel-tunnel-gateway:1.3.0@sha256:ca68e00675f93a8cc58dc504a0bba5ef31adeeaf2bfdaf7827c9ec73b2766f6f
+    # Multi-arch release image; its published digest is pinned after the build.
+    image: ghcr.io/albercoindev/umbrel-tunnel-gateway:1.3.1
     # Restart after crashes. A clean exit is treated as an intentional stop.
     restart: on-failure
     stop_grace_period: 30s

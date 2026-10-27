@@ -432,6 +432,8 @@
         if (['tls','https'].includes(mode)) {
           const cert = state.certificates.find(c => c.domain === host);
           publication.append(el('span', 'sub', `${say('Certificado', 'Certificate')}: ${cert ? cert.state : 'pending'}${cert && cert.not_after ? ' · ' + new Date(cert.not_after).toLocaleDateString() : ''}`));
+          if (cert && cert.error) publication.append(el('span', 'error-line', cert.hint || cert.error));
+          if (cert && cert.renewal_error) publication.append(el('span', 'sub', `${say('Renovación', 'Renewal')}: ${cert.renewal_hint || cert.renewal_error}`));
         }
         if (exposure.sync_error) publication.append(el('span', 'error-line', exposure.sync_error_detail || exposure.sync_error));
         const actions = el('div', 'row');
@@ -909,7 +911,21 @@
   async function refreshCertificates() {
     state.certificates = await api('/api/certificates');
     $('certificate-status').replaceChildren();
-    for (const c of state.certificates) $('certificate-status').append(el('p','',`${c.domain} · ${c.state}${c.not_after ? ' · '+new Date(c.not_after).toLocaleString() : ''}${c.error ? ' · '+c.error : ''}`));
+    for (const c of state.certificates) {
+      const item = el('div', 'publication');
+      item.append(el('strong', '', `${c.domain} · ${c.state}`));
+      if (c.not_after) item.append(el('span', 'sub', `${say('Válido hasta', 'Valid until')}: ${new Date(c.not_after).toLocaleString()}`));
+      if (c.checked_at) item.append(el('span', 'sub', `${say('Último intento', 'Last attempt')}: ${new Date(c.checked_at).toLocaleString()}`));
+      if (c.error) {
+        item.append(el('span', 'error-line', c.error));
+        if (c.hint) item.append(el('span', 'sub', c.hint));
+      }
+      if (c.renewal_error) {
+        item.append(el('span', 'error-line', `${say('Renovación', 'Renewal')}: ${c.renewal_error}`));
+        if (c.renewal_hint) item.append(el('span', 'sub', c.renewal_hint));
+      }
+      $('certificate-status').append(item);
+    }
   }
 
   async function refreshAll() {
@@ -971,7 +987,14 @@
       catch(err){$('domain-message').textContent=err.message;}
     };
     $('certificate-refresh').onclick=()=>refreshCertificates().catch(err=>showGlobal('error',err.message));
-    $('certificate-retry').onclick=async()=>{try{await api('/api/certificates/retry',{method:'POST'});showGlobal('ok',say('Reintento programado.','Retry scheduled.'));}catch(err){showGlobal('error',err.message);}};
+    $('certificate-retry').onclick=async()=>{
+      try {
+        await api('/api/certificates/retry',{method:'POST'});
+        showGlobal('ok',say('Reintento inmediato programado.','Immediate retry scheduled.'));
+        setTimeout(()=>refreshCertificates().catch(()=>{}),2000);
+        setTimeout(()=>refreshCertificates().catch(()=>{}),10000);
+      } catch(err){showGlobal('error',err.message);}
+    };
     $('manual-service-slot').append($('manual-services-card'));
     $('diagnostics-slot').append($('run-diagnostics').closest('section'));
     $('settings-slot').append($('api-settings-card'));

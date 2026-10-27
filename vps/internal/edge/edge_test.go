@@ -156,6 +156,70 @@ func TestHTTPDomainWithoutCertificateAndSharedPort(t *testing.T) {
 	}
 }
 
+func TestCertificateDNSFailureIsActionableAndSkipsACME(t *testing.T) {
+	m := New(t.TempDir())
+	defer m.Close()
+	f := secure("web.example.org", "https", 443)
+	m.routes = []state.Forward{f}
+	m.lookup = func(context.Context, string) ([]string, error) { return nil, fmt.Errorf("no such host") }
+	issued := false
+	m.issue = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		issued = true
+		return &tls.Certificate{}, nil
+	}
+	m.warmOnce(map[string]time.Time{}, 30*time.Minute, false)
+	if issued {
+		t.Fatal("ACME attempted for a name that does not resolve")
+	}
+	status := m.Status()
+	if len(status) != 1 || status[0]["state"] != "error" || status[0]["checked_at"] == nil {
+		t.Fatalf("status: %v", status)
+	}
+	hint, _ := status[0]["hint"].(string)
+	message, _ := status[0]["error"].(string)
+	if !strings.Contains(hint, "Solo DNS") || !strings.Contains(message, "DNS:") {
+		t.Fatalf("not actionable: %v", status[0])
+	}
+}
+
+func TestCertificateRetryBypassesCooldownAndClearsError(t *testing.T) {
+	m := New(t.TempDir())
+	defer m.Close()
+	f := secure("web.example.org", "https", 443)
+	m.routes = []state.Forward{f}
+	m.lookup = func(context.Context, string) ([]string, error) { return []string{"192.0.2.1"}, nil }
+	calls := 0
+	m.issue = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		calls++
+		return &tls.Certificate{}, nil
+	}
+	m.recordError(f.Domain, fmt.Errorf("previous failure"))
+	last := map[string]time.Time{}
+	m.warmOnce(last, 30*time.Minute, false)
+	m.warmOnce(last, 30*time.Minute, false)
+	if calls != 1 {
+		t.Fatalf("per-domain cooldown ignored: %d attempts", calls)
+	}
+	m.warmOnce(last, 30*time.Minute, true)
+	if calls != 2 {
+		t.Fatalf("explicit retry did not bypass cooldown: %d attempts", calls)
+	}
+	status := m.Status()
+	if len(status) != 1 || status[0]["state"] != "pending" || status[0]["error"] != nil {
+		t.Fatalf("error not cleared after success: %v", status)
+	}
+}
+
+func TestCertificateHintsExplainAutocertFailures(t *testing.T) {
+	hint := certHint(fmt.Errorf(`acme/autocert: unable to satisfy "https://acme-v02.api.letsencrypt.org/acme/authz/1" for domain "web.example.org": no viable challenge type found`))
+	if !strings.Contains(hint, "HTTP-01") || !strings.Contains(hint, "443") {
+		t.Fatalf("generic challenge hint: %s", hint)
+	}
+	if hint := certHint(fmt.Errorf("acme: rateLimited")); !strings.Contains(hint, "limita") {
+		t.Fatalf("rate limit hint: %s", hint)
+	}
+}
+
 func TestCertificateMetadataSharedAcrossPublicPorts(t *testing.T) {
 	m := New(t.TempDir())
 	defer m.Close()

@@ -93,25 +93,35 @@ func Validate(forwards []state.Forward, apiPort int) error {
 	return nil
 }
 
+type certFailure struct {
+	Err       string
+	Hint      string
+	CheckedAt time.Time
+}
+
 type Manager struct {
 	mu        sync.RWMutex
 	routes    []state.Forward
 	listeners map[int]net.Listener
 	certs     *autocert.Manager
-	errors    map[string]string
+	errors    map[string]certFailure
 	stop      chan struct{}
-	wake      chan struct{}
+	retry     chan struct{}
 	listen    func(string, string) (net.Listener, error)
+	lookup    func(context.Context, string) ([]string, error)
+	issue     func(*tls.ClientHelloInfo) (*tls.Certificate, error)
 }
 
 func New(dir string) *Manager {
-	m := &Manager{listeners: map[int]net.Listener{}, errors: map[string]string{}, stop: make(chan struct{}), wake: make(chan struct{}, 1)}
+	m := &Manager{listeners: map[int]net.Listener{}, errors: map[string]certFailure{}, stop: make(chan struct{}), retry: make(chan struct{}, 1)}
 	m.listen = net.Listen
+	m.lookup = net.DefaultResolver.LookupHost
 	m.certs = &autocert.Manager{Prompt: autocert.AcceptTOS, Cache: autocert.DirCache(filepath.Join(dir, "certificates")), HostPolicy: m.hostPolicy}
 	if os.Getenv("UMBREL_TUNNEL_ACME_STAGING") == "1" {
 		m.certs.Client = &acme.Client{DirectoryURL: "https://acme-staging-v02.api.letsencrypt.org/directory"}
 		m.certs.Cache = autocert.DirCache(filepath.Join(dir, "certificates-staging"))
 	}
+	m.issue = m.getCertificate
 	go m.warmCertificates()
 	return m
 }
@@ -347,39 +357,96 @@ func (m *Manager) warmCertificates() {
 	for {
 		// Keep automatic failed-validation retries below common CA rate limits.
 		interval := 30 * time.Minute
+		forced := false
 		select {
 		case <-m.stop:
 			return
+		case <-m.retry:
+			forced = true
 		case <-ticker.C:
-		case <-m.wake:
-			interval = time.Minute
 		}
-		m.mu.RLock()
-		routes := append([]state.Forward(nil), m.routes...)
-		m.mu.RUnlock()
-		for _, f := range routes {
-			if !f.Enabled || (f.AccessMode != "https" && f.AccessMode != "tls") || time.Since(last[f.Domain]) < interval {
-				continue
-			}
-			last[f.Domain] = time.Now()
-			_, err := m.getCertificate(&tls.ClientHelloInfo{ServerName: f.Domain})
-			m.mu.Lock()
-			if err != nil {
-				m.errors[f.Domain] = err.Error()
-				log.Printf("certificado %s: %v", f.Domain, err)
-			} else {
-				delete(m.errors, f.Domain)
-			}
-			m.mu.Unlock()
+		m.warmOnce(last, interval, forced)
+	}
+}
+
+// warmOnce checks names that are due, or every TLS name when the user requests
+// an immediate retry. DNS is checked first so an unresolvable name does not
+// produce a misleading ACME error or consume CA rate limits.
+func (m *Manager) warmOnce(last map[string]time.Time, interval time.Duration, forced bool) {
+	m.mu.RLock()
+	routes := append([]state.Forward(nil), m.routes...)
+	m.mu.RUnlock()
+	seen := map[string]bool{}
+	for _, f := range routes {
+		if !f.Enabled || (f.AccessMode != "https" && f.AccessMode != "tls") || seen[f.Domain] {
+			continue
+		}
+		seen[f.Domain] = true
+		if !forced && time.Since(last[f.Domain]) < interval {
+			continue
+		}
+		last[f.Domain] = time.Now()
+		if err := m.checkDNS(f.Domain); err != nil {
+			m.recordError(f.Domain, err)
+			log.Printf("certificado %s: %v", f.Domain, err)
+			continue
+		}
+		if _, err := m.issue(&tls.ClientHelloInfo{ServerName: f.Domain}); err != nil {
+			m.recordError(f.Domain, err)
+			log.Printf("certificado %s: %v", f.Domain, err)
+		} else {
+			m.clearError(f.Domain)
 		}
 	}
 }
 
-// Retry schedules work in the single background worker, with a per-name
-// cooldown. Never delete a working certificate to force a renewal.
+func (m *Manager) checkDNS(domain string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	addresses, err := m.lookup(ctx, domain)
+	if err != nil {
+		if ctx.Err() != nil {
+			return fmt.Errorf("DNS: tiempo de espera resolviendo %s", domain)
+		}
+		return fmt.Errorf("DNS: %s no resuelve (%v)", domain, err)
+	}
+	if len(addresses) == 0 {
+		return fmt.Errorf("DNS: %s no tiene direcciones A/AAAA", domain)
+	}
+	return nil
+}
+
+func (m *Manager) recordError(domain string, err error) {
+	m.mu.Lock()
+	m.errors[domain] = certFailure{Err: err.Error(), Hint: certHint(err), CheckedAt: time.Now().UTC()}
+	m.mu.Unlock()
+}
+
+func (m *Manager) clearError(domain string) {
+	m.mu.Lock()
+	delete(m.errors, domain)
+	m.mu.Unlock()
+}
+
+func certHint(err error) string {
+	msg := err.Error()
+	switch {
+	case strings.HasPrefix(msg, "DNS:"):
+		return "Crea un registro A o wildcard hacia el VPS en Solo DNS; no publiques AAAA incorrectos."
+	case strings.Contains(msg, "no viable challenge type found"):
+		return "Fallaron HTTP-01 y TLS-ALPN-01. Comprueba el DNS (Solo DNS) y que TCP 80 y 443 llegan al VPS."
+	case strings.Contains(msg, "rateLimited") || strings.Contains(msg, "too many failed authorizations"):
+		return "Let's Encrypt ha limitado los intentos. Espera antes de volver a reintentar."
+	default:
+		return "Revisa DNS, TCP 80/443 y los logs del VPS antes de reintentar."
+	}
+}
+
+// Retry schedules an immediate check in the single background worker, bypassing
+// the per-name cooldown. Never delete a working certificate to force renewal.
 func (m *Manager) Retry() {
 	select {
-	case m.wake <- struct{}{}:
+	case m.retry <- struct{}{}:
 	default:
 	}
 }
@@ -388,7 +455,7 @@ func (m *Manager) Retry() {
 func (m *Manager) Status() []map[string]any {
 	m.mu.RLock()
 	routes := append([]state.Forward(nil), m.routes...)
-	errs := map[string]string{}
+	errs := map[string]certFailure{}
 	for k, v := range m.errors {
 		errs[k] = v
 	}
@@ -405,8 +472,13 @@ func (m *Manager) Status() []map[string]any {
 			}
 			continue
 		}
-		item := map[string]any{"domain": f.Domain, "enabled": f.Enabled, "state": "pending", "error": errs[f.Domain]}
+		failure, failed := errs[f.Domain]
+		item := map[string]any{"domain": f.Domain, "enabled": f.Enabled, "state": "pending"}
+		if failed {
+			item["checked_at"] = failure.CheckedAt
+		}
 		byDomain[f.Domain] = item
+		certState := ""
 		for _, key := range []string{f.Domain, f.Domain + "+rsa"} {
 			data, err := m.certs.Cache.Get(context.Background(), key)
 			if err != nil {
@@ -426,15 +498,26 @@ func (m *Manager) Status() []map[string]any {
 					continue
 				}
 				item["not_after"] = cert.NotAfter
-				item["state"] = "ready"
+				certState = "ready"
 				if time.Until(cert.NotAfter) < 14*24*time.Hour {
-					item["state"] = "expiring"
+					certState = "expiring"
 				}
 				if time.Now().After(cert.NotAfter) {
-					item["state"] = "expired"
+					certState = "expired"
 				}
 				break
 			}
+		}
+		if certState != "" {
+			item["state"] = certState
+			if failed {
+				item["renewal_error"] = failure.Err
+				item["renewal_hint"] = failure.Hint
+			}
+		} else if failed {
+			item["state"] = "error"
+			item["error"] = failure.Err
+			item["hint"] = failure.Hint
 		}
 		out = append(out, item)
 	}
