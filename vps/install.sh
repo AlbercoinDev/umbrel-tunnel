@@ -577,9 +577,25 @@ enable_services() {
     warn "servicios no arrancados (--no-start)"
     return 0
   fi
-  run systemctl restart wg-quick@wg0.service
-  run systemctl restart umbrel-tunnel-firewall.service
-  run systemctl restart umbrel-tunnel.service
+  restart_unit wg-quick@wg0.service
+  restart_unit umbrel-tunnel-firewall.service
+  restart_unit umbrel-tunnel.service
+}
+
+# A failed unit must not abort the script before the control plane is restarted:
+# `umbrel-tunnel` has Requires=wg-quick@wg0, so stopping halfway leaves the VPS
+# without its API and without 80/443.
+restart_unit() {
+  local unit=$1
+  if run systemctl restart "$unit"; then
+    ok "$unit reiniciado"
+    return 0
+  fi
+  FAILED=1
+  warn "no se pudo reiniciar $unit"
+  if ((!DRY_RUN)); then
+    journalctl -u "$unit" -n 15 --no-pager 2>/dev/null || true
+  fi
 }
 
 # --------------------------------------------------------------- post-check ---

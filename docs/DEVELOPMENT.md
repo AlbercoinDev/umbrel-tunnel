@@ -21,7 +21,7 @@ make dist
 
 - `umbrel-tunnel-linux-amd64`
 - `umbrel-tunnel-linux-arm64`
-- tarballs con `install.sh`, `VERSION` y `packaging/`
+- tarballs con `install.sh`, `VERSION` y `packaging/` (copia de `internal/units/files/`)
 - `SHA256SUMS`
 
 Prueba el instalador sin tocar el sistema:
@@ -164,8 +164,8 @@ Para actualizar la tienda:
 4. El instalador de una línea usa
    `--binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download`,
    que resuelve `umbrel-tunnel-linux-$ARCH`.
-5. `umbrel-tunnel update --from .../releases/latest/download/umbrel-tunnel-linux-amd64`
-   usa el sidecar `.sha256` para verificar la descarga sin pasar `--sha256`.
+5. `umbrel-tunnel update` resuelve por sí solo `releases/latest/download/umbrel-tunnel-linux-$ARCH`,
+   usa el sidecar `.sha256` y actualiza también las unidades embebidas (`internal/units`).
 
 ## Convenciones
 

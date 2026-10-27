@@ -9,11 +9,14 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
 	"umbrel-tunnel/internal/execx"
 	"umbrel-tunnel/internal/service"
+	"umbrel-tunnel/internal/state"
 )
 
 // Check is a single diagnostic result.
@@ -117,6 +120,48 @@ func Run(ctx context.Context, svc *service.Service, run execx.Runner, version st
 		r.add("servicio", "ok", strings.TrimSpace(string(out)))
 	}
 
+	r.add("binario", "ok", version)
+
+	if out, err := run.Run(ctx, "systemctl", "cat", "umbrel-tunnel"); err != nil {
+		r.add("unidad", "warn", "no se pudo leer la unidad")
+	} else if !hasBindCapability(out) {
+		r.add("unidad", "warn", "sin CAP_NET_BIND_SERVICE; reejecuta el instalador para escuchar en 80/443")
+	} else {
+		r.add("unidad", "ok", "CAP_NET_BIND_SERVICE")
+	}
+
+	required := requiredPorts(svc.Store.Forwards())
+	if len(required) == 0 {
+		r.add("puertos", "ok", "sin publicaciones web/TLS")
+	} else {
+		var missing []string
+		for _, port := range required {
+			if !portBound(ctx, run, port) {
+				missing = append(missing, fmt.Sprintf("%d", port))
+			}
+		}
+		if len(missing) > 0 {
+			r.add("puertos", "fail", "no escuchan: "+strings.Join(missing, ", "))
+		} else {
+			r.add("puertos", "ok", portList(required))
+		}
+	}
+
+	// A hairpin failure is possible on some cloud NATs, so this is advisory.
+	if svc.Cfg.Endpoint != "" && len(required) > 0 {
+		var blocked []string
+		for _, port := range required {
+			if publicProbe(ctx, svc.Cfg.Endpoint, port) != nil {
+				blocked = append(blocked, fmt.Sprintf("%d", port))
+			}
+		}
+		if len(blocked) > 0 {
+			r.add("red", "warn", svc.Cfg.Endpoint+": sin respuesta en TCP "+strings.Join(blocked, ", ")+"; revisa el firewall del proveedor")
+		} else {
+			r.add("red", "ok", svc.Cfg.Endpoint)
+		}
+	}
+
 	if out, err := run.Run(ctx, "systemctl", "is-active", "wg-quick@"+svc.Cfg.Interface); err != nil {
 		r.add("wg-quick", "warn", strings.TrimSpace(string(out)))
 	} else {
@@ -176,4 +221,54 @@ func (r Report) Print(w io.Writer) {
 func (r Report) JSON() string {
 	data, _ := json.MarshalIndent(r, "", "  ")
 	return string(data)
+}
+
+// publicProbe is a seam for tests: a TCP dial to the VPS public address.
+var publicProbe = func(ctx context.Context, host string, port int) error {
+	d := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		return err
+	}
+	return conn.Close()
+}
+
+func hasBindCapability(unit []byte) bool {
+	return strings.Contains(string(unit), "CAP_NET_BIND_SERVICE")
+}
+
+// requiredPorts lists the public TCP ports the edge must own, sorted.
+func requiredPorts(forwards []state.Forward) []int {
+	seen := map[int]bool{}
+	for _, f := range forwards {
+		if !f.Enabled {
+			continue
+		}
+		switch f.AccessMode {
+		case "http":
+			seen[f.PublicPort] = true
+		case "https", "tls":
+			seen[80] = true
+			seen[f.PublicPort] = true
+		}
+	}
+	ports := make([]int, 0, len(seen))
+	for port := range seen {
+		ports = append(ports, port)
+	}
+	sort.Ints(ports)
+	return ports
+}
+
+func portList(ports []int) string {
+	parts := make([]string, 0, len(ports))
+	for _, port := range ports {
+		parts = append(parts, fmt.Sprintf("%d", port))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func portBound(ctx context.Context, run execx.Runner, port int) bool {
+	out, err := run.Run(ctx, "ss", "-H", "-ltn", fmt.Sprintf("sport = :%d", port))
+	return err == nil && strings.TrimSpace(string(out)) != ""
 }

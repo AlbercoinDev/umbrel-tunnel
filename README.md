@@ -297,7 +297,7 @@ umbrel-tunnel forward reconcile
 umbrel-tunnel status
 umbrel-tunnel token show|rotate
 umbrel-tunnel doctor [--json]
-umbrel-tunnel update --from URL|PATH [--sha256 HEX] [--no-restart]
+umbrel-tunnel update [--from URL|PATH] [--sha256 HEX] [--no-restart] [--no-units]
 umbrel-tunnel backup [--output FILE]
 umbrel-tunnel restore --from FILE [--force]
 umbrel-tunnel uninstall [--purge]
@@ -428,13 +428,14 @@ necesita `NET_ADMIN` y, para cargar el módulo, `SYS_MODULE` con
 ## Actualizar, backup y desinstalar
 
 ```bash
-# Actualizar el binario. Descarga el .sha256 publicado junto al binario y lo
-# verifica; después reinicia el servicio. Configuración, claves y peers no se
-# tocan. En arm64 cambia amd64 por arm64.
+# Actualiza a la última release para la arquitectura de este VPS: verifica el
+# .sha256, comprueba que el binario nuevo se ejecuta, actualiza las unidades
+# systemd y reinicia el servicio. Configuración, claves y peers no se tocan.
+sudo umbrel-tunnel update
+
+# Equivalente explícito (útil para una versión concreta o un binario local)
 sudo umbrel-tunnel update \
   --from https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download/umbrel-tunnel-linux-amd64
-
-# También sirve desde una ruta local o fijando el checksum a mano
 sudo umbrel-tunnel update --from ./umbrel-tunnel-linux-amd64 --sha256 <hex>
 
 # Copia de seguridad (configuración, claves y estado)
@@ -496,7 +497,7 @@ Variables de entorno útiles en el gateway:
 | Variable | Por defecto | Uso |
 | --- | --- | --- |
 | `APP_PASSWORD` | — | contraseña de login; Umbrel la inyecta |
-| `APP_VERSION` | `1.3.1` | versión mostrada |
+| `APP_VERSION` | `1.3.2` | versión mostrada |
 | `UMBREL_TUNNEL_DATA` | `/data` | estado, claves y configuración |
 | `UMBREL_APP_DATA` | `/umbrel-app-data` | manifiestos de apps (solo lectura) |
 | `NETWORK_IP` | `10.21.0.0` | red de Umbrel para detectar solapes |
@@ -540,7 +541,7 @@ umbrel-tunnel/
 vps/
   cmd/umbrel-tunnel/          CLI y servidor
   internal/                   config, state, wireguard, firewall, pair, service, httpapi…
-  packaging/                  unidades systemd, tmpfiles, sysctl
+    units/files/              unidades systemd, tmpfiles, sysctl (embebidas en el binario)
   install.sh                  instalador de una línea
   scripts/push.sh             build + despliegue por SSH
   Makefile                    cross-compile y release

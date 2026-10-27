@@ -90,7 +90,7 @@ En Debian/Ubuntu, actualiza primero el VPS:
 
 ```sh
 sudo umbrel-tunnel backup
-sudo umbrel-tunnel update --from "https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.1.0/umbrel-tunnel-linux-$(dpkg --print-architecture)"
+sudo umbrel-tunnel update
 umbrel-tunnel version
 sudo umbrel-tunnel doctor
 ```

@@ -348,6 +348,8 @@
   }
 
   const say = (es, en) => UT.lang === 'es' ? es : en;
+  // External reachability measured from the Umbrel network, not the VPS itself.
+  const portSummary = (reachable) => `${say('Puertos desde Umbrel', 'Ports from Umbrel')}: 80 ${reachable['80'] ? '✓' : '✗'} · 443 ${reachable['443'] ? '✓' : '✗'}`;
   function publicationsFor(svc) {
     return state.exposures.filter(e => e.service_id === svc.id ||
       (e.target_ip === svc.target_ip && Number(e.target_port) === Number(svc.target_port) && (e.protocol || 'tcp') === (svc.protocol || 'tcp')));
@@ -433,6 +435,7 @@
           const cert = state.certificates.find(c => c.domain === host);
           publication.append(el('span', 'sub', `${say('Certificado', 'Certificate')}: ${cert ? cert.state : 'pending'}${cert && cert.not_after ? ' · ' + new Date(cert.not_after).toLocaleDateString() : ''}`));
           if (cert && cert.error) publication.append(el('span', 'error-line', cert.hint || cert.error));
+          if (cert && cert.reachable) publication.append(el('span', 'sub', portSummary(cert.reachable)));
           if (cert && cert.renewal_error) publication.append(el('span', 'sub', `${say('Renovación', 'Renewal')}: ${cert.renewal_hint || cert.renewal_error}`));
         }
         if (exposure.sync_error) publication.append(el('span', 'error-line', exposure.sync_error_detail || exposure.sync_error));
@@ -919,6 +922,7 @@
       if (c.error) {
         item.append(el('span', 'error-line', c.error));
         if (c.hint) item.append(el('span', 'sub', c.hint));
+        if (c.reachable) item.append(el('span', 'sub', portSummary(c.reachable)));
       }
       if (c.renewal_error) {
         item.append(el('span', 'error-line', `${say('Renovación', 'Renewal')}: ${c.renewal_error}`));

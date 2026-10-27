@@ -40,12 +40,13 @@ from flask import (
 import detect
 import i18n
 import proxy
+import reachability
 import state
 import sync
 import wireguard
 from vps import VPSClient, VPSError
 
-VERSION = os.environ.get("APP_VERSION", "1.3.1")
+VERSION = os.environ.get("APP_VERSION", "1.3.2")
 RESERVED_PUBLIC_PORTS = {22}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
 DEV_MODE = os.environ.get("UMBREL_TUNNEL_DEV") == "1"
@@ -1227,7 +1228,24 @@ def list_certificates():
     vps = state.load().get("vps") or {}
     if not (vps.get("api") and vps.get("token")):
         return jsonify([])
-    return jsonify(VPSClient(vps["api"], vps["token"]).certificates())
+    items = VPSClient(vps["api"], vps["token"]).certificates()
+    enrich_certificate_reachability(items)
+    return jsonify(items)
+
+
+def enrich_certificate_reachability(items: list[dict], limit: int = 3) -> None:
+    """Add an external check from the Umbrel network to failed certificates."""
+    checked = 0
+    for item in items:
+        if checked >= limit:
+            break
+        if item.get("state") not in {"error", "expired"}:
+            continue
+        domain = str(item.get("domain") or "")
+        if not valid_public_domain(domain):
+            continue
+        item["reachable"] = reachability.check(domain)
+        checked += 1
 
 
 @app.post("/api/certificates/retry")
@@ -1235,6 +1253,7 @@ def retry_certificates():
     vps = state.load().get("vps") or {}
     if not (vps.get("api") and vps.get("token")):
         return api_error("not_paired", 400)
+    reachability.clear()
     return jsonify(VPSClient(vps["api"], vps["token"]).retry_certificates()), 202
 
 

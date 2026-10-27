@@ -26,6 +26,18 @@ func secure(domain, mode string, port int) state.Forward {
 	return state.Forward{Domain: domain, AccessMode: mode, PublicPort: port, Protocol: "tcp", TargetIP: "127.0.0.1", TargetPort: 50001, Enabled: true}
 }
 
+// listenOn fakes the edge listeners for the ports a publication needs.
+func listenOn(t *testing.T, m *Manager, ports ...int) {
+	t.Helper()
+	for _, port := range ports {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		m.listeners[port] = ln
+	}
+}
+
 func TestValidate(t *testing.T) {
 	a, b := secure("one.example.org", "https", 443), secure("two.example.org", "https", 443)
 	if err := Validate([]state.Forward{a, b}, 8080); err != nil {
@@ -161,6 +173,7 @@ func TestCertificateDNSFailureIsActionableAndSkipsACME(t *testing.T) {
 	defer m.Close()
 	f := secure("web.example.org", "https", 443)
 	m.routes = []state.Forward{f}
+	listenOn(t, m, 80, 443)
 	m.lookup = func(context.Context, string) ([]string, error) { return nil, fmt.Errorf("no such host") }
 	issued := false
 	m.issue = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -187,6 +200,7 @@ func TestCertificateRetryBypassesCooldownAndClearsError(t *testing.T) {
 	defer m.Close()
 	f := secure("web.example.org", "https", 443)
 	m.routes = []state.Forward{f}
+	listenOn(t, m, 80, 443)
 	m.lookup = func(context.Context, string) ([]string, error) { return []string{"192.0.2.1"}, nil }
 	calls := 0
 	m.issue = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
@@ -207,6 +221,55 @@ func TestCertificateRetryBypassesCooldownAndClearsError(t *testing.T) {
 	status := m.Status()
 	if len(status) != 1 || status[0]["state"] != "pending" || status[0]["error"] != nil {
 		t.Fatalf("error not cleared after success: %v", status)
+	}
+}
+
+func TestCertificateSkipsACMEWhenTheEdgeCannotBindPorts(t *testing.T) {
+	m := New(t.TempDir())
+	defer m.Close()
+	f := secure("web.example.org", "https", 443)
+	m.routes = []state.Forward{f}
+	m.lookup = func(context.Context, string) ([]string, error) { return []string{"192.0.2.1"}, nil }
+	issued := false
+	m.issue = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		issued = true
+		return &tls.Certificate{}, nil
+	}
+	m.warmOnce(map[string]time.Time{}, 30*time.Minute, false)
+	if issued {
+		t.Fatal("ACME attempted without a listening port")
+	}
+	status := m.Status()
+	if len(status) != 1 || status[0]["state"] != "error" {
+		t.Fatalf("status: %v", status)
+	}
+	message, _ := status[0]["error"].(string)
+	hint, _ := status[0]["hint"].(string)
+	if !strings.Contains(message, "Puerto:") || !strings.Contains(hint, "CAP_NET_BIND_SERVICE") {
+		t.Fatalf("diagnóstico poco claro: %v", status[0])
+	}
+}
+
+func TestCertificateIssueFailureExplainsBlockedPublicPorts(t *testing.T) {
+	m := New(t.TempDir())
+	defer m.Close()
+	f := secure("web.example.org", "https", 443)
+	m.routes = []state.Forward{f}
+	listenOn(t, m, 80, 443)
+	m.lookup = func(context.Context, string) ([]string, error) { return []string{"192.0.2.1"}, nil }
+	m.SetPublicHost("203.0.113.10")
+	m.probe = func(context.Context, string, int) error { return fmt.Errorf("connection refused") }
+	m.issue = func(*tls.ClientHelloInfo) (*tls.Certificate, error) {
+		return nil, fmt.Errorf(`acme/autocert: unable to satisfy challenge for "web.example.org": no viable challenge type found`)
+	}
+	m.warmOnce(map[string]time.Time{}, 0, true)
+	status := m.Status()
+	if len(status) != 1 {
+		t.Fatalf("status: %v", status)
+	}
+	hint, _ := status[0]["hint"].(string)
+	if !strings.Contains(hint, "80 y 443") || !strings.Contains(hint, "203.0.113.10") {
+		t.Fatalf("el hint no explica los puertos: %s", hint)
 	}
 }
 

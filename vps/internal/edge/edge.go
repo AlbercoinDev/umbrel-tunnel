@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -100,22 +101,25 @@ type certFailure struct {
 }
 
 type Manager struct {
-	mu        sync.RWMutex
-	routes    []state.Forward
-	listeners map[int]net.Listener
-	certs     *autocert.Manager
-	errors    map[string]certFailure
-	stop      chan struct{}
-	retry     chan struct{}
-	listen    func(string, string) (net.Listener, error)
-	lookup    func(context.Context, string) ([]string, error)
-	issue     func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	mu         sync.RWMutex
+	routes     []state.Forward
+	listeners  map[int]net.Listener
+	certs      *autocert.Manager
+	errors     map[string]certFailure
+	stop       chan struct{}
+	retry      chan struct{}
+	listen     func(string, string) (net.Listener, error)
+	lookup     func(context.Context, string) ([]string, error)
+	issue      func(*tls.ClientHelloInfo) (*tls.Certificate, error)
+	publicHost string
+	probe      func(context.Context, string, int) error
 }
 
 func New(dir string) *Manager {
 	m := &Manager{listeners: map[int]net.Listener{}, errors: map[string]certFailure{}, stop: make(chan struct{}), retry: make(chan struct{}, 1)}
 	m.listen = net.Listen
 	m.lookup = net.DefaultResolver.LookupHost
+	m.probe = probePort
 	m.certs = &autocert.Manager{Prompt: autocert.AcceptTOS, Cache: autocert.DirCache(filepath.Join(dir, "certificates")), HostPolicy: m.hostPolicy}
 	if os.Getenv("UMBREL_TUNNEL_ACME_STAGING") == "1" {
 		m.certs.Client = &acme.Client{DirectoryURL: "https://acme-staging-v02.api.letsencrypt.org/directory"}
@@ -124,6 +128,23 @@ func New(dir string) *Manager {
 	m.issue = m.getCertificate
 	go m.warmCertificates()
 	return m
+}
+
+// SetPublicHost enables the post-failure port diagnosis. It must be the public
+// IPv4/host clients use, not a tunnel address.
+func (m *Manager) SetPublicHost(host string) {
+	m.mu.Lock()
+	m.publicHost = strings.TrimSpace(host)
+	m.mu.Unlock()
+}
+
+func probePort(ctx context.Context, host string, port int) error {
+	dialer := net.Dialer{Timeout: 3 * time.Second}
+	conn, err := dialer.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+	if err != nil {
+		return err
+	}
+	return conn.Close()
 }
 
 func (m *Manager) hostPolicy(_ context.Context, host string) error {
@@ -386,18 +407,43 @@ func (m *Manager) warmOnce(last map[string]time.Time, interval time.Duration, fo
 			continue
 		}
 		last[f.Domain] = time.Now()
+		if err := m.portsReady(f); err != nil {
+			m.recordError(f.Domain, err)
+			log.Printf("certificado %s: %v", f.Domain, err)
+			continue
+		}
 		if err := m.checkDNS(f.Domain); err != nil {
 			m.recordError(f.Domain, err)
 			log.Printf("certificado %s: %v", f.Domain, err)
 			continue
 		}
 		if _, err := m.issue(&tls.ClientHelloInfo{ServerName: f.Domain}); err != nil {
-			m.recordError(f.Domain, err)
+			m.recordIssueError(f.Domain, err)
 			log.Printf("certificado %s: %v", f.Domain, err)
 		} else {
 			m.clearError(f.Domain)
 		}
 	}
+}
+
+// portsReady verifies that the edge itself owns the ports the CA will use. A
+// missing listener means the unit cannot bind (usually an old unit without
+// CAP_NET_BIND_SERVICE) or another process holds the port, so ACME is skipped.
+func (m *Manager) portsReady(f state.Forward) error {
+	needed := []int{80}
+	if f.AccessMode == "https" {
+		needed = append(needed, 443)
+	} else {
+		needed = append(needed, f.PublicPort)
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, port := range needed {
+		if m.listeners[port] == nil {
+			return fmt.Errorf("Puerto: el VPS no escucha en TCP %d (revisa CAP_NET_BIND_SERVICE y el firewall local)", port)
+		}
+	}
+	return nil
 }
 
 func (m *Manager) checkDNS(domain string) error {
@@ -422,6 +468,62 @@ func (m *Manager) recordError(domain string, err error) {
 	m.mu.Unlock()
 }
 
+// recordIssueError adds a reachability hint when ACME failed for a name that is
+// supposed to be public. DNS and rate-limit causes keep their own guidance.
+func (m *Manager) recordIssueError(domain string, err error) {
+	hint := certHint(err)
+	if explainReach(err) {
+		if problem := m.reachProblem(); problem != "" {
+			hint = problem
+		}
+	}
+	m.mu.Lock()
+	m.errors[domain] = certFailure{Err: err.Error(), Hint: hint, CheckedAt: time.Now().UTC()}
+	m.mu.Unlock()
+}
+
+func explainReach(err error) bool {
+	msg := err.Error()
+	return !strings.HasPrefix(msg, "DNS:") &&
+		!strings.Contains(msg, "rateLimited") &&
+		!strings.Contains(msg, "too many failed authorizations")
+}
+
+// reachProblem probes the public ports from the VPS itself. A provider firewall
+// can still hide behind local delivery, so it is only used as a hint; the app
+// adds a real external check from the Umbrel network.
+func (m *Manager) reachProblem() string {
+	m.mu.RLock()
+	host := m.publicHost
+	need443 := false
+	for _, f := range m.routes {
+		if f.Enabled && f.AccessMode == "https" {
+			need443 = true
+		}
+	}
+	probe := m.probe
+	m.mu.RUnlock()
+	if host == "" || probe == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+	defer cancel()
+	err80 := probe(ctx, host, 80)
+	var err443 error
+	if need443 {
+		err443 = probe(ctx, host, 443)
+	}
+	switch {
+	case err80 != nil && err443 != nil:
+		return fmt.Sprintf("TCP 80 y 443 no responden en %s desde el propio VPS; revisa el firewall del proveedor.", host)
+	case err80 != nil:
+		return fmt.Sprintf("TCP 80 no responde en %s desde el propio VPS; HTTP-01 y sus renovaciones fallarán. Revisa el firewall del proveedor.", host)
+	case err443 != nil:
+		return fmt.Sprintf("TCP 443 no responde en %s desde el propio VPS; TLS-ALPN-01 fallará. Revisa el firewall del proveedor.", host)
+	}
+	return ""
+}
+
 func (m *Manager) clearError(domain string) {
 	m.mu.Lock()
 	delete(m.errors, domain)
@@ -433,6 +535,8 @@ func certHint(err error) string {
 	switch {
 	case strings.HasPrefix(msg, "DNS:"):
 		return "Crea un registro A o wildcard hacia el VPS en Solo DNS; no publiques AAAA incorrectos."
+	case strings.HasPrefix(msg, "Puerto:"):
+		return "Reejecuta el instalador para actualizar la unidad systemd (CAP_NET_BIND_SERVICE) y comprueba qué proceso ocupa el puerto."
 	case strings.Contains(msg, "no viable challenge type found"):
 		return "Fallaron HTTP-01 y TLS-ALPN-01. Comprueba el DNS (Solo DNS) y que TCP 80 y 443 llegan al VPS."
 	case strings.Contains(msg, "rateLimited") || strings.Contains(msg, "too many failed authorizations"):

@@ -110,7 +110,7 @@ Comandos:
   certificates [retry]          estado/caducidad o reintento de emisión (JSON)
   token show|rotate             muestra o rota el token
   doctor                        diagnóstico del sistema
-  update --from URL|PATH        actualiza el binario
+  update [--from URL|PATH]      actualiza binario y unidades (por defecto, la última release)
   backup|restore                copia de seguridad de configuración y estado
   uninstall [--purge]           desinstala
   version                       muestra la versión
@@ -135,6 +135,7 @@ func cmdServe(ctx context.Context, args []string) error {
 		svc.Cfg.APIListen = *listen
 	}
 	svc.Edge = edge.New(svc.Paths.State)
+	svc.Edge.SetPublicHost(svc.Cfg.Endpoint)
 	defer svc.Edge.Close()
 
 	if err := svc.Reconcile(ctx); err != nil {
@@ -408,17 +409,39 @@ func cmdDoctor(ctx context.Context, args []string) error {
 
 func cmdUpdate(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("update", flag.ExitOnError)
-	from := fs.String("from", "", "URL o ruta del nuevo binario")
+	from := fs.String("from", "", "URL o ruta del nuevo binario (por defecto, la última release)")
 	sha := fs.String("sha256", "", "checksum esperado")
 	noRestart := fs.Bool("no-restart", false, "no reinicia el servicio")
+	noUnits := fs.Bool("no-units", false, "no actualiza las unidades systemd")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	exe, err := update.Apply(ctx, *from, *sha, !*noRestart, runner())
+	res, err := update.Apply(ctx, update.Options{
+		Source:  *from,
+		SHA256:  *sha,
+		Restart: !*noRestart,
+		Units:   !*noUnits,
+		// systemd waits for the old process and starts the new one; 10s is tight.
+		Runner: execx.Real{Timeout: 60 * time.Second},
+	})
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Binario actualizado: %s\n", exe)
+	fmt.Printf("Binario actualizado: %s\n", res.Path)
+	switch {
+	case res.From != "" && res.To != "" && res.From != res.To:
+		fmt.Printf("Versión: %s → %s\n", res.From, res.To)
+	case res.From != "" && res.From == res.To:
+		fmt.Printf("Versión: %s (ya era la instalada)\n", res.To)
+	case res.To != "":
+		fmt.Printf("Versión: %s\n", res.To)
+	}
+	if !*noUnits {
+		fmt.Println("Unidades systemd actualizadas (systemctl daemon-reload).")
+	}
+	if *noRestart {
+		fmt.Println("Reinicia para aplicar el cambio: systemctl restart umbrel-tunnel")
+	}
 	return nil
 }
 

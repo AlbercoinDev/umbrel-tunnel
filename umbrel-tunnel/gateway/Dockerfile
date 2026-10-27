@@ -17,7 +17,7 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
-COPY app.py catalog.py detect.py i18n.py proxy.py udp.py serve.py state.py sync.py vps.py wireguard.py ./
+COPY app.py catalog.py detect.py i18n.py proxy.py reachability.py udp.py serve.py state.py sync.py vps.py wireguard.py ./
 COPY i18n ./i18n
 COPY templates ./templates
 COPY static ./static

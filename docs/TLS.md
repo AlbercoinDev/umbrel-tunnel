@@ -70,9 +70,14 @@ Comprueba por separado sincronización, certificado y respuesta de la aplicació
 ### Solución de problemas de certificados
 
 Antes de contactar con Let's Encrypt, el VPS comprueba que el dominio resuelve
-A/AAAA. Si no resuelve, la publicación muestra un error `DNS: ... no resuelve`
-y no se intenta la emisión. Corrige el DNS y pulsa **Reintentar emisión**; el
-reintento ya no espera el límite automático de 30 minutos.
+A/AAAA y que el propio daemon escucha en los puertos que el reto necesita (80 y
+443 para HTTPS; 80 y el puerto TLS para una publicación TLS). Si falta un
+listener, la publicación muestra `Puerto: el VPS no escucha en TCP ...` y no se
+intenta la emisión: reejecuta el instalador para actualizar la unidad
+(`CAP_NET_BIND_SERVICE`) y comprueba qué proceso ocupa el puerto. Si el dominio
+no resuelve, verás `DNS: ... no resuelve`. Corrige la causa y pulsa
+**Reintentar emisión**; el reintento ya no espera el límite automático de
+30 minutos.
 
 El mensaje `acme/autocert: ... no viable challenge type found` significa que
 **HTTP-01 y TLS-ALPN-01 ya se intentaron y ambos fallaron**. No es un fallo del
@@ -83,8 +88,14 @@ dig +short web.umbrel.nodobitcoin.org A @1.1.1.1    # debe devolver la IP del VP
 dig +short web.umbrel.nodobitcoin.org AAAA @1.1.1.1 # no debe haber AAAA incorrectos
 dig +short umbrel.nodobitcoin.org CAA @1.1.1.1      # si existe, debe permitir letsencrypt.org
 curl -sSI http://web.umbrel.nodobitcoin.org/        # 308 si la ruta HTTP llega al VPS
+umbrel-tunnel doctor                                # puertos, unidad, endpoint público
 sudo journalctl -u umbrel-tunnel -n 50 --no-pager
 ```
+
+Cuando hay un error, la app comprueba además los puertos **desde tu red**
+(no desde el VPS) y muestra `Puertos desde Umbrel: 80 ✓ · 443 ✗`. Esa medición
+es la que detecta un firewall del proveedor que el propio VPS no puede ver;
+se guarda 5 minutos y se descarta al pulsar **Reintentar emisión**.
 
 Causas habituales:
 
@@ -92,6 +103,8 @@ Causas habituales:
 - El wildcard está proxificado en Cloudflare; debe ser **Solo DNS**.
 - Hay un AAAA que apunta a otro sitio; Let's Encrypt intenta IPv6 primero.
 - El puerto TCP 80 o 443 está cerrado en el firewall del proveedor.
+- El daemon no puede enlazar 80/443 (unidad antigua sin `CAP_NET_BIND_SERVICE`
+  u otro proceso ocupando el puerto).
 - Se agotó el límite de Let's Encrypt; espera antes de reintentar.
 
 `state: pending` sin error significa que aún no hay un intento fallido.
@@ -187,34 +200,50 @@ es preferible la app. La API de control no se publica bajo ningún dominio HTTPS
 ## Actualización y seguridad operativa
 
 Actualiza **VPS y gateway conjuntamente**. Los binarios antiguos no conocen los
-campos nuevos. Antes de actualizar, haz una copia de seguridad verificable.
-Si vienes de una versión anterior a 1.2.0, actualiza también la unidad systemd:
-`CAP_NET_BIND_SERVICE` permite escuchar en 80/443 bajo el endurecimiento existente.
-**Sustituir solo el binario con `update` no actualiza dicha unidad**. Reejecuta el
-instalador de **1.3.1** (sin `--force`, sin `--purge`), que conserva configuración
-y claves. El siguiente bloque hace backup, descarga el paquete de tu arquitectura,
-verifica su checksum y actualiza binario y unidades systemd. Se interrumpe si falla
-algún paso. El túnel y las publicaciones tendrán una interrupción breve.
+campos nuevos. Antes de actualizar, haz una copia de seguridad verificable:
+
+```sh
+sudo umbrel-tunnel backup --output /root/umbrel-tunnel-before-update.tar.gz
+sudo umbrel-tunnel update
+umbrel-tunnel version
+sudo umbrel-tunnel doctor
+```
+
+Sin `--from`, `update` descarga la última release para la arquitectura del VPS,
+verifica su `.sha256`, comprueba que el binario nuevo se ejecuta antes de
+sustituirlo, actualiza las unidades systemd (`daemon-reload`) y reinicia el
+servicio. Muestra el cambio, por ejemplo `Versión: 1.3.1 → 1.3.2`. Si el binario
+nuevo no arranca, restaura el anterior; si el reinicio falla, imprime las últimas
+líneas de `journalctl -u umbrel-tunnel`. Opciones: `--no-restart`, `--no-units`,
+`--from URL|RUTA` y `--sha256`.
+
+Si vienes de antes de 1.2.0, usa el instalador del tarball: actualiza también
+`tmpfiles`, `sysctl` y la unidad con `CAP_NET_BIND_SERVICE` (permite escuchar en
+80/443 bajo el endurecimiento existente). El bloque siguiente hace backup,
+descarga el paquete de tu arquitectura, verifica su checksum y actualiza binario
+y unidades. Se detiene si falla la descarga o el checksum; si falla el reinicio
+de una unidad, continúa con las demás y termina con error. El túnel y las
+publicaciones tendrán una interrupción breve.
 
 Ejecuta en el VPS antes de actualizar la app de Umbrel:
 
 ```sh
 sudo bash <<'SH'
 set -euo pipefail
-backup="/root/umbrel-tunnel-before-1.3.1-$(date +%Y%m%d-%H%M%S).tar.gz"
+backup="/root/umbrel-tunnel-before-1.3.2-$(date +%Y%m%d-%H%M%S).tar.gz"
 umbrel-tunnel backup --output "$backup"
 test -s "$backup"
 arch="$(dpkg --print-architecture)"
 case "$arch" in amd64|arm64) ;; *) echo "Arquitectura no soportada: $arch" >&2; exit 1 ;; esac
-work="$(mktemp -d /root/umbrel-tunnel-upgrade-1.3.1.XXXXXX)"
+work="$(mktemp -d /root/umbrel-tunnel-upgrade-1.3.2.XXXXXX)"
 cd "$work"
-base="https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.3.1"
-file="umbrel-tunnel-1.3.1-linux-$arch.tar.gz"
+base="https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.3.2"
+file="umbrel-tunnel-1.3.2-linux-$arch.tar.gz"
 curl -fLsS --retry 2 "$base/$file" -o "$file"
 curl -fLsS --retry 2 "$base/SHA256SUMS" -o SHA256SUMS
 grep -F "  $file" SHA256SUMS | sha256sum --check --strict -
 tar -xzf "$file"
-cd "umbrel-tunnel-1.3.1-linux-$arch"
+cd "umbrel-tunnel-1.3.2-linux-$arch"
 bash ./install.sh
 umbrel-tunnel version
 umbrel-tunnel doctor
@@ -223,7 +252,7 @@ echo "Backup conservado: $backup"
 SH
 ```
 
-Después actualiza **Umbrel Tunnel a 1.3.1** desde la tienda de Umbrel. No
+Después actualiza **Umbrel Tunnel a 1.3.2** desde la tienda de Umbrel. No
 desinstales, no borres los datos y no vuelvas a vincular el VPS. En instalaciones
 con puertos de API/WireGuard personalizados, pasa los mismos valores al instalador
 (`--api-port`, `--wg-port`) para que sus comprobaciones utilicen los puertos reales.

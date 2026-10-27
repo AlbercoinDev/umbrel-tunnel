@@ -40,7 +40,7 @@ tarballs: $(BINS)
 		mkdir -p "$(DIST)/$$name/packaging"; \
 		cp "$(DIST)/$(BIN)-linux-$$arch" "$(DIST)/$$name/$(BIN)"; \
 		cp install.sh VERSION "$(DIST)/$$name/"; \
-		cp packaging/* "$(DIST)/$$name/packaging/"; \
+		cp internal/units/files/* "$(DIST)/$$name/packaging/"; \
 		tar -C "$(DIST)" -czf "$(DIST)/$$name.tar.gz" "$$name"; \
 		echo "  $(DIST)/$$name.tar.gz"; \
 	done

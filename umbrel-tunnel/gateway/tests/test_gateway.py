@@ -846,11 +846,17 @@ class ManualServiceApiTests(unittest.TestCase):
                 "checked_at": "2026-10-27T18:00:00Z",
             }
         ]
-        data = self.client.get("/api/certificates").get_json()
+        reachable = {"80": False, "443": True}
+        with mock.patch.object(gateway.reachability, "check", return_value=reachable) as probe:
+            data = self.client.get("/api/certificates").get_json()
+        probe.assert_called_once_with("web.umbrel.example.org")
         self.assertEqual(data[0]["state"], "error")
         self.assertIn("Solo DNS", data[0]["hint"])
         self.assertEqual(data[0]["checked_at"], "2026-10-27T18:00:00Z")
-        response = self._post("/api/certificates/retry", {})
+        self.assertEqual(data[0]["reachable"], reachable)
+        with mock.patch.object(gateway.reachability, "clear") as clear:
+            response = self._post("/api/certificates/retry", {})
+        clear.assert_called_once()
         self.assertEqual(response.status_code, 202)
         self.assertTrue(response.get_json()["scheduled"])
 
@@ -1019,6 +1025,60 @@ class ManualServiceApiTests(unittest.TestCase):
         FakeVPS.block_release.set()
         worker.join(3)
         self.assertFalse(worker.is_alive())
+
+
+class ReachabilityTests(unittest.TestCase):
+    def setUp(self):
+        gateway.reachability.clear()
+
+    def tearDown(self):
+        gateway.reachability.clear()
+
+    def test_check_reports_each_port_from_this_network(self):
+        calls = []
+
+        def probe(domain, port, timeout=None):
+            calls.append((domain, port))
+            return port == 80
+
+        with mock.patch.object(gateway.reachability, "_probe", side_effect=probe):
+            result = gateway.reachability.check("web.example.org")
+        self.assertEqual(result, {"80": True, "443": False})
+        self.assertEqual(sorted(port for _, port in calls), [80, 443])
+
+    def test_cache_avoids_repeated_connections_and_returns_copies(self):
+        calls = []
+
+        def probe(domain, port, timeout=None):
+            calls.append(port)
+            return True
+
+        with mock.patch.object(gateway.reachability, "_probe", side_effect=probe):
+            first = gateway.reachability.check("web.example.org")
+            first["80"] = False
+            second = gateway.reachability.check("web.example.org")
+        self.assertEqual(second, {"80": True, "443": True})
+        self.assertEqual(len(calls), 2, "la segunda consulta debe salir de caché")
+
+    def test_zero_ttl_forces_a_new_probe(self):
+        calls = []
+
+        def probe(domain, port, timeout=None):
+            calls.append(port)
+            return False
+
+        with mock.patch.object(gateway.reachability, "_probe", side_effect=probe):
+            gateway.reachability.check("web.example.org", ttl=0)
+            gateway.reachability.check("web.example.org", ttl=0)
+        self.assertEqual(len(calls), 4)
+
+
+class DockerfileTests(unittest.TestCase):
+    def test_copies_every_gateway_module_into_the_image(self):
+        gateway = Path(__file__).resolve().parent.parent
+        text = (gateway / "Dockerfile").read_text()
+        for module in gateway.glob("*.py"):
+            self.assertIn(module.name, text, f"{module.name} no se copia en la imagen")
 
 
 if __name__ == "__main__":
