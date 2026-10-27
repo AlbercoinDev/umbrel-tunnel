@@ -57,7 +57,7 @@ jobs:
 
       - name: Compile
         run: |
-          python -m py_compile app.py catalog.py detect.py i18n.py proxy.py udp.py serve.py state.py sync.py vps.py wireguard.py
+          python -m py_compile app.py catalog.py detect.py i18n.py proxy.py reachability.py udp.py serve.py state.py sync.py vps.py wireguard.py
 
       - name: Tests
         run: python -m unittest discover -s tests -v
