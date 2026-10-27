@@ -16,7 +16,7 @@ Internet ──► VPS (IP fija) ──► wg0 ──► Umbrel ──► HAProx
   nftables. Sin Docker ni Python. Pensado para 128–256 MB de RAM.
 - **Umbrel**: app con gateway en Flask/waitress, detección de apps leyendo
   `app-data` en modo solo lectura (sin socket de Docker), HAProxy para el proxy
-  TCP local y `wg-quick` para el túnel.
+   TCP local, relay UDP con sesiones y `wg-quick` para el túnel.
 - **Sin DDNS ni QR**: el VPS tiene IP fija y el emparejamiento es un código
   `ut1.…` que se pega en la app.
 - **Bilingüe**: interfaz en español por defecto e inglés opcional. En la
@@ -46,7 +46,7 @@ ejecutar en el VPS. No tienes que copiar claves a mano.
 
 1. Instala **Umbrel Tunnel** en Umbrel (ver
    [Instalación de la app](#instalación-de-la-app-en-umbrel)).
-2. Abre la app. Si aún no hay VPS vinculado, la pestaña **Conexión** muestra el
+2. Abre la app. Si aún no hay VPS vinculado, **Configuración y diagnóstico** muestra el
    asistente y te pide la **IP pública fija** del VPS.
 3. Pulsa **Generar comando de instalación**. La app crea su par de claves
    WireGuard, un token nuevo y muestra un comando de una línea.
@@ -173,7 +173,7 @@ existentes salvo que uses `--force`.
 Sigue el [flujo recomendado](#flujo-recomendado-primero-la-app-después-el-vps):
 
 1. Instala la app **Umbrel Tunnel** en Umbrel.
-2. Abre la app y ve a **Conexión**. Introduce la IP pública del VPS y pulsa
+2. Abre la app y ve a **Configuración y diagnóstico**. Introduce la IP pública del VPS y pulsa
    **Generar comando de instalación**.
 3. Ejecuta ese comando en el VPS.
 4. Pega el bloque que imprime el instalador en la app y pulsa **Vincular VPS**.
@@ -201,7 +201,7 @@ umbrel-tunnel init --endpoint 203.0.113.10 --umbrel-pubkey "<CLAVE_PUBLICA_UMBRE
 umbrel-tunnel peer add --name umbrel --ip 10.0.0.2 --pubkey "<CLAVE_PUBLICA_UMBREL>"
 ```
 
-En la app, pestaña **Conexión → Emparejamiento manual**: introduce endpoint,
+En la app, **Configuración y diagnóstico → Emparejamiento manual**: introduce endpoint,
 clave pública del servidor, IP de Umbrel, subred y MTU. La app genera la clave
 local, aplica la configuración y muestra la clave pública que debe registrarse
 en el VPS. Si la app ya está emparejada por API/token, el registro es
@@ -209,15 +209,18 @@ automático.
 
 ## Uso
 
-- **Servicios**: lista detectada de apps y servicios de UmbrelOS. Elige el
-  puerto público y pulsa **Abrir**. El VPS crea el DNAT y la app configura
-  HAProxy en el lado de Umbrel.
-- **Puertos abiertos**: estado de cada exposición, activar/desactivar, cambiar
-  el puerto público o cerrarlo.
-- **Conexión**: estado del túnel y del handshake, configuración de WireGuard
-  (redactada), emparejamiento manual y rotación de claves.
-- **Avanzado**: URL/token de la API, intervalo de sincronización, servicios
-  manuales y diagnóstico.
+- **Servicios y puertos**: servicios detectados y manuales en una sola lista,
+  con búsqueda y filtros. Permite publicar TCP/UDP, pausar, reanudar, cambiar el
+  puerto o dejar de publicar sin borrar el servicio.
+- **Añadir servicio manual**: guarda un servicio o lo publica directamente.
+  TCP + UDP crea dos reglas independientes y muestra el resultado de cada una.
+- **Configuración y diagnóstico**: botón separado para conexión, diagnóstico,
+  WireGuard y ajustes avanzados plegados. Las ayudas se pueden abrir con
+  teclado, ratón o toque. El asistente se muestra automáticamente la primera vez.
+
+El VPS crea el DNAT y Umbrel configura HAProxy para TCP o el relay para UDP.
+Una regla aplicada no demuestra que el servicio responda desde Internet.
+Consulta [la gestión de publicaciones y la preparación para TLS](docs/PUBLICATIONS.md).
 
 Los servicios del sistema (SSH, panel de UmbrelOS por HTTP/HTTPS) se marcan como
 **sistema** y **sensible**. El puerto público `22` está bloqueado para no pisar
@@ -232,7 +235,7 @@ error con el detalle y un botón **Reintentar**, en vez de un falso
 
 ### Servicios manuales
 
-En **Avanzado → Servicios manuales** puedes exponer un contenedor que la
+En **Servicios y puertos → Añadir servicio manual** puedes exponer un contenedor que la
 detección automática no reconoce. Indica nombre (opcional), host o contenedor,
 puerto, protocolo y, si quieres, un puerto público concreto:
 
@@ -265,7 +268,7 @@ detectados muestran debajo la IP resuelta, solo como información. Las IPs de
 posible; no se asignan puertos del catálogo a contenedores web arbitrariamente.
 Los servicios
 del host (SSH/panel) se detectan contra la puerta de enlace de la red Docker. Si
-una app no se detecta, añade un servicio manual en **Avanzado**.
+una app no se detecta, añade un servicio manual en **Servicios y puertos**.
 
 ## CLI del VPS
 
@@ -278,10 +281,16 @@ umbrel-tunnel peer add --name N --ip 10.0.0.3 [--pubkey KEY]
 umbrel-tunnel peer rm <id>
 umbrel-tunnel peer config <id>
 umbrel-tunnel forward list
+umbrel-tunnel forward list --json
+umbrel-tunnel forward show <id>
+umbrel-tunnel forward check <id>
 umbrel-tunnel forward add --name web --public-port 8080 --target-ip 10.0.0.2 \
   --target-port 20000 [--protocol tcp|udp] [--disabled]
 umbrel-tunnel forward rm <id>
 umbrel-tunnel forward enable|disable <id>
+umbrel-tunnel forward edit <id> --public-port 9001
+umbrel-tunnel forward reconcile
+umbrel-tunnel status
 umbrel-tunnel token show|rotate
 umbrel-tunnel doctor [--json]
 umbrel-tunnel update --from URL|PATH [--sha256 HEX] [--no-restart]
@@ -291,8 +300,11 @@ umbrel-tunnel uninstall [--purge]
 umbrel-tunnel version
 ```
 
-La CLI es útil para abrir puertos **UDP** (la app de Umbrel solo gestiona TCP)
-y para diagnósticos por SSH.
+La CLI y la app permiten gestionar TCP y UDP. Los comandos de publicaciones y
+las mutaciones de peers usan la API local autenticada del daemon para evitar
+que un proceso independiente sobrescriba su estado. Requieren el servicio activo.
+Los cambios externos sobre publicaciones de Umbrel se detectan como conflictos:
+la app ofrece adoptarlos o restaurar su configuración, sin sobrescribirlos a ciegas.
 
 ## API del VPS
 
@@ -500,8 +512,9 @@ Documentación adicional:
 
 ## Limitaciones actuales
 
-- El proxy local de Umbrel solo gestiona **TCP**. Para UDP usa
-  `umbrel-tunnel forward add --protocol udp` en el VPS.
+- El relay UDP admite respuestas con sesiones independientes, límite global de
+  512 sesiones y caducidad de 60 segundos de inactividad. No es un proxy transparente:
+  el servicio de destino no recibe la IP original del cliente.
 - La app no se ha probado en un Umbrel real en este entorno de desarrollo (no
   hay Docker ni HAProxy locales). El gateway tiene tests unitarios; el código Go
   tiene tests unitarios y de integración. Las pruebas reales en umbrelOS las

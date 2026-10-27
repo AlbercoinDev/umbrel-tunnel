@@ -11,6 +11,7 @@ import re
 import time
 
 import proxy
+import udp
 import wireguard
 from vps import VPSClient, VPSError
 
@@ -38,13 +39,15 @@ def payload(exposure: dict) -> dict:
         "target_ip": exposure.get("tunnel_ip") or "10.0.0.2",
         "target_port": int(exposure["tunnel_port"]),
         "protocol": str(exposure.get("protocol") or "tcp"),
+        "managed_by": "umbrel:" + str(exposure.get("tunnel_ip") or "10.0.0.2"),
         "enabled": True,
     }
 
 
 def _same(remote: dict, desired: dict) -> bool:
     return (
-        int(remote.get("public_port", 0)) == desired["public_port"]
+        remote.get("name") == desired["name"]
+        and int(remote.get("public_port", 0)) == desired["public_port"]
         and remote.get("target_ip") == desired["target_ip"]
         and int(remote.get("target_port", 0)) == desired["target_port"]
         and (remote.get("protocol") or "tcp") == desired["protocol"]
@@ -60,7 +63,10 @@ def remove_all(config: dict) -> None:
     try:
         client = VPSClient(vps["api"], vps["token"])
         for forward in client.list_forwards():
-            if str(forward.get("name", "")).startswith(NAME_PREFIX):
+            owner = forward.get("managed_by")
+            ours = owner == "umbrel:" + str(vps.get("umbrel_ip") or "10.0.0.2")
+            legacy = not owner and str(forward.get("name", "")).startswith(NAME_PREFIX)
+            if ours or legacy:
                 client.delete_forward(forward["id"])
     except VPSError:
         pass
@@ -155,6 +161,18 @@ def sync(config: dict) -> dict:
         # The Umbrel tunnel address can change if the VPS is re-paired.
         exposure["tunnel_ip"] = tunnel_ip
         exposure["vps_name"] = vps_name(exposure)
+        current = by_id.get(str(exposure.get("vps_forward_id") or "")) or by_name.get(exposure["vps_name"])
+        previous = exposure.get("last_remote")
+        if previous and (current is None or any(current.get(key) != value for key, value in previous.items())):
+            exposure["remote_conflict"] = True
+            if current:
+                handled_ids.add(str(current.get("id")))
+                desired_names.add(str(current.get("name")))
+            message = "VPS changed outside Umbrel; choose adopt or restore before synchronizing"
+            _mark_error(exposure, message)
+            result["errors"].append(message)
+            continue
+        exposure.pop("remote_conflict", None)
         if not exposure.get("enabled", True):
             forward_id = str(exposure.get("vps_forward_id") or "")
             if forward_id:
@@ -169,6 +187,7 @@ def sync(config: dict) -> dict:
                         result["errors"].append(f"{exposure.get('name')}: {exc}")
                         continue
             exposure["vps_forward_id"] = None
+            exposure.pop("last_remote", None)
             _clear_error(exposure)
             exposure["last_sync"] = time.time()
             continue
@@ -188,6 +207,7 @@ def sync(config: dict) -> dict:
                 if not _same(current, desired):
                     client.update_forward(current["id"], desired)
                     result["updated"] += 1
+            exposure["last_remote"] = {key: desired[key] for key in ("name", "public_port", "target_ip", "target_port", "protocol", "enabled")}
             _clear_error(exposure)
         except VPSError as exc:
             _mark_error(exposure, str(exc), exc.status)
@@ -198,6 +218,9 @@ def sync(config: dict) -> dict:
     for forward in remote:
         forward_id = str(forward.get("id", ""))
         name = str(forward.get("name", ""))
+        owner = forward.get("managed_by")
+        if owner and owner != "umbrel:" + tunnel_ip:
+            continue
         if forward_id in handled_ids:
             continue
         if not name.startswith(NAME_PREFIX) or name in desired_names:
@@ -215,8 +238,18 @@ def sync(config: dict) -> dict:
 
 
 def _apply_proxy(config: dict, result: dict) -> None:
-    # HAProxy only proxies TCP. UDP forwards are created from the VPS CLI,
-    # where the operator can point them at a UDP listener directly.
+    udp_enabled = [e for e in config.get("exposures", [])
+                   if e.get("enabled", True) and e.get("protocol") == "udp"]
+    for exposure in udp_enabled:
+        _strip_proxy_error(exposure)
+    try:
+        udp.apply(udp_enabled, wireguard.address() or "10.0.0.2")
+    except (proxy.ProxyError, OSError, ValueError) as exc:
+        message = f"proxy local: UDP: {exc}"
+        result["errors"].append(message)
+        for exposure in udp_enabled:
+            _mark_proxy_error(exposure, message)
+    # TCP stays on HAProxy; UDP uses independent bounded relay sessions above.
     enabled = [
         e
         for e in config.get("exposures", [])

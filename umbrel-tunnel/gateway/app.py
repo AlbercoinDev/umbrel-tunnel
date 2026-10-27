@@ -262,6 +262,8 @@ _SYNC_FIELDS = (
     "sync_error_status",
     "proxy_error",
     "last_sync",
+    "last_remote",
+    "remote_conflict",
 )
 
 
@@ -286,7 +288,7 @@ def _persist_sync_state(snapshot: dict) -> None:
             for field in _SYNC_FIELDS:
                 if field in saved:
                     target[field] = saved[field]
-                elif field == "proxy_error":
+                elif field in {"proxy_error", "last_remote", "remote_conflict"}:
                     target.pop(field, None)
         snapshot_vps = snapshot.get("vps") or {}
         if snapshot_vps.get("peer_registered"):
@@ -606,10 +608,10 @@ def decode_pair(code: str) -> dict:
     }
 
 
-def validate_public_port(port: int) -> None:
+def validate_public_port(port: int, protocol: str = "tcp") -> None:
     if not (1 <= port <= 65535):
         raise ValueError("invalid_public_port")
-    if port in RESERVED_PUBLIC_PORTS:
+    if protocol == "tcp" and port in RESERVED_PUBLIC_PORTS:
         raise ValueError("reserved_public_port")
 
 
@@ -624,16 +626,26 @@ def allocate_tunnel_port(config: dict) -> int:
     raise ValueError("no_tunnel_port")
 
 
-def public_port_in_use(config: dict, port: int, ignore_id: str | None = None) -> bool:
+def reserved_public_ports(config: dict, protocol: str) -> set[int]:
+    if protocol == "tcp":
+        return set(RESERVED_PUBLIC_PORTS)
+    endpoint = str((config.get("vps") or {}).get("endpoint") or "")
+    try:
+        return {int(endpoint.rsplit(":", 1)[1])} if ":" in endpoint else {51820}
+    except ValueError:
+        return {51820}
+
+
+def public_port_in_use(config: dict, port: int, ignore_id: str | None = None, protocol: str = "tcp") -> bool:
     for exposure in config.get("exposures", []):
         if exposure.get("id") == ignore_id:
             continue
-        if int(exposure.get("public_port", 0)) == port:
+        if int(exposure.get("public_port", 0)) == port and exposure.get("protocol", "tcp") == protocol:
             return True
     return False
 
 
-def allocate_public_port(config: dict, preferred: int | None = None) -> tuple[int, bool]:
+def allocate_public_port(config: dict, preferred: int | None = None, protocol: str = "tcp") -> tuple[int, bool]:
     """Pick a public port, preferring ``preferred`` when it is free.
 
     Returns ``(port, changed)``. A busy preferred port is not an error: the
@@ -641,12 +653,15 @@ def allocate_public_port(config: dict, preferred: int | None = None) -> tuple[in
     already being used, so the caller opens the service on the next free port
     and tells the user which one was chosen.
     """
+    reserved = reserved_public_ports(config, protocol)
     if preferred is not None:
-        validate_public_port(preferred)
-        if not public_port_in_use(config, preferred):
+        validate_public_port(preferred, protocol)
+        if preferred in reserved:
+            raise ValueError("reserved_public_port")
+        if not public_port_in_use(config, preferred, protocol=protocol):
             return preferred, False
 
-    used = {int(e.get("public_port", 0)) for e in config.get("exposures", [])}
+    used = {int(e.get("public_port", 0)) for e in config.get("exposures", []) if e.get("protocol", "tcp") == protocol}
     # Internal HAProxy ports live on the Umbrel side, but keeping the public
     # range disjoint makes diagnostics much easier to read.
     used.update(int(e.get("tunnel_port", 0)) for e in config.get("exposures", []))
@@ -654,11 +669,11 @@ def allocate_public_port(config: dict, preferred: int | None = None) -> tuple[in
     start = int(settings.get("public_port_start", 20000))
     end = int(settings.get("public_port_end", 29999))
     for port in range(start, end + 1):
-        if port in RESERVED_PUBLIC_PORTS or port in used:
+        if port in reserved or port in used:
             continue
         return port, True
     for port in range(1024, 65536):
-        if port in RESERVED_PUBLIC_PORTS or port in used:
+        if port in reserved or port in used:
             continue
         return port, True
     raise ValueError("no_public_port")
@@ -672,7 +687,8 @@ def _requested_public_port(body: dict) -> int | None:
         port = int(raw)
     except (TypeError, ValueError) as exc:
         raise ValueError("invalid_public_port") from exc
-    validate_public_port(port)
+    if not 1 <= port <= 65535:
+        raise ValueError("invalid_public_port")
     return port
 
 
@@ -717,7 +733,7 @@ def _create_or_open_exposure(
             existing["name"] = name[:80]
         return existing, False, True
 
-    public_port, changed = allocate_public_port(config, requested_port)
+    public_port, changed = allocate_public_port(config, requested_port, service.get("protocol", "tcp"))
     tunnel_port = allocate_tunnel_port(config)
     exposure = {
         "id": uuid.uuid4().hex[:12],
@@ -730,7 +746,10 @@ def _create_or_open_exposure(
         "tunnel_ip": (config.get("vps") or {}).get("umbrel_ip") or "10.0.0.2",
         "public_port": public_port,
         "tunnel_port": tunnel_port,
-        "protocol": "tcp",
+        "protocol": service.get("protocol", "tcp"),
+        "access_mode": "direct",
+        "domains": [],
+        "tls": {"mode": "none"},
         "enabled": True,
         "sensitive": bool(service.get("sensitive")),
         "vps_forward_id": None,
@@ -759,7 +778,7 @@ def _sync_exposure(exposure_id: str, retry_conflict: bool = True) -> tuple[dict 
                 exposure = state.find_exposure(current, exposure_id)
                 if exposure is not None:
                     try:
-                        new_port, _ = allocate_public_port(current)
+                        new_port, _ = allocate_public_port(current, protocol=exposure.get("protocol", "tcp"))
                     except ValueError:
                         new_port = None
                     if new_port and new_port != int(exposure.get("public_port", 0)):
@@ -1045,7 +1064,13 @@ def diagnostics():
         }
     )
     proxy_status = proxy.status()
-    checks.append({"id": "proxy", "ok": bool(proxy_status.get("running"))})
+    udp_status = sync.udp.status()
+    active = [e for e in config.get("exposures", []) if e.get("enabled", True)]
+    needs_tcp = any(e.get("protocol", "tcp") == "tcp" for e in active)
+    udp_count = sum(e.get("protocol") == "udp" for e in active)
+    checks.append({"id": "proxy", "ok": (not needs_tcp or bool(proxy_status.get("running")))
+                   and (not udp_count or (udp_status["running"] and udp_status["listeners"] == udp_count)),
+                   "detail": f"UDP: {udp_status['listeners']} listeners, {udp_status['sessions']} sessions"})
 
     return jsonify(
         {
@@ -1056,6 +1081,7 @@ def diagnostics():
             "peer": peer_report,
             "forwards": forwards_report,
             "proxy": proxy_status,
+            "udp": udp_status,
             "checks": checks,
             "exposures": [
                 {
@@ -1110,7 +1136,7 @@ def services():
         item["exposure_error"] = bool(exposure.get("sync_error")) if exposure else False
         item["public_port"] = int(exposure.get("public_port", 0)) if exposure else 0
         item["default_public_port"] = 2222 if svc["target_port"] == 22 else svc["target_port"]
-        item["can_open"] = svc.get("protocol", "tcp") == "tcp"
+        item["can_open"] = svc.get("protocol", "tcp") in {"tcp", "udp"}
         result.append(item)
     return jsonify(result)
 
@@ -1145,7 +1171,7 @@ def create_exposure():
             service = detect.manual_entry(item) if item else None
     if not service:
         return api_error("service_not_found", 404)
-    if service.get("protocol", "tcp") != "tcp":
+    if service.get("protocol", "tcp") not in {"tcp", "udp"}:
         return api_error("unsupported_protocol", 400)
 
     try:
@@ -1197,17 +1223,17 @@ def update_exposure(exposure_id: str):
             if "public_port" in body:
                 try:
                     public_port = int(body["public_port"])
-                    validate_public_port(public_port)
+                    validate_public_port(public_port, exposure.get("protocol", "tcp"))
+                    if public_port in reserved_public_ports(config, exposure.get("protocol", "tcp")):
+                        raise ValueError("reserved_public_port")
                 except (TypeError, ValueError) as exc:
                     code = str(exc) if isinstance(exc, ValueError) and str(exc) in {"invalid_public_port", "reserved_public_port"} else "invalid_public_port"
                     return api_error(code, 400)
-                if public_port_in_use(config, public_port, ignore_id=exposure_id):
+                if public_port_in_use(config, public_port, ignore_id=exposure_id, protocol=exposure.get("protocol", "tcp")):
                     return api_error("public_port_in_use", 409, port=public_port)
                 exposure["public_port"] = public_port
                 requested_port = public_port
             if "enabled" in body:
-                if body["enabled"] and str(exposure.get("protocol") or "tcp") != "tcp":
-                    return api_error("unsupported_protocol", 400)
                 exposure["enabled"] = bool(body["enabled"])
             if "name" in body and str(body["name"]).strip():
                 exposure["name"] = str(body["name"]).strip()[:80]
@@ -1244,6 +1270,55 @@ def retry_exposure(exposure_id: str):
             "sync": present_sync(result),
         }
     )
+
+
+@app.post("/api/exposures/<exposure_id>/resolve")
+def resolve_exposure(exposure_id: str):
+    body = request.get_json(silent=True) or {}
+    if body.get("action") not in {"adopt", "restore"}:
+        return api_error("invalid_manual_service", 400)
+    with _sync_lock:
+        config = state.load()
+        exposure = state.find_exposure(config, exposure_id)
+        if not exposure:
+            return api_error("exposure_not_found", 404)
+        if body["action"] == "adopt":
+            vps = config.get("vps") or {}
+            try:
+                remote = next((f for f in VPSClient(vps["api"], vps["token"]).list_forwards()
+                               if f.get("id") == exposure.get("vps_forward_id")), None)
+            except VPSError as exc:
+                return api_error("vps_close_failed", 502, detail=str(exc))
+            if remote is None:
+                exposure["enabled"] = False
+                exposure["vps_forward_id"] = None
+            else:
+                if (remote.get("target_ip") != exposure.get("tunnel_ip")
+                        or remote.get("target_port") != exposure.get("tunnel_port")
+                        or remote.get("protocol", "tcp") != exposure.get("protocol", "tcp")):
+                    return jsonify({"error": "Cannot adopt a different tunnel destination or protocol; restore the Umbrel publication instead."}), 409
+                if public_port_in_use(config, int(remote["public_port"]), exposure_id, exposure.get("protocol", "tcp")):
+                    return api_error("public_port_in_use", 409, port=remote["public_port"])
+                exposure["public_port"] = int(remote["public_port"])
+                exposure["enabled"] = bool(remote.get("enabled", True))
+                exposure["vps_name"] = remote.get("name") or exposure.get("vps_name")
+        exposure.pop("last_remote", None)
+        exposure.pop("remote_conflict", None)
+        with state.LOCK:
+            latest = state.load()
+            target = state.find_exposure(latest, exposure_id)
+            if target is None:
+                return api_error("exposure_not_found", 404)
+            if latest.get("vps") != config.get("vps"):
+                return jsonify({"error": "VPS configuration changed; retry conflict resolution."}), 409
+            for key in ("public_port", "enabled", "vps_name", "vps_forward_id"):
+                if key in exposure:
+                    target[key] = exposure[key]
+            target.pop("last_remote", None)
+            target.pop("remote_conflict", None)
+            state.save(latest)
+        result = sync_now()
+    return jsonify({"ok": not result.get("errors"), "sync": present_sync(result)})
 
 
 @app.delete("/api/exposures/<exposure_id>")
@@ -1324,6 +1399,12 @@ def pair():
             field = bootstrap_mismatch(payload, bootstrap)
             if field:
                 return api_error("pair_bootstrap_mismatch", 400, field=field)
+        old_vps = config.get("vps") or {}
+        if old_vps.get("server_pubkey") != payload["server_pubkey"] or old_vps.get("endpoint") != payload["endpoint"]:
+            for exposure in config.get("exposures", []):
+                exposure["vps_forward_id"] = None
+                exposure.pop("last_remote", None)
+                exposure.pop("remote_conflict", None)
         config["vps"] = {
             "api": api,
             "token": payload["token"],
@@ -1462,10 +1543,13 @@ def unpair():
         config["bootstrap"] = {}
         for exposure in config.get("exposures", []):
             exposure["vps_forward_id"] = None
+            exposure.pop("last_remote", None)
+            exposure.pop("remote_conflict", None)
             exposure["sync_error"] = ""
             exposure["sync_error_status"] = None
         state.save(config)
     proxy.stop()
+    sync.udp.stop()
     wireguard.remove()
     return jsonify({"ok": True})
 
@@ -1667,7 +1751,7 @@ def add_manual_service():
         return api_error("invalid_manual_service", 400)
 
     wants_open = bool(body.get("open"))
-    if wants_open and protocol != "tcp":
+    if wants_open and protocol not in {"tcp", "udp"}:
         return api_error("unsupported_protocol", 400)
     try:
         requested_port = (_requested_public_port(body) or port) if wants_open else None
@@ -1750,7 +1834,7 @@ def open_manual_service(service_id: str):
             return api_error("manual_service_not_found", 404)
         if requested_port is None:
             requested_port = int(item["port"])
-        if str(item.get("protocol") or "tcp") != "tcp":
+        if str(item.get("protocol") or "tcp") not in {"tcp", "udp"}:
             return api_error("unsupported_protocol", 400)
         service = detect.manual_entry(item)
         if service is None:
@@ -1854,6 +1938,7 @@ def startup() -> None:
             app.logger.warning("sincronización inicial falló: %s", exc)
     else:
         proxy.stop()
+        sync.udp.stop()
 
 
 if __name__ == "__main__":

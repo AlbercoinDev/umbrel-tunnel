@@ -123,15 +123,6 @@ def _environment(service: dict) -> dict[str, str]:
     return {}
 
 
-def _service_name_from_container(container: str, app_id: str) -> str:
-    prefix = f"{app_id}_"
-    if container.startswith(prefix):
-        container = container[len(prefix) :]
-    if container.endswith("_1"):
-        container = container[:-2]
-    return container or "app"
-
-
 def _sensitive(app_id: str, service: str, port: int) -> bool:
     meta = catalog.service_for(app_id, port)
     if meta and meta.get("sensitive"):
@@ -207,8 +198,14 @@ def _ports_from_service(service: dict) -> list[tuple[int, str]]:
     return ports
 
 
-def _container_target(host: str, services: dict, app_id: str, exports: dict | None = None) -> str:
-    """Map resolved IPs and service aliases to their stable container DNS."""
+def _container_identity(host: str, services: dict, app_id: str, exports: dict | None = None) -> tuple[str, str] | None:
+    """Identify a compose service, never deriving a service name from an IP.
+
+    Exact compose metadata wins. For dynamic addresses, compare Docker DNS
+    results only within this app. Ambiguous matches are not safe to guess.
+    """
+    candidates = []
+    matches = []
     for name, service in services.items():
         if name in {"app_proxy", "app-proxy"} or not isinstance(service, dict):
             continue
@@ -223,9 +220,24 @@ def _container_target(host: str, services: dict, app_id: str, exports: dict | No
                         address = (exports or {}).get(address[2:-1], address)
                     aliases.add(address)
                     aliases.update(str(alias) for alias in network.get("aliases", []) or [])
+        candidates.append((name, container))
         if host in aliases:
-            return container
-    return host
+            matches.append((name, container))
+    if matches:
+        return matches[0] if len(matches) == 1 else None
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        return None
+    for name, container in candidates:
+        if _resolved_ip(container) == host:
+            matches.append((name, container))
+    return matches[0] if len(matches) == 1 else None
+
+
+def _container_target(host: str, services: dict, app_id: str, exports: dict | None = None) -> str:
+    identity = _container_identity(host, services, app_id, exports)
+    return identity[1] if identity else host
 
 
 def _resolved_ip(host: str) -> str:
@@ -293,10 +305,13 @@ def _detect_apps() -> list[dict]:
             exports = _parse_exports(app_dir / "exports.sh")
             if host.startswith("${") and host.endswith("}"):
                 host = exports.get(host[2:-1], host)
-            host = _container_target(host, compose_services, app_id, exports)
-            service_name = _service_name_from_container(host, app_id)
+            identity = _container_identity(host, compose_services, app_id, exports)
+            service_name, container = identity or ("unidentified", "")
+            host = container or host
             entry = _entry(app_id, app, service_name, host, port)
             if entry:
+                entry["container_name"] = container
+                entry["service_identified"] = identity is not None
                 app_entries.append(entry)
                 seen.add((host, port, "tcp"))
 
@@ -312,6 +327,8 @@ def _detect_apps() -> list[dict]:
                     continue
                 entry = _entry(app_id, app, service_name, container, port, protocol)
                 if entry:
+                    entry["container_name"] = container
+                    entry["service_identified"] = True
                     app_entries.append(entry)
                     seen.add(key)
 

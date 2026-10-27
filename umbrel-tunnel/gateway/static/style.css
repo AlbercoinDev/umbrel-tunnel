@@ -16,6 +16,17 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
+.action-dialog { color: var(--text); background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); width: min(480px, 95vw); padding: 24px; }
+.action-dialog::backdrop { background: rgba(0, 0, 0, .65); }
+.service-filters { margin: 12px 0; flex-wrap: wrap; }
+.service-filters [aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.field-help { font-size: .8rem; margin-top: 6px; font-weight: normal; }
+.field-help summary { cursor: pointer; color: var(--accent-2); }
+details.card > summary { cursor: pointer; padding: 4px 0 12px; }
+#services-body td:last-child { min-width: 180px; }
+#services-body td:last-child button { margin: 3px; }
+button:focus-visible, summary:focus-visible, a:focus-visible { outline: 2px solid var(--accent-2); outline-offset: 3px; }
 html, body { margin: 0; padding: 0; }
 body {
   background:

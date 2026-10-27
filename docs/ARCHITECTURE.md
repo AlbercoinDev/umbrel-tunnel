@@ -53,6 +53,7 @@ puerto por `wg0`; `--public-api` es una excepción explícita y no recomendada.
 - `detect.py`: detección de apps y servicios del host sin socket de Docker.
 - `catalog.py`: nombres, puertos y marcas de sensibilidad conocidos.
 - `proxy.py`: renderizado, validación y recarga de HAProxy.
+- `udp.py`: relay de datagramas con sesiones independientes, límites y caducidad.
 - `wireguard.py`: generación/validación estricta de `wg0.conf`, claves y estado.
 - `sync.py`: reconciliación declarativa de exposiciones y forwards.
 - `vps.py`: cliente HTTP de la API del VPS.
@@ -92,11 +93,17 @@ revierte la clave anterior.
    túnel (`20000–29999`) y guarda la exposición.
 3. `sync.py` pide al VPS un forward `public_port → 10.0.0.2:tunnel_port`.
 4. El VPS crea la regla nftables DNAT y la aplica.
-5. La app renderiza HAProxy escuchando en `10.0.0.2:tunnel_port` y reenvía al
-   contenedor de la app por su nombre DNS de Docker.
+5. La app configura HAProxy (TCP) o el relay (UDP) escuchando en
+   `10.0.0.2:tunnel_port` y reenvía al contenedor por su nombre DNS de Docker.
 6. Al desactivar o cerrar, se elimina el forward del VPS y HAProxy se
    reconfigura. Los forwards con prefijo `umbrel:` que ya no corresponden a
    ninguna exposición se limpian de forma conservadora.
+
+Las reglas nuevas incluyen propiedad explícita `managed_by`; las independientes
+del VPS se conservan. Una copia de los valores remotos aplicados permite detectar
+cambios externos antes de sobrescribirlos. La CLI de publicaciones usa el daemon
+como propietario único del estado. Véase [Publicaciones](PUBLICATIONS.md) para
+los límites UDP, resolución de conflictos y preparación futura para dominios/TLS.
 
 La sincronización es idempotente: compara el estado remoto con el deseado y
 crea, actualiza o elimina solo lo necesario. Se ejecuta al cambiar algo y cada

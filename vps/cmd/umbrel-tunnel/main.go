@@ -50,7 +50,9 @@ func main() {
 	case "peer":
 		err = cmdPeer(ctx, os.Args[2:])
 	case "forward":
-		err = cmdForward(ctx, os.Args[2:])
+		err = cmdForwardAPI(ctx, os.Args[2:])
+	case "status":
+		err = cmdStatus(ctx)
 	case "token":
 		err = cmdToken(os.Args[2:])
 	case "doctor":
@@ -88,8 +90,9 @@ Comandos:
   init                          crea configuración, claves y token del servidor
   pair                          imprime el código de emparejamiento
   peer list|add|rm|config       gestiona peers
-  forward list|add|rm|enable|disable
-                                gestiona puertos públicos
+  forward list|show|check|add|edit|rm|enable|disable|reconcile
+                                 gestiona puertos públicos
+  status                        estado del VPS (JSON)
   token show|rotate             muestra o rota el token
   doctor                        diagnóstico del sistema
   update --from URL|PATH        actualiza el binario
@@ -246,9 +249,17 @@ func cmdPeer(ctx context.Context, args []string) error {
 
 	switch args[0] {
 	case "list":
+		data, err := apiRequest(ctx, "GET", "/api/peers", nil)
+		if err != nil {
+			return err
+		}
+		var peers []state.Peer
+		if err := json.Unmarshal(data, &peers); err != nil {
+			return err
+		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 		fmt.Fprintln(w, "ID\tNOMBRE\tIP\tCLAVE PÚBLICA")
-		for _, p := range svc.Store.Peers() {
+		for _, p := range peers {
 			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.ID, p.Name, p.AllowedIP, p.PublicKey)
 		}
 		return w.Flush()
@@ -282,19 +293,13 @@ func cmdPeer(ctx context.Context, args []string) error {
 		} else if !service.ValidPubKey(publicKey) {
 			return fmt.Errorf("clave pública inválida")
 		}
-		if err := svc.Store.AddPeer(state.Peer{
-			Name:      *name,
-			PublicKey: publicKey,
-			AllowedIP: *ip,
-			Endpoint:  *endpoint,
-		}); err != nil {
+		_, err := apiRequest(ctx, "POST", "/api/peers", map[string]string{
+			"name": *name, "public_key": publicKey, "allowed_ip": *ip, "endpoint": *endpoint,
+		})
+		if err != nil {
 			return err
 		}
-		if err := svc.ReloadPeers(ctx); err != nil {
-			return err
-		}
-		peer, _ := svc.Store.PeerByIP(*ip)
-		fmt.Printf("Peer %s (%s) creado.\n", peer.Name, peer.AllowedIP)
+		fmt.Printf("Peer %s (%s) creado.\n", *name, *ip)
 		if privateKey != "" {
 			fmt.Printf("Clave privada (guárdala, no se vuelve a mostrar): %s\n", privateKey)
 		}
@@ -304,18 +309,11 @@ func cmdPeer(ctx context.Context, args []string) error {
 		if len(args) < 2 {
 			return fmt.Errorf("uso: umbrel-tunnel peer rm <id>")
 		}
-		removed, ok, err := svc.Store.RemovePeer(args[1])
+		_, err := apiRequest(ctx, "DELETE", "/api/peers/"+args[1], nil)
 		if err != nil {
 			return err
 		}
-		if !ok {
-			return fmt.Errorf("peer %s no encontrado", args[1])
-		}
-		if err := svc.ReloadPeers(ctx); err != nil {
-			_ = svc.Store.AddPeer(removed)
-			return err
-		}
-		fmt.Printf("Peer %s eliminado.\n", removed.Name)
+		fmt.Printf("Peer %s eliminado.\n", args[1])
 		return nil
 
 	case "config":
@@ -335,110 +333,6 @@ func cmdPeer(ctx context.Context, args []string) error {
 			return err
 		}
 		fmt.Print(svc.WG.ClientConfig(clientKey, serverPub, peer.AllowedIP))
-		return nil
-	}
-	return fmt.Errorf("subcomando desconocido: %s", args[0])
-}
-
-func cmdForward(ctx context.Context, args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("uso: umbrel-tunnel forward list|add|rm|enable|disable")
-	}
-	svc, err := service.Open(paths(), runner())
-	if err != nil {
-		return err
-	}
-
-	switch args[0] {
-	case "list":
-		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\tNOMBRE\tPÚBLICO\tDESTINO\tPROTO\tACTIVO")
-		for _, f := range svc.Store.Forwards() {
-			fmt.Fprintf(w, "%s\t%s\t%d\t%s:%d\t%s\t%v\n", f.ID, f.Name, f.PublicPort, f.TargetIP, f.TargetPort, f.Protocol, f.Enabled)
-		}
-		return w.Flush()
-
-	case "add":
-		fs := flag.NewFlagSet("forward add", flag.ExitOnError)
-		name := fs.String("name", "", "nombre")
-		publicPort := fs.Int("public-port", 0, "puerto público")
-		targetIP := fs.String("target-ip", "", "IP del peer")
-		targetPort := fs.Int("target-port", 0, "puerto destino")
-		proto := fs.String("protocol", "tcp", "tcp o udp")
-		disabled := fs.Bool("disabled", false, "crear desactivado")
-		if err := fs.Parse(args[1:]); err != nil {
-			return err
-		}
-		if *publicPort < 1 || *publicPort > 65535 || *targetPort < 1 || *targetPort > 65535 {
-			return fmt.Errorf("puertos fuera de rango")
-		}
-		if _, ok := svc.Store.PeerByIP(*targetIP); !ok {
-			return fmt.Errorf("la IP %s no pertenece a ningún peer", *targetIP)
-		}
-		protoValue := strings.ToLower(strings.TrimSpace(*proto))
-		if protoValue != "tcp" && protoValue != "udp" {
-			return fmt.Errorf("protocolo no soportado")
-		}
-		fwd := state.Forward{
-			Name:       *name,
-			PublicPort: *publicPort,
-			TargetIP:   *targetIP,
-			TargetPort: *targetPort,
-			Protocol:   protoValue,
-			Enabled:    !*disabled,
-		}
-		if fwd.Name == "" {
-			fwd.Name = fmt.Sprintf("port-%d", fwd.PublicPort)
-		}
-		if err := svc.Store.AddForward(fwd); err != nil {
-			return err
-		}
-		if err := svc.ReloadForwards(ctx); err != nil {
-			for _, f := range svc.Store.Forwards() {
-				if f.PublicPort == fwd.PublicPort && f.Protocol == fwd.Protocol {
-					_, _, _ = svc.Store.RemoveForward(f.ID)
-					break
-				}
-			}
-			return err
-		}
-		fmt.Printf("Puerto %d/%s -> %s:%d abierto.\n", fwd.PublicPort, fwd.Protocol, fwd.TargetIP, fwd.TargetPort)
-		return nil
-
-	case "rm":
-		if len(args) < 2 {
-			return fmt.Errorf("uso: umbrel-tunnel forward rm <id>")
-		}
-		removed, ok, err := svc.Store.RemoveForward(args[1])
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return fmt.Errorf("forward %s no encontrado", args[1])
-		}
-		if err := svc.ReloadForwards(ctx); err != nil {
-			_ = svc.Store.AddForward(removed)
-			return err
-		}
-		fmt.Printf("Puerto %d cerrado.\n", removed.PublicPort)
-		return nil
-
-	case "enable", "disable":
-		if len(args) < 2 {
-			return fmt.Errorf("uso: umbrel-tunnel forward %s <id>", args[0])
-		}
-		enabled := args[0] == "enable"
-		updated, err := svc.Store.UpdateForward(args[1], func(f *state.Forward) error {
-			f.Enabled = enabled
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		if err := svc.ReloadForwards(ctx); err != nil {
-			return err
-		}
-		fmt.Printf("Puerto %d %s.\n", updated.PublicPort, map[bool]string{true: "activado", false: "desactivado"}[enabled])
 		return nil
 	}
 	return fmt.Errorf("subcomando desconocido: %s", args[0])

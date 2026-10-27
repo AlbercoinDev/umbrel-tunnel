@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -27,9 +28,10 @@ type Server struct {
 	started time.Time
 	run     execx.Runner
 
-	mu       sync.Mutex
-	statusAt time.Time
-	status   wireguard.Status
+	mu        sync.Mutex
+	statusAt  time.Time
+	status    wireguard.Status
+	forwardMu sync.Mutex
 }
 
 // New creates a Server.
@@ -53,6 +55,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/peers/{id}", s.auth(s.deletePeer))
 	mux.HandleFunc("GET /api/peers/{id}/config", s.auth(s.peerConfig))
 	mux.HandleFunc("GET /api/forwards", s.auth(s.listForwards))
+	mux.HandleFunc("POST /api/forwards/reconcile", s.auth(s.reconcileForwards))
+	mux.HandleFunc("GET /api/forwards/{id}/check", s.auth(s.checkForward))
 	mux.HandleFunc("POST /api/forwards", s.auth(s.createForward))
 	mux.HandleFunc("PATCH /api/forwards/{id}", s.auth(s.patchForward))
 	mux.HandleFunc("DELETE /api/forwards/{id}", s.auth(s.deleteForward))
@@ -239,6 +243,8 @@ func (s *Server) listPeers(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Server) createPeer(w http.ResponseWriter, r *http.Request) {
+	s.forwardMu.Lock()
+	defer s.forwardMu.Unlock()
 	var req peerRequest
 	if err := decode(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "JSON inválido: "+err.Error())
@@ -308,6 +314,8 @@ type peerUpdateRequest struct {
 // updatePeer rotates the public key of an existing peer. The Umbrel app uses
 // it when it regenerates its local WireGuard keypair.
 func (s *Server) updatePeer(w http.ResponseWriter, r *http.Request) {
+	s.forwardMu.Lock()
+	defer s.forwardMu.Unlock()
 	id := r.PathValue("id")
 	var req peerUpdateRequest
 	if err := decode(w, r, &req); err != nil {
@@ -354,6 +362,8 @@ func (s *Server) updatePeer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deletePeer(w http.ResponseWriter, r *http.Request) {
+	s.forwardMu.Lock()
+	defer s.forwardMu.Unlock()
 	id := r.PathValue("id")
 	removed, ok, err := s.svc.Store.RemovePeer(id)
 	if err != nil {
@@ -400,6 +410,7 @@ type forwardRequest struct {
 	TargetIP   string `json:"target_ip"`
 	TargetPort int    `json:"target_port"`
 	Protocol   string `json:"protocol"`
+	ManagedBy  string `json:"managed_by"`
 	Enabled    *bool  `json:"enabled"`
 }
 
@@ -433,6 +444,9 @@ func (s *Server) validateForward(name string, publicPort int, targetIP string, t
 	if err != nil {
 		return "", err
 	}
+	if proto == "udp" && publicPort == s.svc.Cfg.WGPort {
+		return "", fmt.Errorf("puerto UDP reservado para WireGuard")
+	}
 	if _, ok := s.svc.Store.PeerByIP(targetIP); !ok {
 		return "", fmt.Errorf("la IP destino %s no pertenece a ningún peer", targetIP)
 	}
@@ -443,7 +457,43 @@ func (s *Server) listForwards(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, s.svc.Store.Forwards())
 }
 
+// This checks the tunnel destination, never claims to verify Internet access.
+func (s *Server) checkForward(w http.ResponseWriter, r *http.Request) {
+	fwd, ok := s.findForwardByID(r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "forward no encontrado")
+		return
+	}
+	result := map[string]any{"forward": fwd, "external_access_verified": false, "target_checked": false}
+	if fwd.Protocol == "udp" {
+		result["detail"] = "UDP requires an application-specific request and response; no generic probe performed"
+	} else if fwd.Enabled {
+		dialer := net.Dialer{Timeout: 3 * time.Second}
+		conn, err := dialer.DialContext(r.Context(), "tcp", net.JoinHostPort(fwd.TargetIP, fmt.Sprint(fwd.TargetPort)))
+		result["target_checked"] = true
+		result["target_tcp_connected"] = err == nil
+		if err != nil {
+			result["detail"] = err.Error()
+		} else {
+			conn.Close()
+		}
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Server) reconcileForwards(w http.ResponseWriter, r *http.Request) {
+	s.forwardMu.Lock()
+	defer s.forwardMu.Unlock()
+	if err := s.svc.ReloadForwards(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (s *Server) createForward(w http.ResponseWriter, r *http.Request) {
+	s.forwardMu.Lock()
+	defer s.forwardMu.Unlock()
 	var req forwardRequest
 	if err := decode(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "JSON inválido: "+err.Error())
@@ -455,6 +505,14 @@ func (s *Server) createForward(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	proto, _ := normalizeProtocol(req.Protocol)
+	if req.ManagedBy != "" && req.ManagedBy != "vps" && !strings.HasPrefix(req.ManagedBy, "umbrel:") {
+		writeError(w, http.StatusBadRequest, "managed_by inválido")
+		return
+	}
+	if len(req.ManagedBy) > 80 {
+		writeError(w, http.StatusBadRequest, "managed_by demasiado largo")
+		return
+	}
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -465,6 +523,7 @@ func (s *Server) createForward(w http.ResponseWriter, r *http.Request) {
 		TargetIP:   strings.TrimSpace(req.TargetIP),
 		TargetPort: req.TargetPort,
 		Protocol:   proto,
+		ManagedBy:  req.ManagedBy,
 		Enabled:    enabled,
 	}
 	if err := s.svc.Store.AddForward(fwd); err != nil {
@@ -510,10 +569,13 @@ type forwardPatch struct {
 	TargetIP   *string `json:"target_ip"`
 	TargetPort *int    `json:"target_port"`
 	Protocol   *string `json:"protocol"`
+	ManagedBy  *string `json:"managed_by"`
 	Enabled    *bool   `json:"enabled"`
 }
 
 func (s *Server) patchForward(w http.ResponseWriter, r *http.Request) {
+	s.forwardMu.Lock()
+	defer s.forwardMu.Unlock()
 	id := r.PathValue("id")
 	before, ok := s.findForwardByID(id)
 	if !ok {
@@ -527,6 +589,18 @@ func (s *Server) patchForward(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updated := before
+	if patch.ManagedBy != nil {
+		owner := *patch.ManagedBy
+		if len(owner) > 80 || (owner != "" && owner != "vps" && !strings.HasPrefix(owner, "umbrel:")) {
+			writeError(w, http.StatusBadRequest, "managed_by inválido")
+			return
+		}
+		if before.ManagedBy != "" && before.ManagedBy != owner {
+			writeError(w, http.StatusConflict, "no se puede cambiar el propietario de una publicación")
+			return
+		}
+		updated.ManagedBy = owner
+	}
 	if patch.Name != nil {
 		updated.Name = strings.TrimSpace(*patch.Name)
 	}
@@ -577,6 +651,8 @@ func (s *Server) patchForward(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) deleteForward(w http.ResponseWriter, r *http.Request) {
+	s.forwardMu.Lock()
+	defer s.forwardMu.Unlock()
 	id := r.PathValue("id")
 	before, ok := s.findForwardByID(id)
 	if !ok {

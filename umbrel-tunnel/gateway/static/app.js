@@ -22,6 +22,7 @@
     wg: null,
     bootstrap: null,
     search: '',
+    filter: 'all',
   };
   let pollTimer = null;
 
@@ -44,6 +45,45 @@
 
   function badge(text, cls) {
     return el('span', `badge ${cls || 'info'}`, text);
+  }
+
+  function ask(message, value) {
+    return new Promise((resolve) => {
+      const previous = document.activeElement;
+      const dialog = el('dialog', 'action-dialog');
+      const form = el('form', 'stack');
+      form.method = 'dialog';
+      const title = el('p', '', message);
+      title.id = 'action-dialog-title';
+      dialog.setAttribute('aria-labelledby', title.id);
+      form.append(title);
+      let input;
+      if (value !== undefined) {
+        input = el('input');
+        input.type = 'number'; input.min = '1'; input.max = '65535'; input.required = true;
+        input.value = String(value);
+        input.setAttribute('aria-label', message);
+        form.append(input);
+      }
+      const actions = el('div', 'row');
+      const cancel = el('button', 'ghost', t('common.close'));
+      cancel.type = 'button';
+      cancel.addEventListener('click', () => dialog.close());
+      const ok = el('button', '', t('common.ok'));
+      ok.value = 'ok';
+      actions.append(cancel, ok);
+      form.append(actions);
+      dialog.append(form);
+      document.body.append(dialog);
+      dialog.addEventListener('close', () => {
+        const result = dialog.returnValue === 'ok' ? (input ? input.value : true) : null;
+        dialog.remove();
+        if (previous && previous.isConnected) previous.focus();
+        resolve(result);
+      }, { once: true });
+      dialog.showModal();
+      (input || cancel).focus();
+    });
   }
 
   function showGlobal(kind, message) {
@@ -293,6 +333,7 @@
   }
 
   function serviceName(svc) {
+    if (svc.service_identified === false) return t('services.unidentified_service', { port: svc.target_port });
     return svc.name_key ? t(svc.name_key) : svc.name;
   }
 
@@ -306,12 +347,27 @@
   }
 
   function renderServices() {
+    if (document.activeElement && document.activeElement.matches('#services-body input')) return;
     const body = $('services-body');
     body.replaceChildren();
     const query = state.search.trim().toLowerCase();
-    const list = state.services.filter((svc) => {
+    const candidates = [...state.services];
+    for (const exposure of state.exposures) {
+      if (!candidates.some((svc) => svc.exposure_id === exposure.id)) {
+        candidates.push({ id: exposure.service_id || exposure.id, app: exposure.app || exposure.name,
+          name: exposure.name, target_ip: exposure.target_ip, target_port: exposure.target_port,
+          protocol: exposure.protocol, exposed: true, exposure_id: exposure.id,
+          exposure_enabled: exposure.enabled, exposure_error: Boolean(exposure.sync_error),
+          public_port: exposure.public_port, can_open: true });
+      }
+    }
+    const list = candidates.filter((svc) => {
       const haystack = `${svc.app} ${serviceName(svc)} ${svc.service} ${svc.target_port}`.toLowerCase();
-      return !query || haystack.includes(query);
+      const matches = state.filter === 'all'
+        || (state.filter === 'published' && svc.exposed)
+        || (state.filter === 'closed' && !svc.exposed)
+        || (state.filter === 'errors' && svc.exposure_error);
+      return matches && (!query || haystack.includes(query));
     });
     $('services-empty').hidden = list.length > 0;
 
@@ -320,18 +376,23 @@
       const displayName = serviceName(svc);
 
       const appCell = document.createElement('td');
-      appCell.append(el('strong', '', displayName));
-      const sub = `${svc.app}${svc.service && svc.service !== displayName ? ` · ${svc.service}` : ''}`;
-      appCell.append(el('span', 'sub', sub));
+      appCell.append(el('strong', '', svc.id.startsWith('manual:') ? displayName : svc.app));
+      appCell.append(badge(t(svc.id.startsWith('manual:') ? 'ui.manual' : 'ui.detected'), 'info'));
+      const sub = `${displayName}${svc.service_identified !== false && svc.service && svc.service !== displayName ? ` · ${svc.service}` : ''}`;
+      if (!svc.id.startsWith('manual:')) appCell.append(el('span', 'sub', sub));
       tr.append(appCell);
 
-      const destination = el('td', '', `${svc.target_ip}:${svc.target_port}`);
-      if (!svc.system) destination.append(el('span', 'sub', t('services.internal_ip', {
+      const unidentified = svc.service_identified === false;
+      const destination = el('td', '', unidentified
+        ? t('services.unidentified_container')
+        : `${svc.container_name || svc.target_ip}:${svc.target_port}`);
+      if (!svc.system) destination.append(el('span', 'sub', t(unidentified ? 'services.detected_ip' : 'services.internal_ip', {
         ip: svc.resolved_ip || t('services.ip_unavailable'),
       })));
       tr.append(destination);
 
       const notes = document.createElement('td');
+      notes.append(badge(String(svc.protocol || 'tcp').toUpperCase(), 'info'));
       if (svc.sensitive) notes.append(badge(t('services.badge.sensitive'), 'warn'));
       if (svc.system) notes.append(badge(t('services.badge.system'), 'info'));
       if (svc.exposed) {
@@ -360,6 +421,7 @@
       input.dataset.portFor = svc.id;
       input.disabled = Boolean(svc.exposed) || !svc.can_open;
       input.setAttribute('aria-label', t('services.aria.port', { name: displayName }));
+      input.title = t('ui.help.public');
       portCell.append(input);
       tr.append(portCell);
 
@@ -381,6 +443,52 @@
         button.addEventListener('click', () => exposeService(svc, button));
       }
       actionCell.append(button);
+      const exposure = state.exposures.find((item) => item.id === svc.exposure_id);
+      if (exposure) {
+        if (exposure.sync_error) {
+          const details = el('details', 'details');
+          details.append(el('summary', '', t('sync.details')),
+            el('span', 'sub', exposure.sync_error_detail || exposure.sync_error));
+          notes.append(details);
+        }
+        button.hidden = true;
+        const action = (key, callback) => {
+          const node = el('button', 'ghost small', t(key));
+          node.type = 'button';
+          node.addEventListener('click', callback);
+          actionCell.append(node);
+        };
+        action(exposure.enabled ? 'ui.pause' : 'ui.resume', () => updateExposure(exposure.id, { enabled: !exposure.enabled }));
+        action('open.change_port', () => changePublicPort(exposure));
+        action('open.close', () => deleteExposure(exposure));
+        if (exposure.sync_error) action('open.retry', () => retryExposure(exposure));
+        if (exposure.remote_conflict) {
+          ['adopt', 'restore'].forEach((choice) => action(`ui.${choice}`, async () => {
+            try {
+              const result = await api(`/api/exposures/${exposure.id}/resolve`, { method: 'POST', body: JSON.stringify({ action: choice }) });
+              syncFeedback(result, '');
+              await refreshAll();
+            } catch (err) { showGlobal('error', err.message); }
+          }));
+        }
+        if (!exposure.sync_error && exposure.enabled) notes.append(el('span', 'sub', t('ui.applied')));
+        const endpoint = ((state.status || {}).vps || {}).endpoint || '';
+        if (endpoint) {
+          const host = endpoint.replace(/:\d+$/, '');
+          const address = `${host}:${exposure.public_port}`;
+          portCell.append(el('span', 'sub', address));
+          action('ui.copy', async () => {
+            try { await navigator.clipboard.writeText(address); showGlobal('ok', t('ui.copy')); }
+            catch (_) { showGlobal('error', t('connection.copy_failed')); }
+          });
+        }
+      }
+      const manual = state.manualServices.find((item) => svc.id.startsWith(`manual:${item.id}:`));
+      if (manual && !exposure) {
+        const remove = el('button', 'danger ghost small', t('advanced.manual_remove'));
+        remove.addEventListener('click', () => deleteManualService(manual));
+        actionCell.append(remove);
+      }
       tr.append(actionCell);
 
       body.append(tr);
@@ -411,7 +519,7 @@
       const toggle = document.createElement('input');
       toggle.type = 'checkbox';
       toggle.checked = Boolean(exposure.enabled);
-      toggle.disabled = exposure.protocol === 'udp';
+      toggle.setAttribute('aria-label', exposure.name || exposure.id);
       toggle.addEventListener('change', () => updateExposure(exposure.id, { enabled: toggle.checked }));
       toggleCell.append(toggle);
       tr.append(toggleCell);
@@ -482,7 +590,7 @@
       tr.append(statusCell);
 
       const actions = document.createElement('td');
-      if (!exposure && (item.protocol || 'tcp') === 'tcp') {
+      if (!exposure && ['tcp', 'udp'].includes(item.protocol || 'tcp')) {
         const open = el('button', 'small', t('advanced.manual_open'));
         open.type = 'button';
         open.addEventListener('click', () => openManualService(item, open));
@@ -523,6 +631,7 @@
   }
 
   async function exposeService(service, button) {
+    if (service.sensitive && !await ask(t('ui.sensitive'))) return;
     if (!service.can_open) {
       showGlobal('error', t('services.udp_unsupported'));
       return;
@@ -601,7 +710,7 @@
   }
 
   async function changePublicPort(exposure) {
-    const value = window.prompt(t('open.change_prompt'), String(exposure.public_port));
+    const value = await ask(`${exposure.name || exposure.id}: ${t('open.change_prompt')}`, exposure.public_port);
     if (value === null) return;
     const port = Number(value);
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -612,7 +721,7 @@
   }
 
   async function deleteExposure(exposure) {
-    if (!window.confirm(t('open.close_confirm', { port: exposure.public_port }))) return;
+    if (!await ask(t('open.close_confirm', { port: exposure.public_port }))) return;
     try {
       const result = await api(`/api/exposures/${exposure.id}`, { method: 'DELETE' });
       syncFeedback(result, t('services.port_closed'));
@@ -624,17 +733,19 @@
 
   async function deleteManualService(item) {
     const name = item.name || `${item.host}:${item.port}`;
-    if (!window.confirm(t('advanced.manual_confirm_remove', { name }))) return;
+    if (!await ask(t('advanced.manual_confirm_remove', { name }))) return;
     try {
       await api(`/api/manual-services/${item.id}`, { method: 'DELETE' });
       showMsg('manual-service-msg', t('advanced.manual_removed'), true);
       await refreshManualServices();
       await refreshServices();
+      showGlobal('ok', t('advanced.manual_removed'));
     } catch (err) {
       const message = err.code === 'manual_service_in_use'
         ? t('advanced.manual_in_use')
         : err.message;
       showMsg('manual-service-msg', message, false);
+      showGlobal('error', message);
     }
   }
 
@@ -759,6 +870,7 @@
       refreshManualServices(),
     ]);
     const failure = results.find((r) => r.status === 'rejected');
+    renderServices();
     if (failure) showGlobal('error', failure.reason.message || String(failure.reason));
   }
 
@@ -777,6 +889,7 @@
   }
 
   function switchTab(name) {
+    if (name === 'open' || name === 'advanced') name = name === 'open' ? 'services' : 'connection';
     document.querySelectorAll('.tab').forEach((tab) => {
       const active = tab.dataset.tab === name;
       tab.classList.toggle('active', active);
@@ -786,6 +899,7 @@
       panel.classList.toggle('active', panel.id === `tab-${name}`);
     });
     if (name === 'connection') {
+      refreshSettings().catch((err) => showGlobal('error', err.message));
       loadWg().catch((err) => showGlobal('error', err.message));
     }
     if (name === 'open') {
@@ -798,6 +912,45 @@
   }
 
   function bind() {
+    $('manual-service-slot').append($('manual-services-card'));
+    $('diagnostics-slot').append($('run-diagnostics').closest('section'));
+    $('settings-slot').append($('api-settings-card'));
+    $('settings-slot').append(document.querySelector('#tab-advanced > section:last-child'));
+    $('settings-slot').append($('sync-detail').closest('section'));
+    $('settings-slot').append($('sync-now'));
+    $('settings-navigation').addEventListener('click', () => switchTab('connection'));
+    $('back-services').addEventListener('click', () => switchTab('services'));
+    $('add-service').addEventListener('click', () => {
+      $('manual-services-card').hidden = false;
+      $('manual-service-name').focus();
+    });
+    $('cancel-add-service').addEventListener('click', () => { $('manual-services-card').hidden = true; });
+    document.querySelectorAll('[data-filter]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.filter = button.dataset.filter;
+        document.querySelectorAll('[data-filter]').forEach((node) => node.setAttribute('aria-pressed', String(node === button)));
+        renderServices();
+      });
+    });
+    const help = {
+      'manual-service-name': 'name', 'bootstrap-vps-ip': 'vps',
+      'bootstrap-code': 'pair', 'pair-code': 'pair',
+      'manual-endpoint': 'endpoint', 'manual-server-pub': 'key',
+      'manual-client-ip': 'ip', 'manual-subnet': 'subnet',
+      'manual-service-host': 'host', 'manual-service-port': 'port',
+      'manual-service-public-port': 'public', 'manual-service-protocol': 'protocol',
+      'settings-api': 'api', 'settings-token': 'token', 'settings-interval': 'interval', 'manual-mtu': 'mtu',
+    };
+    Object.entries(help).forEach(([id, key]) => {
+      const input = $(id);
+      const details = el('details', 'field-help');
+      const summary = el('summary', '', `ⓘ ${t('ui.help')}`);
+      const text = el('span', 'sub', t(`ui.help.${key}`));
+      text.id = `${id}-help`;
+      input.setAttribute('aria-describedby', text.id);
+      details.append(summary, text);
+      input.parentElement.append(details);
+    });
     document.querySelectorAll('.tab').forEach((tab) => {
       tab.addEventListener('click', () => switchTab(tab.dataset.tab));
     });
@@ -1003,7 +1156,7 @@
       const mode = event.submitter && event.submitter.dataset.mode === 'add' ? 'add' : 'open';
       const protocol = $('manual-service-protocol').value;
       const publicPortValue = $('manual-service-public-port').value;
-      if (mode === 'open' && protocol !== 'tcp') {
+      if (mode === 'open' && !['tcp', 'udp', 'both'].includes(protocol)) {
         showMsg('manual-service-msg', t('advanced.manual_udp_open'), false);
         return;
       }
@@ -1016,17 +1169,29 @@
       if (submitter) submitter.textContent = pendingLabel;
       try {
         const requested = publicPortValue ? Number(publicPortValue) : null;
-        const result = await api('/api/manual-services', {
+        const create = async (selected) => api('/api/manual-services', {
           method: 'POST',
           body: JSON.stringify({
             name: $('manual-service-name').value.trim(),
             host: $('manual-service-host').value.trim(),
             port: Number($('manual-service-port').value),
-            protocol,
+            protocol: selected,
             public_port: requested,
             open: mode === 'open',
           }),
         });
+        let result;
+        if (protocol === 'both') {
+          const results = await Promise.allSettled(['tcp', 'udp'].map(create));
+          results.forEach((item, index) => {
+            if (item.status === 'fulfilled') syncFeedback(item.value, `${index ? 'UDP' : 'TCP'}: ${item.value.exposure ? item.value.exposure.public_port : t('advanced.manual_added')}`);
+          });
+          const failed = results.filter((item) => item.status === 'rejected');
+          if (failed.length) throw new Error(failed.map((item) => item.reason.message).join(' · '));
+          result = results[0].value;
+        } else {
+          result = await create(protocol);
+        }
         $('manual-service-name').value = '';
         $('manual-service-host').value = '';
         $('manual-service-port').value = '';
@@ -1090,7 +1255,7 @@
       showGlobal('error', err.message);
     }
     pollTimer = window.setInterval(() => {
-      if (document.visibilityState === 'visible') refreshStatus().catch(() => {});
+      if (document.visibilityState === 'visible') refreshAll().catch(() => {});
     }, 10000);
   }
 

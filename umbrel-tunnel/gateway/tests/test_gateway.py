@@ -469,6 +469,56 @@ class DetectTests(unittest.TestCase):
     def test_variable_published_port_keeps_internal_port(self):
         self.assertEqual(detect._ports_from_service({"ports": ["${APP_PORT}:50001"]}), [(50001, "tcp")])
 
+    def test_dynamic_gateway_ip_matches_container_dns(self):
+        self._write_app(
+            "demo", "name: Demo App\n",
+            "services:\n  frontend:\n    container_name: custom-frontend\n  backend:\n    image: backend\n",
+            {"APP_HOST": "10.21.0.15", "APP_PORT": 8080},
+        )
+        addresses = {"custom-frontend": "10.21.0.15", "demo_backend_1": "10.21.0.16"}
+        with mock.patch.object(detect, "_resolved_ip", side_effect=lambda host: addresses.get(host, "")):
+            entry = detect._detect_apps()[0]
+        self.assertEqual(entry["app"], "Demo App")
+        self.assertEqual(entry["service"], "frontend")
+        self.assertEqual(entry["container_name"], "custom-frontend")
+        self.assertEqual(entry["target_ip"], "custom-frontend")
+        self.assertTrue(entry["service_identified"])
+
+    def test_unmatched_ip_never_becomes_service_name(self):
+        self._write_app(
+            "demo", "name: Demo App\n", "services:\n  web:\n    image: web\n",
+            {"APP_HOST": "10.21.0.15", "APP_PORT": 8080},
+        )
+        with mock.patch.object(detect, "_resolved_ip", return_value=""):
+            entry = detect._detect_apps()[0]
+        self.assertEqual(entry["app"], "Demo App")
+        self.assertNotIn("10.21.0.15", entry["name"])
+        self.assertEqual(entry["service"], "unidentified")
+        self.assertEqual(entry["container_name"], "")
+        self.assertFalse(entry["service_identified"])
+        self.assertEqual(entry["target_ip"], "10.21.0.15")
+
+    def test_ambiguous_dns_matches_are_not_guessed(self):
+        with mock.patch.object(detect, "_resolved_ip", return_value="10.21.0.15"):
+            identity = detect._container_identity("10.21.0.15", {"web": {}, "api": {}}, "demo")
+        self.assertIsNone(identity)
+
+    def test_custom_container_name_keeps_compose_service_identity(self):
+        self._write_app(
+            "demo", "name: Demo App\n",
+            "services:\n  frontend:\n    container_name: completely-custom\n    ports: ['8080:80']\n",
+            {"APP_HOST": "completely-custom", "APP_PORT": 80},
+        )
+        entries = detect._detect_apps()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["service"], "frontend")
+        self.assertEqual(entries[0]["container_name"], "completely-custom")
+
+    def test_ambiguous_compose_alias_is_not_guessed(self):
+        services = {"web": {"networks": {"default": {"aliases": ["shared"]}}},
+                    "api": {"networks": {"default": {"aliases": ["shared"]}}}}
+        self.assertIsNone(detect._container_identity("shared", services, "demo"))
+
     def test_exports_is_never_executed(self):
         app_dir = self.root / "evil-app"
         app_dir.mkdir()

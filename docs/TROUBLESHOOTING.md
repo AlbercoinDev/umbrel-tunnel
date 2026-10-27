@@ -65,7 +65,7 @@ Si falla:
 - ¿La API escucha solo en el túnel? `ss -lntp | grep 8080` en el VPS debe
   mostrar `10.0.0.1:8080`, no `0.0.0.0:8080`.
 - ¿El token es correcto? `sudo umbrel-tunnel token show`.
-- ¿La URL guardada apunta a la IP del túnel? En **Avanzado** debe ser
+- ¿La URL guardada apunta a la IP del túnel? En **Configuración y diagnóstico → Opciones avanzadas** debe ser
   `http://10.0.0.1:8080`.
 
 ## El código `ut1` se rechaza
@@ -108,7 +108,7 @@ Causas habituales:
   ```
 
 - Algunas apps no declaran `app_proxy` ni puertos publicados. Añade un servicio
-  manual en **Avanzado** con el nombre DNS del contenedor y el puerto.
+  manual en **Servicios y puertos** con el nombre DNS del contenedor y el puerto.
 - Pulsa **Refrescar**; la detección se cachea 15 segundos.
 
 ## El puerto público está ocupado o reservado
@@ -142,9 +142,9 @@ sudo umbrel-tunnel forward rm <id>
 
 ## Abrir un servicio manual falla
 
-En **Avanzado → Servicios manuales** cada fila muestra el estado real y, si hay
+En **Servicios y puertos** cada fila muestra el estado real y, si hay
 error, el detalle y un botón **Reintentar**. Antes de tocar el VPS, pulsa
-**Avanzado → Diagnóstico → Comprobar ahora**; comprueba emparejamiento,
+**Configuración y diagnóstico → Comprobar ahora**; comprueba emparejamiento,
 WireGuard, API del VPS, peer, forwards y HAProxy sin abrir ni cerrar puertos.
 
 Mensajes habituales:

@@ -24,7 +24,7 @@ type Peer struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// Forward is a public TCP port redirected to a peer.
+// Forward is a public TCP/UDP port redirected to a peer.
 type Forward struct {
 	ID         string    `json:"id"`
 	Name       string    `json:"name"`
@@ -32,6 +32,7 @@ type Forward struct {
 	TargetIP   string    `json:"target_ip"`
 	TargetPort int       `json:"target_port"`
 	Protocol   string    `json:"protocol"`
+	ManagedBy  string    `json:"managed_by,omitempty"`
 	Enabled    bool      `json:"enabled"`
 	CreatedAt  time.Time `json:"created_at"`
 }
@@ -70,6 +71,7 @@ type forwardJSON struct {
 	TargetIP   string     `json:"target_ip"`
 	TargetPort int        `json:"target_port"`
 	Protocol   string     `json:"protocol"`
+	ManagedBy  string     `json:"managed_by"`
 	Enabled    *bool      `json:"enabled"`
 	CreatedAt  *time.Time `json:"created_at"`
 }
@@ -154,6 +156,7 @@ func (s *Store) load() error {
 			TargetIP:   f.TargetIP,
 			TargetPort: f.TargetPort,
 			Protocol:   protocol,
+			ManagedBy:  f.ManagedBy,
 			Enabled:    enabled,
 			CreatedAt:  created,
 		})
@@ -314,7 +317,10 @@ var ReservedPublicPorts = map[int]string{22: "SSH del VPS"}
 func (s *Store) AddForward(f Forward) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if what, ok := ReservedPublicPorts[f.PublicPort]; ok {
+	if f.Protocol == "" {
+		f.Protocol = "tcp"
+	}
+	if what, ok := ReservedPublicPorts[f.PublicPort]; ok && f.Protocol == "tcp" {
 		return fmt.Errorf("el puerto público %d está reservado para el %s", f.PublicPort, what)
 	}
 	for _, existing := range s.forwards {
@@ -345,7 +351,7 @@ func (s *Store) UpdateForward(id string, fn func(*Forward) error) (Forward, erro
 			if err := fn(&updated); err != nil {
 				return Forward{}, err
 			}
-			if what, ok := ReservedPublicPorts[updated.PublicPort]; ok {
+			if what, ok := ReservedPublicPorts[updated.PublicPort]; ok && updated.Protocol != "udp" {
 				return Forward{}, fmt.Errorf("el puerto público %d está reservado para el %s", updated.PublicPort, what)
 			}
 			for j := range s.forwards {
