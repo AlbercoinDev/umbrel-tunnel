@@ -20,9 +20,13 @@ description: >-
   with a fixed public IP. Run the one-line installer on the VPS, then paste the
   pairing code in the app.
 releaseNotes: >-
-  Update the VPS to 1.3.2 before updating this app. "umbrel-tunnel update" now
-  installs the latest release by itself, verifies the checksum and that the new
-  binary runs, refreshes the systemd units and prints the old and new versions.
+  Update the VPS to 1.3.2 before updating this app. A VPS on 1.3.1 or older
+  cannot update itself without --from yet, so pass the release URL once:
+  sudo umbrel-tunnel update --from
+  https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download/umbrel-tunnel-linux-$(dpkg --print-architecture)
+  From 1.3.2 on, "umbrel-tunnel update" installs the latest release by itself,
+  verifies the checksum and that the new binary runs, refreshes the systemd
+  units and prints the old and new versions.
   If the binary cannot run it restores the previous one; if the restart fails it
   prints the journal tail. doctor now reports the binary version, the unit
   capabilities, the required public ports and the reachability of the endpoint.

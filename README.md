@@ -265,14 +265,29 @@ La app **no monta el socket de Docker**. Lee, en modo solo lectura:
 - `${UMBREL_ROOT}/app-data/<app-id>/app-gateway.json` (destino resuelto por umbreld)
 - `${UMBREL_ROOT}/app-data/<app-id>/exports.sh` (solo se analiza con regex; nunca se ejecuta)
 
+La detección interpreta el compose de forma estática, sin ejecutar nada:
+
+- **Puertos publicados** (`ports`) y **puertos internos** (`expose`). Se aceptan
+  las formas corta y larga, `host:container`, solo `container`, `/tcp` y `/udp`,
+  y rangos (`8000-8010`) hasta 32 puertos.
+- **Red del host** (`network_mode: host`): esos servicios no publican puertos;
+  se detectan contra la puerta de enlace de la red Docker, igual que SSH y el
+  panel de UmbrelOS.
+- **Interpolación de variables** de Docker Compose (`$VAR`, `${VAR}`,
+  `${VAR:-def}`, `${VAR-default}`, `${VAR:+alt}`, `${VAR+alt}`, `${VAR:?err}` y
+  `$$`), usando los valores estáticos de `exports.sh` y del propio compose.
+  Así se resuelven, por ejemplo, los puertos de Bitcoin (`8332`, `8333`) y
+  Electrs (`50001`), que en origen son `${APP_BITCOIN_RPC_PORT}` y similares.
+- **Puertos del catálogo** para apps conocidas (Bitcoin/Knots, Electrs, LND,
+  Mempool, Pi-hole…) solo cuando se pueden asociar a un servicio concreto del
+  compose; nunca se inventan destinos.
+
 Usa los nombres DNS de Docker (`<app-id>_<servicio>_1`) como destino, de modo
 que el proxy sigue funcionando aunque cambie la IP del contenedor. Los servicios
 detectados muestran debajo la IP resuelta, solo como información. Las IPs de
 `app-gateway.json` se asocian al contenedor declarado en el compose cuando es
 posible; no se asignan puertos del catálogo a contenedores web arbitrariamente.
-Los servicios
-del host (SSH/panel) se detectan contra la puerta de enlace de la red Docker. Si
-una app no se detecta, añade un servicio manual en **Servicios y puertos**.
+Si una app no se detecta, añade un servicio manual en **Servicios y puertos**.
 
 ## CLI del VPS
 
@@ -428,14 +443,20 @@ necesita `NET_ADMIN` y, para cargar el módulo, `SYS_MODULE` con
 ## Actualizar, backup y desinstalar
 
 ```bash
-# Actualiza a la última release para la arquitectura de este VPS: verifica el
-# .sha256, comprueba que el binario nuevo se ejecuta, actualiza las unidades
-# systemd y reinicia el servicio. Configuración, claves y peers no se tocan.
+# Primera subida a 1.3.2 desde una instalación anterior: su `update` todavía no
+# resuelve la release sola (`error: falta --from`), así que pasa la URL una vez.
+sudo umbrel-tunnel update \
+  --from "https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download/umbrel-tunnel-linux-$(dpkg --print-architecture)"
+
+# Desde 1.3.2 en adelante: resuelve la última release para la arquitectura del
+# VPS, verifica el .sha256, comprueba que el binario nuevo se ejecuta, actualiza
+# las unidades systemd y reinicia el servicio. Configuración, claves y peers no
+# se tocan.
 sudo umbrel-tunnel update
 
-# Equivalente explícito (útil para una versión concreta o un binario local)
+# Variantes explícitas (versión concreta, binario local o checksum a mano)
 sudo umbrel-tunnel update \
-  --from https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download/umbrel-tunnel-linux-amd64
+  --from https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.3.2/umbrel-tunnel-linux-amd64
 sudo umbrel-tunnel update --from ./umbrel-tunnel-linux-amd64 --sha256 <hex>
 
 # Copia de seguridad (configuración, claves y estado)
@@ -447,9 +468,10 @@ sudo ./install.sh --uninstall          # conserva /etc/umbrel-tunnel y /var/lib/
 sudo ./install.sh --uninstall --purge  # borra también configuración y estado
 ```
 
-`update` solo sustituye `/usr/local/bin/umbrel-tunnel`. Si una versión cambia
-unidades systemd, `sysctl` o el propio `install.sh`, reinstala con el instalador
-(es idempotente y conserva la configuración):
+`update` sustituye `/usr/local/bin/umbrel-tunnel` y refresca las unidades systemd
+que van embebidas en el binario. Si una versión cambia `sysctl`, `tmpfiles` o el
+propio `install.sh`, reinstala con el instalador (es idempotente y conserva la
+configuración):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/main/vps/install.sh \
