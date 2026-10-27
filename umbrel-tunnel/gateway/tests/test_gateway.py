@@ -32,6 +32,7 @@ os.environ["UMBREL_TUNNEL_HAPROXY_PID"] = os.path.join(TMP, "haproxy.pid")
 os.environ.pop("UMBREL_TUNNEL_DEV", None)
 
 import app as gateway  # noqa: E402
+import catalog  # noqa: E402
 import detect  # noqa: E402
 import i18n  # noqa: E402
 import proxy  # noqa: E402
@@ -392,7 +393,16 @@ class DetectTests(unittest.TestCase):
     def tearDown(self):
         detect.APP_DATA = self._old
 
-    def _write_app(self, app_id: str, manifest: str, compose: str, gateway_cfg: dict):
+    def _write_app(
+        self,
+        app_id: str,
+        manifest: str,
+        compose: str,
+        gateway_cfg: dict,
+        exports: str = "",
+        dotenv: str = "",
+        proxy_env: str = "",
+    ):
         app_dir = self.root / app_id
         app_dir.mkdir(parents=True)
         (app_dir / "umbrel-app.yml").write_text(manifest, encoding="utf-8")
@@ -400,6 +410,12 @@ class DetectTests(unittest.TestCase):
         (app_dir / "app-gateway.json").write_text(
             json.dumps(gateway_cfg), encoding="utf-8"
         )
+        if exports:
+            (app_dir / "exports.sh").write_text(exports, encoding="utf-8")
+        if dotenv:
+            (app_dir / ".env").write_text(dotenv, encoding="utf-8")
+        if proxy_env:
+            (app_dir / ".env.app_proxy").write_text(proxy_env, encoding="utf-8")
 
     def test_resolved_gateway_config_is_primary_source(self):
         self._write_app(
@@ -468,6 +484,349 @@ class DetectTests(unittest.TestCase):
 
     def test_variable_published_port_keeps_internal_port(self):
         self.assertEqual(detect._ports_from_service({"ports": ["${APP_PORT}:50001"]}), [(50001, "tcp")])
+
+    def test_ports_forms_and_variable_resolution(self):
+        service = {
+            "ports": [
+                "$A:$B",
+                "${C:-9000}:${D}",
+                {"target": 5555, "protocol": "udp"},
+                "7000",
+                "8000-8002:8000-8002",
+                "[::1]:8500:8500",
+                "127.0.0.1:8600:8600/udp",
+                "8700:8700/${PROTO}",
+                {"target": 8800, "protocol": "$PROTO"},
+            ]
+        }
+        values = {"A": "1111", "B": "2222", "C": "3333", "D": "4444", "PROTO": "udp"}
+        self.assertEqual(
+            detect._ports_from_service(service, values),
+            [
+                (2222, "tcp"),
+                (4444, "tcp"),
+                (5555, "udp"),
+                (7000, "tcp"),
+                (8000, "tcp"),
+                (8001, "tcp"),
+                (8002, "tcp"),
+                (8500, "tcp"),
+                (8600, "udp"),
+                (8700, "udp"),
+                (8800, "udp"),
+            ],
+        )
+
+    def test_variable_interpolation_modifiers(self):
+        values = {"SET": "value", "EMPTY": "", "OTHER": "other"}
+        self.assertEqual(detect._interpolate("$SET", values), "value")
+        self.assertEqual(detect._interpolate("${SET}", values), "value")
+        self.assertEqual(detect._interpolate("${MISSING:-fallback}", values), "fallback")
+        self.assertEqual(detect._interpolate("${EMPTY:-fallback}", values), "fallback")
+        self.assertEqual(detect._interpolate("${EMPTY-fallback}", values), "")
+        self.assertEqual(detect._interpolate("${SET:+alt}", values), "alt")
+        self.assertEqual(detect._interpolate("${MISSING+alt}", values), "")
+        self.assertEqual(detect._interpolate("${MISSING:?error}", values), "")
+        self.assertEqual(detect._interpolate("${MISSING:-${OTHER}}", values), "other")
+        self.assertEqual(detect._interpolate("price $$5", values), "price $5")
+
+    def test_expose_ports_are_detected(self):
+        self.assertEqual(
+            detect._ports_from_expose({"expose": ["80", 443]}),
+            [(80, "tcp"), (443, "tcp")],
+        )
+
+    def test_expose_supports_ranges_and_protocol_suffix(self):
+        self.assertEqual(
+            detect._ports_from_expose({"expose": ["9000-9002/udp", 9999]}),
+            [(9000, "udp"), (9001, "udp"), (9002, "udp"), (9999, "tcp")],
+        )
+
+    def test_port_ranges_cover_neko_and_stay_bounded(self):
+        self.assertEqual(len(detect._port_numbers("52000-52100")), 101)
+        self.assertEqual(detect._port_numbers("1-300"), [])
+        self.assertEqual(detect._port_numbers("9000-8900"), [])
+
+    def test_unquoted_port_mapping_is_not_lost_to_yaml_sexagesimal(self):
+        self._write_app(
+            "stalwart",
+            "name: Stalwart\nport: 8745\n",
+            (
+                "services:\n"
+                "  app_proxy:\n"
+                "    environment:\n"
+                "      APP_HOST: stalwart_server_1\n"
+                "      APP_PORT: 8080\n"
+                "  server:\n"
+                "    ports:\n"
+                "      - 10025:25   # SMTP\n"
+            ),
+            {},
+        )
+        targets = {(e["target_ip"], e["target_port"]) for e in detect._detect_apps()}
+        self.assertIn(("stalwart_server_1", 25), targets)
+
+    def test_dotenv_file_is_used_for_compose_interpolation(self):
+        self._write_app(
+            "demo",
+            "name: Demo\n",
+            "services:\n  web:\n    ports:\n      - '${CUSTOM_PORT}:${CUSTOM_PORT}'\n",
+            {},
+            dotenv="CUSTOM_PORT=9100\n",
+        )
+        self.assertEqual(
+            {(e["target_ip"], e["target_port"]) for e in detect._detect_apps()},
+            {("demo_web_1", 9100)},
+        )
+
+    def test_exports_override_dotenv_for_compose_interpolation(self):
+        self._write_app(
+            "demo",
+            "name: Demo\n",
+            "services:\n  web:\n    ports:\n      - '${APP_PORT}:${APP_PORT}'\n",
+            {},
+            exports="export APP_PORT=9200\n",
+            dotenv="APP_PORT=9100\n",
+        )
+        self.assertEqual(
+            {(e["target_ip"], e["target_port"]) for e in detect._detect_apps()},
+            {("demo_web_1", 9200)},
+        )
+
+    def test_proxy_env_overrides_app_proxy_port(self):
+        self._write_app(
+            "demo",
+            "name: Demo\n",
+            (
+                "services:\n"
+                "  app_proxy:\n"
+                "    environment:\n"
+                "      APP_HOST: demo_web_1\n"
+                "      APP_PORT: $APP_WEB_PORT\n"
+                "  web:\n"
+                "    image: web\n"
+            ),
+            {"APP_HOST": "demo_web_1", "APP_PORT": 8080},
+            exports="export APP_WEB_PORT=8080\n",
+            proxy_env="APP_PORT=${CUSTOM_PORT}\n",
+            dotenv="CUSTOM_PORT=9300\n",
+        )
+        entries = detect._detect_apps()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["target_port"], 9300)
+        self.assertEqual(entries[0]["target_ip"], "demo_web_1")
+
+    def test_network_namespace_targets_other_container_or_host(self):
+        services = {
+            "server": {"network_mode": "host"},
+            "sidecar": {"network_mode": "service:server"},
+        }
+        self.assertEqual(
+            detect._service_target("demo", "sidecar", services["sidecar"], services, "10.21.0.1"),
+            "10.21.0.1",
+        )
+        self.assertEqual(
+            detect._service_target(
+                "demo", "external", {"network_mode": "container:other"}, {}, "10.21.0.1"
+            ),
+            "other",
+        )
+
+    def test_network_mode_service_targets_namespace_owner(self):
+        self._write_app(
+            "demo",
+            "name: Demo\n",
+            (
+                "services:\n"
+                "  app_proxy:\n"
+                "    environment:\n"
+                "      APP_HOST: demo_server_1\n"
+                "      APP_PORT: 8091\n"
+                "  server:\n"
+                "    ports: ['8091:8091']\n"
+                "  web:\n"
+                "    network_mode: service:server\n"
+                "    ports: ['9090:9090']\n"
+            ),
+            {},
+        )
+        targets = {(e["target_ip"], e["target_port"]) for e in detect._detect_apps()}
+        self.assertEqual(
+            targets,
+            {("demo_server_1", 8091), ("demo_server_1", 9090)},
+        )
+
+    def test_catalog_aliases_resolve_known_apps(self):
+        self.assertEqual(catalog.app_name("pihole"), catalog.app_name("pi-hole"))
+        self.assertEqual(catalog.app_name("paperless-ngx"), catalog.app_name("paperless"))
+        self.assertIsNotNone(catalog.service_for("pihole", 53))
+        self.assertEqual(catalog.port_defaults("pihole"), catalog.port_defaults("pi-hole"))
+
+    def test_bitcoin_node_detects_p2p_rpc_zmq_and_whitebind(self):
+        self._write_app(
+            "bitcoin",
+            "name: Bitcoin Node\nport: 2100\n",
+            (
+                "services:\n"
+                "  app_proxy:\n"
+                "    environment:\n"
+                "      APP_HOST: $APP_BITCOIN_NODE_IP\n"
+                "      APP_PORT: 3000\n"
+                "  app:\n"
+                "    ports:\n"
+                "      - \"${APP_BITCOIN_P2P_PORT}:${APP_BITCOIN_P2P_PORT}\"\n"
+                "      - \"${APP_BITCOIN_RPC_PORT}:${APP_BITCOIN_RPC_PORT}\"\n"
+                "    networks:\n"
+                "      default:\n"
+                "        ipv4_address: $APP_BITCOIN_NODE_IP\n"
+                "  tor:\n"
+                "    networks:\n"
+                "      default:\n"
+                "        ipv4_address: ${APP_BITCOIN_TOR_PROXY_IP}\n"
+            ),
+            {"APP_HOST": "$APP_BITCOIN_NODE_IP", "APP_PORT": 3000},
+            (
+                'export APP_BITCOIN_NODE_IP="10.21.21.8"\n'
+                'export APP_BITCOIN_TOR_PROXY_IP="10.21.22.10"\n'
+                'export APP_BITCOIN_RPC_PORT="8332"\n'
+                'export APP_BITCOIN_P2P_PORT="8333"\n'
+                'export APP_BITCOIN_P2P_WHITEBIND_PORT="8335"\n'
+                'export APP_BITCOIN_ZMQ_RAWBLOCK_PORT="28332"\n'
+                'export APP_BITCOIN_ZMQ_RAWTX_PORT="28333"\n'
+                'export APP_BITCOIN_ZMQ_HASHBLOCK_PORT="28334"\n'
+                'export APP_BITCOIN_ZMQ_SEQUENCE_PORT="28335"\n'
+                'export APP_BITCOIN_ZMQ_HASHTX_PORT="28336"\n'
+            ),
+        )
+        entries = detect._detect_apps()
+        targets = {(e["target_ip"], e["target_port"], e["protocol"]) for e in entries}
+        self.assertEqual(
+            targets,
+            {
+                ("bitcoin_app_1", 3000, "tcp"),
+                ("bitcoin_app_1", 8332, "tcp"),
+                ("bitcoin_app_1", 8333, "tcp"),
+                ("bitcoin_app_1", 8335, "tcp"),
+                ("bitcoin_app_1", 28332, "tcp"),
+                ("bitcoin_app_1", 28333, "tcp"),
+                ("bitcoin_app_1", 28334, "tcp"),
+                ("bitcoin_app_1", 28335, "tcp"),
+                ("bitcoin_app_1", 28336, "tcp"),
+            },
+        )
+        by_port = {e["target_port"]: e for e in entries}
+        self.assertEqual(by_port[8333]["name"], "Bitcoin P2P")
+        self.assertTrue(by_port[8332]["sensitive"])
+        self.assertTrue(by_port[8335]["sensitive"])
+        self.assertIn("ZMQ", by_port[28332]["name"])
+        self.assertEqual(by_port[8332]["target_ip"], "bitcoin_app_1")
+
+    def test_electrs_detects_dashboard_and_electrum_server(self):
+        self._write_app(
+            "electrs",
+            "name: Electrs\nport: 2102\n",
+            (
+                "services:\n"
+                "  app_proxy:\n"
+                "    environment:\n"
+                "      APP_HOST: $APP_ELECTRS_IP\n"
+                "      APP_PORT: 3006\n"
+                "  app:\n"
+                "    networks:\n"
+                "      default:\n"
+                "        ipv4_address: $APP_ELECTRS_IP\n"
+                "  electrs:\n"
+                "    ports:\n"
+                "      - \"${APP_ELECTRS_NODE_PORT}:${APP_ELECTRS_NODE_PORT}\"\n"
+                "    networks:\n"
+                "      default:\n"
+                "        ipv4_address: $APP_ELECTRS_NODE_IP\n"
+            ),
+            {"APP_HOST": "$APP_ELECTRS_IP", "APP_PORT": 3006},
+            (
+                'export APP_ELECTRS_IP="10.21.22.4"\n'
+                'export APP_ELECTRS_NODE_IP="10.21.21.10"\n'
+                'export APP_ELECTRS_NODE_PORT="50001"\n'
+            ),
+        )
+        entries = detect._detect_apps()
+        self.assertEqual(
+            {(e["target_ip"], e["target_port"]) for e in entries},
+            {("electrs_app_1", 3006), ("electrs_electrs_1", 50001)},
+        )
+        by_port = {e["target_port"]: e for e in entries}
+        self.assertEqual(by_port[50001]["name"], "Electrum Server")
+        self.assertFalse(by_port[50001]["sensitive"])
+
+    def test_host_network_app_uses_host_and_manifest_port(self):
+        self._write_app(
+            "home-assistant",
+            "name: Home Assistant\nport: 8123\n",
+            "services:\n  server:\n    network_mode: host\n",
+            {},
+        )
+        with mock.patch.object(detect, "_default_gateway", return_value="10.21.0.1"):
+            entries = detect._detect_apps()
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["target_ip"], "10.21.0.1")
+        self.assertEqual(entries[0]["target_port"], 8123)
+        self.assertEqual(entries[0]["service"], "server")
+
+    def test_host_network_dns_app_gets_known_dns_ports(self):
+        self._write_app(
+            "adguard-home",
+            "name: AdGuard Home\nport: 8095\n",
+            "services:\n  server:\n    network_mode: host\n",
+            {},
+        )
+        with mock.patch.object(detect, "_default_gateway", return_value="10.21.0.1"):
+            entries = detect._detect_apps()
+        targets = {(e["target_ip"], e["target_port"], e["protocol"]) for e in entries}
+        self.assertEqual(
+            targets,
+            {
+                ("10.21.0.1", 8095, "tcp"),
+                ("10.21.0.1", 53, "tcp"),
+                ("10.21.0.1", 53, "udp"),
+            },
+        )
+
+    def test_host_network_app_keeps_declared_tcp_and_udp_ports(self):
+        self._write_app(
+            "rustdesk-server",
+            "name: RustDesk\nport: 21080\n",
+            (
+                "services:\n"
+                "  app_proxy:\n"
+                "    environment:\n"
+                "      APP_HOST: rustdesk-server_web_1\n"
+                "      APP_PORT: 80\n"
+                "  hbbs:\n"
+                "    network_mode: host\n"
+                "    ports:\n"
+                "      - 21115:21115\n"
+                "      - 21116:21116/udp\n"
+                "  hbbr:\n"
+                "    network_mode: host\n"
+                "    ports:\n"
+                "      - 21117:21117\n"
+                "  web:\n"
+                "    image: nginx\n"
+            ),
+            {"APP_HOST": "rustdesk-server_web_1", "APP_PORT": 80},
+        )
+        with mock.patch.object(detect, "_default_gateway", return_value="10.21.0.1"):
+            entries = detect._detect_apps()
+        targets = {(e["target_ip"], e["target_port"], e["protocol"]) for e in entries}
+        self.assertEqual(
+            targets,
+            {
+                ("rustdesk-server_web_1", 80, "tcp"),
+                ("10.21.0.1", 21115, "tcp"),
+                ("10.21.0.1", 21116, "udp"),
+                ("10.21.0.1", 21117, "tcp"),
+            },
+        )
 
     def test_dynamic_gateway_ip_matches_container_dns(self):
         self._write_app(

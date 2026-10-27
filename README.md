@@ -264,23 +264,31 @@ La app **no monta el socket de Docker**. Lee, en modo solo lectura:
 - `${UMBREL_ROOT}/app-data/<app-id>/docker-compose.yml`
 - `${UMBREL_ROOT}/app-data/<app-id>/app-gateway.json` (destino resuelto por umbreld)
 - `${UMBREL_ROOT}/app-data/<app-id>/exports.sh` (solo se analiza con regex; nunca se ejecuta)
+- `${UMBREL_ROOT}/app-data/<app-id>/.env` y `.env.app_proxy` (también solo como texto)
 
 La detección interpreta el compose de forma estática, sin ejecutar nada:
 
 - **Puertos publicados** (`ports`) y **puertos internos** (`expose`). Se aceptan
-  las formas corta y larga, `host:container`, solo `container`, `/tcp` y `/udp`,
-  y rangos (`8000-8010`) hasta 32 puertos.
+  las formas corta y larga, `host:container`, solo `container`, con o sin
+  `/tcp`/`/udp`, IP de host, IPv6 y rangos (`8000-8010`) hasta 256 puertos.
+  También se conservan los puertos sin comillas (`10025:25`), que YAML podría
+  confundir con un número en base 60.
 - **Red del host** (`network_mode: host`): esos servicios no publican puertos;
   se detectan contra la puerta de enlace de la red Docker, igual que SSH y el
   panel de UmbrelOS.
+- **Espacios de red compartidos** (`network_mode: service:…` y
+  `container:…`): el destino es el contenedor que posee la red, no el servicio
+  que la comparte.
 - **Interpolación de variables** de Docker Compose (`$VAR`, `${VAR}`,
   `${VAR:-def}`, `${VAR-default}`, `${VAR:+alt}`, `${VAR+alt}`, `${VAR:?err}` y
-  `$$`), usando los valores estáticos de `exports.sh` y del propio compose.
-  Así se resuelven, por ejemplo, los puertos de Bitcoin (`8332`, `8333`) y
-  Electrs (`50001`), que en origen son `${APP_BITCOIN_RPC_PORT}` y similares.
+  `$$`), usando los valores estáticos de `exports.sh`, `.env` y del propio
+  compose. `.env.app_proxy` puede sobrescribir `APP_HOST`/`APP_PORT`, como hace
+  umbreld. Así se resuelven, por ejemplo, los puertos de Bitcoin (`8332`,
+  `8333`) y Electrs (`50001`), que en origen son `${APP_BITCOIN_RPC_PORT}` y
+  similares.
 - **Puertos del catálogo** para apps conocidas (Bitcoin/Knots, Electrs, LND,
-  Mempool, Pi-hole…) solo cuando se pueden asociar a un servicio concreto del
-  compose; nunca se inventan destinos.
+  Mempool, Pi-hole, DNS…) solo cuando se pueden asociar a un servicio concreto
+  del compose; nunca se inventan destinos.
 
 Usa los nombres DNS de Docker (`<app-id>_<servicio>_1`) como destino, de modo
 que el proxy sigue funcionando aunque cambie la IP del contenedor. Los servicios
@@ -443,8 +451,9 @@ necesita `NET_ADMIN` y, para cargar el módulo, `SYS_MODULE` con
 ## Actualizar, backup y desinstalar
 
 ```bash
-# Primera subida a 1.3.2 desde una instalación anterior: su `update` todavía no
-# resuelve la release sola (`error: falta --from`), así que pasa la URL una vez.
+# Primera subida a 1.3.2 o posterior desde una instalación anterior: su
+# `update` todavía no resuelve la release sola (`error: falta --from`), así
+# que pasa la URL una vez.
 sudo umbrel-tunnel update \
   --from "https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download/umbrel-tunnel-linux-$(dpkg --print-architecture)"
 
@@ -519,7 +528,7 @@ Variables de entorno útiles en el gateway:
 | Variable | Por defecto | Uso |
 | --- | --- | --- |
 | `APP_PASSWORD` | — | contraseña de login; Umbrel la inyecta |
-| `APP_VERSION` | `1.3.2` | versión mostrada |
+| `APP_VERSION` | `1.3.3` | versión mostrada |
 | `UMBREL_TUNNEL_DATA` | `/data` | estado, claves y configuración |
 | `UMBREL_APP_DATA` | `/umbrel-app-data` | manifiestos de apps (solo lectura) |
 | `NETWORK_IP` | `10.21.0.0` | red de Umbrel para detectar solapes |

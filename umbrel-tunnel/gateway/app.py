@@ -46,7 +46,7 @@ import sync
 import wireguard
 from vps import VPSClient, VPSError
 
-VERSION = os.environ.get("APP_VERSION", "1.3.2")
+VERSION = os.environ.get("APP_VERSION", "1.3.3")
 RESERVED_PUBLIC_PORTS = {22}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
 DEV_MODE = os.environ.get("UMBREL_TUNNEL_DEV") == "1"

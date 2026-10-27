@@ -29,6 +29,31 @@ try:  # PyYAML is installed in the image; the fallback keeps imports testable.
 except ImportError:  # pragma: no cover - the container always ships PyYAML
     yaml = None
 
+if yaml is not None:
+
+    class _StaticLoader(yaml.SafeLoader):
+        """SafeLoader that does not turn unquoted ``10025:25`` into 601525.
+
+        YAML 1.1 treats ``host:container`` as a base-60 integer when the
+        container port is below 60. Docker Compose keeps the scalar as text, so
+        preserve it instead of losing ports such as Stalwart's SMTP ``10025:25``.
+        """
+
+        def construct_yaml_int(self, node):
+            value = self.construct_scalar(node)
+            if ":" in value:
+                return value
+            return super().construct_yaml_int(node)
+
+    # PyYAML registers constructors as plain function references, so overriding
+    # the method is not enough: the subclass must register it explicitly.
+    _StaticLoader.add_constructor(
+        "tag:yaml.org,2002:int", _StaticLoader.construct_yaml_int
+    )
+
+else:  # pragma: no cover - the container always ships PyYAML
+    _StaticLoader = None
+
 APP_DATA = Path(os.environ.get("UMBREL_APP_DATA", "/umbrel-app-data"))
 HOST_SERVICES = os.environ.get("UMBREL_TUNNEL_HOST_SERVICES", "1") not in {"0", "false", "no"}
 
@@ -41,9 +66,64 @@ IGNORED_APPS = {
 }
 IGNORED_PORTS = {2375, 8081}
 MAX_FILE_SIZE = 512 * 1024
-EXPORT_RE = re.compile(r"""^\s*export\s+([A-Za-z_][A-Za-z0-9_]*)=["']?([^"'\n]*)["']?""", re.MULTILINE)
+# Neko publishes 52000-52100/udp; 256 keeps that range without allowing a
+# malicious compose file to generate tens of thousands of entries.
+MAX_RANGE_PORTS = 256
+EXPORT_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+VAR_RE = re.compile(
+    r"\$(?:(?P<escaped>\$)"
+    r"|\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)"
+    r"(?:(?P<op>:?[-+?])(?P<arg>(?:[^{}]|\{[^{}]*\})*))?\}"
+    r"|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))"
+)
+DYNAMIC_SHELL_RE = re.compile(r"[`]|\$\(|\|\||&&|;\s|>\s|<\s")
 HOST_RE = re.compile(r"^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,251}[A-Za-z0-9])?$")
 SENSITIVE_HINTS = ("postgres", "mysql", "mariadb", "mongo", "redis", "admin", "rpc", "grpc", "docker", "portainer")
+LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "::1"}
+
+
+def _interpolate(value, values: dict | None = None) -> str:
+    """Expand Docker Compose style ``$VAR``/``${VAR:-default}`` references.
+
+    ``exports.sh`` is the source of truth for app addresses and ports. Compose
+    supports both ``$VAR`` and ``${VAR}``, modifiers such as ``:-``/``-`` and
+    ``:+``/``+``, and ``$$`` as an escaped dollar sign. Unknown variables expand
+    to an empty string so a malformed host header cannot be turned into a
+    different container name.
+    """
+    text = str(value if value is not None else "")
+    if "$" not in text:
+        return text
+    resolved = values or {}
+
+    def replace(match: re.Match) -> str:
+        if match.group("escaped"):
+            return "$"
+        name = match.group("braced") or match.group("plain") or ""
+        op = match.group("op") or ""
+        arg = match.group("arg") or ""
+        if "$" in arg:
+            arg = _interpolate(arg, resolved)
+        is_set = name in resolved
+        current = str(resolved.get(name, ""))
+        is_nonempty = is_set and current != ""
+        if op == ":-":
+            return current if is_nonempty else arg
+        if op == "-":
+            return current if is_set else arg
+        if op == ":+":
+            return arg if is_nonempty else ""
+        if op == "+":
+            return arg if is_set else ""
+        if op in {":?", "?"}:
+            # Compose aborts on a missing required variable. The gateway only
+            # reads files and never aborts detection, so leave it unresolved.
+            if not is_set or (op == ":?" and not is_nonempty):
+                return ""
+            return current
+        return current if is_set else ""
+
+    return VAR_RE.sub(replace, text)
 
 
 def _read_text(path: Path) -> str:
@@ -62,7 +142,7 @@ def _load_yaml(path: Path) -> dict:
     if not text or yaml is None:
         return {}
     try:
-        data = yaml.safe_load(text)
+        data = yaml.load(text, Loader=_StaticLoader)
     except yaml.YAMLError:
         return {}
     return data if isinstance(data, dict) else {}
@@ -101,11 +181,40 @@ def _manifest_name(app_id: str) -> str:
     return name or catalog.app_name(app_id)
 
 
-def _parse_exports(path: Path) -> dict[str, str]:
-    """Read static ``export KEY=value`` lines without executing the file."""
+def _parse_exports(path: Path, base: dict[str, str] | None = None) -> dict[str, str]:
+    """Read static ``KEY=value``/``export KEY=value`` lines safely.
+
+    Used for ``exports.sh`` (sourced by umbreld before Compose runs), the
+    project ``.env`` and ``.env.app_proxy``. Docker Compose interpolates the
+    app's compose file with these values. Every command substitution
+    (``$(...)``), pipeline or redirection is ignored, so only literal
+    assignments are used. Values are expanded in order, which is enough for
+    Umbrel's ``APP_*_IP``/``APP_*_PORT`` variables.
+    """
     result: dict[str, str] = {}
-    for match in EXPORT_RE.finditer(_read_text(path)):
-        result[match.group(1)] = match.group(2).strip()
+    resolved = dict(base or {})
+    for line in _read_text(path).splitlines():
+        match = EXPORT_RE.match(line)
+        if not match:
+            continue
+        key, raw = match.group(1), match.group(2).strip()
+        if not raw:
+            value = ""
+        else:
+            quoted = re.match(r"""^(['"])(.*?)\1(?:\s+#.*)?$""", raw)
+            if quoted:
+                value = quoted.group(2)
+            else:
+                value = re.sub(r"\s+#.*$", "", raw).strip()
+                if value[:1] in {"'", '"'} or value[-1:] in {"'", '"'}:
+                    # Unbalanced quotes mean the assignment is not a literal.
+                    continue
+        if DYNAMIC_SHELL_RE.search(value):
+            continue
+        if "$" in value:
+            value = _interpolate(value, resolved)
+        resolved[key] = value
+        result[key] = value
     return result
 
 
@@ -121,6 +230,28 @@ def _environment(service: dict) -> dict[str, str]:
                 result[key] = value
         return result
     return {}
+
+
+def _compose_values(
+    app_id: str,
+    exports: dict[str, str] | None = None,
+    app_dir: Path | None = None,
+) -> dict[str, str]:
+    """Environment used to interpolate an app's compose file.
+
+    Compose reads the project ``.env`` automatically and umbreld exports the
+    values from ``exports.sh``, so both are considered. ``exports.sh`` wins over
+    ``.env`` because shell variables override the dotenv file. Catalog defaults
+    fill the gaps for known apps when the files are missing or unreadable.
+    """
+    values: dict[str, str] = {}
+    if app_dir is not None:
+        values.update(_parse_exports(app_dir / ".env"))
+    values.update(exports or {})
+    for var, port in catalog.port_defaults(app_id).items():
+        if not values.get(var):
+            values[var] = str(port)
+    return values
 
 
 def _sensitive(app_id: str, service: str, port: int) -> bool:
@@ -143,6 +274,7 @@ def _entry(
     sensitive: bool | None = None,
     description: str = "",
     name_key: str = "",
+    meta: dict | None = None,
 ) -> dict | None:
     host = (host or "").strip()
     if not HOST_RE.match(host) or not (1 <= int(port) <= 65535):
@@ -151,7 +283,8 @@ def _entry(
     if host == "localhost" or host.startswith("127.") or host == "0.0.0.0":
         return None
     protocol = protocol if protocol in {"tcp", "udp"} else "tcp"
-    meta = catalog.service_for(app_id, port)
+    if meta is None:
+        meta = catalog.service_for(app_id, port)
     name = (meta or {}).get("name") or f"{service} ({port})"
     return {
         "id": f"{app_id}:{service}:{port}:{protocol}",
@@ -170,56 +303,133 @@ def _entry(
     }
 
 
-def _ports_from_service(service: dict) -> list[tuple[int, str]]:
+def _port_numbers(value) -> list[int]:
+    """Parse ``80``, ``8000-8010`` and reject anything outside 1..65535."""
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return []
+    if "-" in text:
+        start, _, end = text.partition("-")
+        try:
+            first, last = int(start), int(end)
+        except (TypeError, ValueError):
+            return []
+        if not (1 <= first <= last <= 65535) or last - first + 1 > MAX_RANGE_PORTS:
+            return []
+        return list(range(first, last + 1))
+    try:
+        port = int(text)
+    except (TypeError, ValueError):
+        return []
+    return [port] if 1 <= port <= 65535 else []
+
+
+def _ports_from_service(service: dict, values: dict | None = None) -> list[tuple[int, str]]:
+    """Return ``(container_port, protocol)`` for a compose service's ``ports``.
+
+    Only the container side matters: the gateway reaches the app container over
+    Docker's network, not through the host port. Both Compose syntaxes are
+    supported (short ``"HOST:CONTAINER/PROTO"`` and long dictionaries), as are
+    variable references and port ranges.
+    """
     ports: list[tuple[int, str]] = []
     raw_ports = service.get("ports")
-    if isinstance(raw_ports, list):
-        for item in raw_ports:
-            if isinstance(item, dict):
-                try:
-                    target = int(item.get("target"))
-                except (TypeError, ValueError):
-                    continue
-                protocol = str(item.get("protocol") or "tcp").lower()
+    if not isinstance(raw_ports, list):
+        return ports
+    for item in raw_ports:
+        if isinstance(item, dict):
+            protocol = _interpolate(item.get("protocol") or "tcp", values).strip().lower()
+            protocol = protocol if protocol in {"tcp", "udp"} else "tcp"
+            for target in _port_numbers(_interpolate(item.get("target"), values)):
                 ports.append((target, protocol))
-                continue
-            text = str(item).strip()
-            if not text:
-                continue
-            protocol = "tcp"
-            if "/" in text:
-                text, protocol = text.rsplit("/", 1)
-            parts = text.split(":")
-            try:
-                target = int(parts[-1])
-            except (TypeError, ValueError):
-                continue
-            ports.append((target, protocol.lower()))
+            continue
+        text = _interpolate(item, values).strip()
+        if not text:
+            continue
+        protocol = "tcp"
+        if "/" in text:
+            text, protocol = text.rsplit("/", 1)
+        # The container port is the last colon-separated field. This also
+        # handles "[::1]:8080:80" and unresolved host-side variables.
+        target = text.rsplit(":", 1)[-1]
+        protocol = _interpolate(protocol, values).strip().lower()
+        protocol = protocol if protocol in {"tcp", "udp"} else "tcp"
+        for port in _port_numbers(target):
+            ports.append((port, protocol))
     return ports
 
 
-def _container_identity(host: str, services: dict, app_id: str, exports: dict | None = None) -> tuple[str, str] | None:
+def _ports_from_expose(service: dict, values: dict | None = None) -> list[tuple[int, str]]:
+    """``expose`` lists internal ports; they are reachable from the tunnel.
+
+    The Compose spec only defines TCP here, but some files append ``/udp`` to
+    mirror ``ports``; honour it when present.
+    """
+    ports: list[tuple[int, str]] = []
+    raw = service.get("expose")
+    if not isinstance(raw, list):
+        return ports
+    for item in raw:
+        text = _interpolate(item, values).strip()
+        protocol = "tcp"
+        if "/" in text:
+            text, protocol = text.rsplit("/", 1)
+            protocol = _interpolate(protocol, values).strip().lower()
+            protocol = protocol if protocol in {"tcp", "udp"} else "tcp"
+        for port in _port_numbers(text):
+            ports.append((port, protocol))
+    return ports
+
+
+def _service_container(app_id: str, name: str, service: dict, values: dict | None = None) -> str:
+    container = _interpolate(service.get("container_name") or "", values).strip()
+    return container or f"{app_id}_{name}_1"
+
+
+def _network_mode(service: dict) -> str:
+    return str(service.get("network_mode") or "").strip().strip("'\"")
+
+
+def _is_host_network(service: dict) -> bool:
+    return _network_mode(service) == "host"
+
+
+def _container_identity(host: str, services: dict, app_id: str, values: dict | None = None) -> tuple[str, str] | None:
     """Identify a compose service, never deriving a service name from an IP.
 
     Exact compose metadata wins. For dynamic addresses, compare Docker DNS
     results only within this app. Ambiguous matches are not safe to guess.
     """
+    host = _interpolate(host, values).strip()
     candidates = []
     matches = []
     for name, service in services.items():
         if name in {"app_proxy", "app-proxy"} or not isinstance(service, dict):
             continue
-        container = str(service.get("container_name") or f"{app_id}_{name}_1")
+        container = _service_container(app_id, name, service, values)
         aliases = {name, container}
-        networks = service.get("networks") or {}
+        hostname = _interpolate(service.get("hostname") or "", values).strip()
+        if hostname:
+            aliases.add(hostname)
+        networks = service.get("networks")
         if isinstance(networks, dict):
             for network in networks.values():
-                if isinstance(network, dict):
-                    address = str(network.get("ipv4_address") or "")
-                    if address.startswith("${") and address.endswith("}"):
-                        address = (exports or {}).get(address[2:-1], address)
+                if not isinstance(network, dict):
+                    continue
+                address = _interpolate(network.get("ipv4_address") or "", values).strip()
+                if address:
                     aliases.add(address)
-                    aliases.update(str(alias) for alias in network.get("aliases", []) or [])
+                for alias in network.get("aliases") or []:
+                    alias = _interpolate(alias, values).strip()
+                    if alias:
+                        aliases.add(alias)
+        elif isinstance(networks, list):
+            for network in networks:
+                if isinstance(network, dict):
+                    for alias in network.get("aliases") or []:
+                        alias = _interpolate(alias, values).strip()
+                        if alias:
+                            aliases.add(alias)
         candidates.append((name, container))
         if host in aliases:
             matches.append((name, container))
@@ -235,8 +445,8 @@ def _container_identity(host: str, services: dict, app_id: str, exports: dict | 
     return matches[0] if len(matches) == 1 else None
 
 
-def _container_target(host: str, services: dict, app_id: str, exports: dict | None = None) -> str:
-    identity = _container_identity(host, services, app_id, exports)
+def _container_target(host: str, services: dict, app_id: str, values: dict | None = None) -> str:
+    identity = _container_identity(host, services, app_id, values)
     return identity[1] if identity else host
 
 
@@ -261,7 +471,43 @@ def canonical_target(host: str, app_id: str) -> str:
     services = _load_yaml(app_dir / "docker-compose.yml").get("services") or {}
     if not isinstance(services, dict):
         return host
-    return _container_target(host, services, app_id, _parse_exports(app_dir / "exports.sh"))
+    values = _compose_values(
+        app_id,
+        _parse_exports(app_dir / "exports.sh"),
+        app_dir,
+    )
+    return _container_target(host, services, app_id, values)
+
+
+def _manifest_port(manifest: dict) -> int:
+    try:
+        return int(manifest.get("port") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _service_target(
+    app_id: str,
+    name: str,
+    service: dict,
+    services: dict,
+    host_ip: str,
+    values: dict | None = None,
+) -> str:
+    """Resolve the address the gateway must use for a compose service."""
+    mode = _network_mode(service)
+    if mode == "host":
+        return host_ip
+    if mode.startswith("service:"):
+        other_name = mode.split(":", 1)[1].strip()
+        other = services.get(other_name)
+        if isinstance(other, dict):
+            if _is_host_network(other):
+                return host_ip
+            return _service_container(app_id, other_name, other, values)
+    if mode.startswith("container:"):
+        return mode.split(":", 1)[1].strip()
+    return _service_container(app_id, name, service, values)
 
 
 def _detect_apps() -> list[dict]:
@@ -281,8 +527,28 @@ def _detect_apps() -> list[dict]:
         if not isinstance(compose_services, dict):
             compose_services = {}
 
+        exports = _parse_exports(app_dir / "exports.sh")
+        values = _compose_values(app_id, exports, app_dir)
+        # umbreld merges .env.app_proxy on top of app_proxy's environment (and
+        # on top of app-gateway.json) before starting its in-process gateway.
+        proxy_overrides = _parse_exports(app_dir / ".env.app_proxy", values)
+        proxy_values = {**values, **proxy_overrides}
+        host_ip = _host_ip()
+
         seen: set[tuple[str, int, str]] = set()
         app_entries: list[dict] = []
+        proxy_entry = False
+
+        # Host-network services (Home Assistant, Pi-hole, Plex, …) are not on
+        # Docker's network. They listen on the Umbrel host, which the gateway
+        # reaches through the default Docker gateway.
+        host_network_services = [
+            (name, service)
+            for name, service in compose_services.items()
+            if name not in {"app_proxy", "app-proxy"}
+            and isinstance(service, dict)
+            and _is_host_network(service)
+        ]
 
         # Primary source: umbreld's resolved app_proxy target. Fall back to the
         # raw compose environment for older installations.
@@ -291,50 +557,112 @@ def _detect_apps() -> list[dict]:
             proxy = compose_services.get("app_proxy")
             if isinstance(proxy, dict):
                 env = _environment(proxy)
-                host = str(env.get("APP_HOST") or "").strip()
-                try:
-                    port = int(str(env.get("APP_PORT") or "").strip())
-                except (TypeError, ValueError):
-                    port = 0
-        if not port:
-            try:
-                port = int(manifest.get("port") or 0)
-            except (TypeError, ValueError):
-                port = 0
+                host = env.get("APP_HOST") or ""
+                port = env.get("APP_PORT") or ""
+        if proxy_overrides.get("APP_HOST"):
+            host = proxy_overrides["APP_HOST"]
+        if proxy_overrides.get("APP_PORT"):
+            port = proxy_overrides["APP_PORT"]
+        host = _interpolate(host, proxy_values).strip() if host else ""
+        try:
+            port = int(_interpolate(port, proxy_values).strip()) if port else 0
+        except (TypeError, ValueError):
+            port = 0
+
         if host and port:
-            exports = _parse_exports(app_dir / "exports.sh")
-            if host.startswith("${") and host.endswith("}"):
-                host = exports.get(host[2:-1], host)
-            identity = _container_identity(host, compose_services, app_id, exports)
-            service_name, container = identity or ("unidentified", "")
-            host = container or host
-            entry = _entry(app_id, app, service_name, host, port)
+            proxy_entry = True
+            if host in LOOPBACK_HOSTS or host.startswith("127."):
+                # Some host-network apps expose 127.0.0.1 through app_proxy.
+                host = host_ip or host
+            identity = _container_identity(host, compose_services, app_id, proxy_values)
+            if identity:
+                service_name, container = identity
+                identified = compose_services.get(service_name)
+                target = (
+                    _service_target(app_id, service_name, identified, compose_services, host_ip, proxy_values)
+                    if isinstance(identified, dict)
+                    else container
+                )
+            else:
+                service_name, container, target = "unidentified", "", host
+            entry = _entry(app_id, app, service_name, target, port)
             if entry:
-                entry["container_name"] = container
+                entry["container_name"] = target if identity else ""
                 entry["service_identified"] = identity is not None
                 app_entries.append(entry)
-                seen.add((host, port, "tcp"))
+                seen.add((entry["target_ip"], port, "tcp"))
 
-        # Raw published ports are intentional protocol endpoints (P2P, RPC,
-        # databases, etc.). Container-internal "expose" entries are ignored.
+        # Published and exposed container ports are intentional protocol
+        # endpoints (P2P, RPC, ZMQ, databases, …). Only the container side is
+        # used so the proxy survives container IP changes.
         for service_name, service in compose_services.items():
             if service_name in {"app_proxy", "app-proxy"} or not isinstance(service, dict):
                 continue
-            container = str(service.get("container_name") or f"{app_id}_{service_name}_1")
-            for port, protocol in _ports_from_service(service):
-                key = (container, port, protocol)
+            if _is_host_network(service):
+                continue
+            target = _service_target(app_id, service_name, service, compose_services, host_ip, values)
+            if not target:
+                continue
+            for port, protocol in _ports_from_service(service, values) + _ports_from_expose(service, values):
+                key = (target, port, protocol)
                 if key in seen or port in IGNORED_PORTS:
                     continue
-                entry = _entry(app_id, app, service_name, container, port, protocol)
+                entry = _entry(app_id, app, service_name, target, port, protocol)
                 if entry:
-                    entry["container_name"] = container
+                    entry["container_name"] = target
                     entry["service_identified"] = True
                     app_entries.append(entry)
                     seen.add(key)
 
-        # Never attach catalog ports to the web container: multi-container
-        # apps (Electrs/Mempool) have distinct protocol backends. Only use
-        # endpoints actually declared by the gateway or published ports.
+        # Host-network apps have no app_proxy in most cases (Home Assistant,
+        # Pi-hole, Plex, …). Their published ports are on the Umbrel host and
+        # the manifest port is the web UI.
+        if host_network_services and host_ip:
+            for service_name, service in host_network_services:
+                for port, protocol in _ports_from_service(service, values):
+                    key = (host_ip, port, protocol)
+                    if key in seen or port in IGNORED_PORTS:
+                        continue
+                    entry = _entry(app_id, app, service_name, host_ip, port, protocol)
+                    if entry:
+                        entry["container_name"] = host_ip
+                        entry["service_identified"] = True
+                        app_entries.append(entry)
+                        seen.add(key)
+            manifest_port = _manifest_port(manifest)
+            key = (host_ip, manifest_port, "tcp")
+            if manifest_port and not proxy_entry and key not in seen and manifest_port not in IGNORED_PORTS:
+                service_name = host_network_services[0][0]
+                entry = _entry(app_id, app, service_name, host_ip, manifest_port)
+                if entry:
+                    entry["container_name"] = host_ip
+                    entry["service_identified"] = True
+                    app_entries.append(entry)
+                    seen.add(key)
+
+        # Catalog extras cover ports that are listening inside the container but
+        # are not published or exposed in compose (for example Bitcoin Core's
+        # ZMQ streams or its whitebind listener). They are always attached to an
+        # explicit compose service, never to an arbitrary web container.
+        for meta in catalog.extra_services(app_id, values):
+            service_name = str(meta.get("service") or "")
+            service = compose_services.get(service_name)
+            if not isinstance(service, dict):
+                continue
+            target = _service_target(app_id, service_name, service, compose_services, host_ip, values)
+            if not target:
+                continue
+            port = int(meta["port"])
+            protocol = str(meta.get("protocol") or "tcp").lower()
+            key = (target, port, protocol)
+            if key in seen or port in IGNORED_PORTS:
+                continue
+            entry = _entry(app_id, app, service_name, target, port, protocol, meta=meta)
+            if entry:
+                entry["container_name"] = target
+                entry["service_identified"] = True
+                app_entries.append(entry)
+                seen.add(key)
 
         services.extend(app_entries)
 
@@ -358,6 +686,11 @@ def _default_gateway() -> str | None:
     return None
 
 
+def _host_ip() -> str:
+    """Address of the Umbrel host as seen from the gateway container."""
+    return _default_gateway() or ""
+
+
 def _port_open(ip: str, port: int, timeout: float = 0.4) -> bool:
     try:
         with socket.create_connection((ip, port), timeout=timeout):
@@ -369,7 +702,7 @@ def _port_open(ip: str, port: int, timeout: float = 0.4) -> bool:
 def _detect_host() -> list[dict]:
     if not HOST_SERVICES:
         return []
-    ip = _default_gateway()
+    ip = _host_ip()
     if not ip:
         return []
     services: list[dict] = []

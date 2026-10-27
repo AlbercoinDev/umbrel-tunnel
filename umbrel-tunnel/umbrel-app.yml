@@ -4,7 +4,7 @@ storage:
   dataRoot: data
 category: networking
 name: Umbrel Tunnel
-version: "1.3.2"
+version: "1.3.3"
 tagline: Expose Umbrel services through your own VPS over WireGuard
 icon: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iZyIgeDE9IjAlIiB5MT0iMCUiIHgyPSIxMDAlIiB5Mj0iMTAwJSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0eWxlPSJzdG9wLWNvbG9yOiMzOGJkZjgiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdHlsZT0ic3RvcC1jb2xvcjojNjM2NmYxIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgcng9IjIwIiBmaWxsPSJ1cmwoI2cpIi8+CiAgPHBhdGggZD0iTTMwIDUwIEw1MCAzMCBMNzAgNTAgTDUwIDcwIFoiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjgiIGZpbGw9IndoaXRlIi8+CiAgPGxpbmUgeDE9IjUwIiB5MT0iMzAiIHgyPSI1MCIgeTI9IjIwIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxsaW5lIHgxPSI1MCIgeTE9IjcwIiB4Mj0iNTAiIHkyPSI4MCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8bGluZSB4MT0iMzAiIHkxPSI1MCIgeDI9IjIwIiB5Mj0iNTAiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPGxpbmUgeDE9IjcwIiB5MT0iNTAiIHgyPSI4MCIgeTI9IjUwIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K"
 description: >-
@@ -20,21 +20,16 @@ description: >-
   with a fixed public IP. Run the one-line installer on the VPS, then paste the
   pairing code in the app.
 releaseNotes: >-
-  Update the VPS to 1.3.2 before updating this app. A VPS on 1.3.1 or older
-  cannot update itself without --from yet, so pass the release URL once:
-  sudo umbrel-tunnel update --from
-  https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download/umbrel-tunnel-linux-$(dpkg --print-architecture)
-  From 1.3.2 on, "umbrel-tunnel update" installs the latest release by itself,
-  verifies the checksum and that the new binary runs, refreshes the systemd
-  units and prints the old and new versions.
-  If the binary cannot run it restores the previous one; if the restart fails it
-  prints the journal tail. doctor now reports the binary version, the unit
-  capabilities, the required public ports and the reachability of the endpoint.
-  Certificates are not requested when the VPS cannot bind the needed ports, and
-  failed issuance names the blocked ports. When a certificate fails, the app
-  also checks ports 80/443 from your Umbrel network, which exposes a provider
-  firewall the VPS cannot see. Requires wildcard DNS pointing to the VPS in
-  DNS-only mode and TCP 80 for ACME; HTTPS also requires TCP 443.
+  Update the VPS to 1.3.3 before updating this app. Port detection now covers
+  every declaration form used by Umbrel apps, so fewer services need to be
+  added by hand: Compose short and long syntax, container-only,
+  host:container, host IP and IPv6, /tcp and /udp, protocol variables,
+  expose, ranges and ports written without quotes. It also reads .env and
+  .env.app_proxy and follows network_mode: host, service: and container:
+  namespaces. Only files are read; exports.sh is never executed and app
+  environment values are never returned. New known ports for AdGuard Home,
+  Technitium DNS, OpenThread Border Router, Music Assistant and Node-RED
+  standalone. Unknown apps remain available through the manual service form.
 developer: AlbercoinDev
 website: https://github.com/AlbercoinDev/umbrel-tunnel
 dependencies: []

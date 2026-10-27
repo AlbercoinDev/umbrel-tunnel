@@ -115,15 +115,35 @@ Umbrel instala cada app en `${UMBREL_ROOT}/app-data/<app-id>`. El gateway monta
 ese árbol en solo lectura y lee:
 
 - `umbrel-app.yml`: nombre y puerto público de la app.
-- `docker-compose.yml`: servicios, `ports`, `container_name` y `app_proxy`.
+- `docker-compose.yml`: servicios, `ports`, `expose`, `container_name`,
+  `network_mode` y `app_proxy`.
 - `app-gateway.json`: destino resuelto por umbreld (`APP_HOST`, `APP_PORT`).
-- `exports.sh`: solo valores `export KEY=value` estáticos, con regex. **Nunca se
-  ejecuta.**
+- `exports.sh`, `.env` y `.env.app_proxy`: solo asignaciones y
+  `export KEY=value` estáticos, con regex. **Nunca se ejecutan.** `.env.app_proxy`
+  sobrescribe `APP_HOST`/`APP_PORT`, igual que en umbreld.
+
+El compose se interpreta de forma estática:
+
+- `ports` admite formato corto y largo, solo contenedor o `host:container`, IP
+  de host/IPv6, `/tcp` y `/udp`, y rangos (hasta `MAX_RANGE_PORTS = 256`). Los
+  escalares sin comillas se cargan con un loader que evita la interpretación
+  YAML de base 60 (`10025:25` no se convierte en `601525`).
+- `expose` aporta puertos internos (TCP por defecto; se respeta `/udp`).
+- Las variables de Compose (`$VAR`, `${VAR}`, `${VAR:-def}`, `${VAR-default}`,
+  `${VAR:+alt}`, `${VAR+alt}`, `${VAR:?err}`, `$$`) se expanden con los valores
+  de `exports.sh`, `.env` y del propio compose. Sin esto se perderían puertos
+  como Bitcoin `8332/8333` y Electrs `50001`, declarados como `${...}`.
+- Los servicios con `network_mode: host` no publican puertos: se apuntan a la
+  puerta de enlace de la red Docker, igual que SSH y el panel HTTP/HTTPS.
+- Con `network_mode: service:…` o `container:…` se usa el contenedor que posee
+  el espacio de red compartido.
 
 El destino preferido es el contenedor de `app_proxy` (el puerto web real). Los
-puertos publicados explícitamente en compose se ofrecen como endpoints de
-protocolo (P2P, RPC, etc.). Los servicios del host (SSH, panel HTTP/HTTPS) se
-comprueban contra la puerta de enlace de la red Docker.
+puertos publicados o expuestos explícitamente en compose se ofrecen como
+endpoints de protocolo (P2P, RPC, etc.). Los puertos conocidos del catálogo
+(Bitcoin/Knots, Electrs, LND, Mempool, Pi-hole…) se añaden solo si se pueden
+atar a un servicio concreto del compose; nunca se asignan a un contenedor web
+arbitrario.
 
 Nunca se devuelven variables de entorno ni rutas de datos de otras apps por la
 API.

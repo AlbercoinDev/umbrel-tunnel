@@ -11,11 +11,20 @@ CATALOG = {
         "ip_vars": ["APP_BITCOIN_NODE_IP"],
         "services": [
             {
+                "name": "Bitcoin Node panel",
+                "port": 3000,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Panel web de la app Bitcoin Node.",
+            },
+            {
                 "name": "Bitcoin P2P",
                 "port": 8333,
                 "protocol": "tcp",
                 "sensitive": False,
                 "description": "Red peer-to-peer de Bitcoin.",
+                "service": "app",
+                "extra": True,
                 "port_vars": ["APP_BITCOIN_P2P_PORT"],
             },
             {
@@ -24,7 +33,162 @@ CATALOG = {
                 "protocol": "tcp",
                 "sensitive": True,
                 "description": "RPC de Bitcoin. Protégelo con credenciales fuertes.",
+                "service": "app",
+                "extra": True,
                 "port_vars": ["APP_BITCOIN_RPC_PORT"],
+            },
+            {
+                "name": "Bitcoin P2P whitebind",
+                "port": 8335,
+                "protocol": "tcp",
+                "sensitive": True,
+                "description": "Listener P2P con permisos de confianza para apps internas. No lo publiques en Internet.",
+                "service": "app",
+                "extra": True,
+                "port_vars": ["APP_BITCOIN_P2P_WHITEBIND_PORT"],
+            },
+            {
+                "name": "Bitcoin ZMQ rawblock",
+                "port": 28332,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Flujo ZMQ de bloques crudos para indexadores.",
+                "service": "app",
+                "extra": True,
+                "port_vars": ["APP_BITCOIN_ZMQ_RAWBLOCK_PORT"],
+            },
+            {
+                "name": "Bitcoin ZMQ rawtx",
+                "port": 28333,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Flujo ZMQ de transacciones crudas para indexadores.",
+                "service": "app",
+                "extra": True,
+                "port_vars": ["APP_BITCOIN_ZMQ_RAWTX_PORT"],
+            },
+            {
+                "name": "Bitcoin ZMQ hashblock",
+                "port": 28334,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Flujo ZMQ con el hash de cada bloque.",
+                "service": "app",
+                "extra": True,
+                "port_vars": ["APP_BITCOIN_ZMQ_HASHBLOCK_PORT"],
+            },
+            {
+                "name": "Bitcoin ZMQ sequence",
+                "port": 28335,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Flujo ZMQ de secuencias de mempool y bloques.",
+                "service": "app",
+                "extra": True,
+                "port_vars": ["APP_BITCOIN_ZMQ_SEQUENCE_PORT"],
+            },
+            {
+                "name": "Bitcoin ZMQ hashtx",
+                "port": 28336,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Flujo ZMQ con el hash de cada transacción.",
+                "service": "app",
+                "extra": True,
+                "port_vars": ["APP_BITCOIN_ZMQ_HASHTX_PORT"],
+            },
+        ],
+    },
+    "bitcoin-knots": {
+        "name": "Bitcoin Knots",
+        "ip_vars": ["APP_BITCOIN_KNOTS_NODE_IP"],
+        "services": [
+            {
+                "name": "Bitcoin Knots panel",
+                "port": 3000,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Panel web de Bitcoin Knots.",
+            },
+            {
+                "name": "Bitcoin Knots P2P",
+                "port": 9333,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Red peer-to-peer de Bitcoin Knots.",
+                "service": "app",
+                "extra": True,
+                "port_vars": ["APP_BITCOIN_KNOTS_P2P_PORT"],
+            },
+            {
+                "name": "Bitcoin Knots RPC",
+                "port": 9332,
+                "protocol": "tcp",
+                "sensitive": True,
+                "description": "RPC de Bitcoin Knots. Protégelo con credenciales fuertes.",
+                "service": "app",
+                "extra": True,
+                "port_vars": ["APP_BITCOIN_KNOTS_RPC_PORT"],
+            },
+            {
+                "name": "Bitcoin Knots P2P whitebind",
+                "port": 9335,
+                "protocol": "tcp",
+                "sensitive": True,
+                "description": "Listener P2P con permisos de confianza para apps internas. No lo publiques en Internet.",
+                "service": "app",
+                "extra": True,
+                "port_vars": ["APP_BITCOIN_KNOTS_P2P_WHITEBIND_PORT"],
+            },
+            {
+                "name": "Bitcoin Knots ZMQ rawblock",
+                "port": 48332,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Flujo ZMQ de bloques crudos para indexadores.",
+                "service": "app",
+                "extra": True,
+                "port_vars": ["APP_BITCOIN_KNOTS_ZMQ_RAWBLOCK_PORT"],
+            },
+            {
+                "name": "Bitcoin Knots ZMQ rawtx",
+                "port": 48333,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Flujo ZMQ de transacciones crudas para indexadores.",
+                "service": "app",
+                "extra": True,
+                "port_vars": ["APP_BITCOIN_KNOTS_ZMQ_RAWTX_PORT"],
+            },
+            {
+                "name": "Bitcoin Knots ZMQ hashblock",
+                "port": 48334,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Flujo ZMQ con el hash de cada bloque.",
+                "service": "app",
+                "extra": True,
+                "port_vars": ["APP_BITCOIN_KNOTS_ZMQ_HASHBLOCK_PORT"],
+            },
+            {
+                "name": "Bitcoin Knots ZMQ sequence",
+                "port": 48335,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Flujo ZMQ de secuencias de mempool y bloques.",
+                "service": "app",
+                "extra": True,
+                "port_vars": ["APP_BITCOIN_KNOTS_ZMQ_SEQUENCE_PORT"],
+            },
+            {
+                "name": "Bitcoin Knots ZMQ hashtx",
+                "port": 48336,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Flujo ZMQ con el hash de cada transacción.",
+                "service": "app",
+                "extra": True,
+                "port_vars": ["APP_BITCOIN_KNOTS_ZMQ_HASHTX_PORT"],
             },
         ],
     },
@@ -33,11 +197,20 @@ CATALOG = {
         "ip_vars": ["APP_LIGHTNING_NODE_IP"],
         "services": [
             {
+                "name": "Lightning Node panel",
+                "port": 3006,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Panel web de la app Lightning Node.",
+            },
+            {
                 "name": "Lightning P2P",
                 "port": 9735,
                 "protocol": "tcp",
                 "sensitive": False,
                 "description": "Conexiones entre nodos Lightning.",
+                "service": "lnd",
+                "extra": True,
                 "port_vars": ["APP_LIGHTNING_P2P_PORT"],
             },
             {
@@ -46,6 +219,8 @@ CATALOG = {
                 "protocol": "tcp",
                 "sensitive": True,
                 "description": "API gRPC de LND. Requiere macaroon.",
+                "service": "lnd",
+                "extra": True,
                 "port_vars": ["APP_LIGHTNING_GRPC_PORT"],
             },
             {
@@ -54,6 +229,8 @@ CATALOG = {
                 "protocol": "tcp",
                 "sensitive": True,
                 "description": "API REST de LND. Requiere macaroon.",
+                "service": "lnd",
+                "extra": True,
                 "port_vars": ["APP_LIGHTNING_REST_PORT"],
             },
         ],
@@ -63,11 +240,20 @@ CATALOG = {
         "ip_vars": ["APP_ELECTRS_NODE_IP", "APP_ELECTRS_IP"],
         "services": [
             {
+                "name": "Electrs panel",
+                "port": 3006,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Panel web de Electrs.",
+            },
+            {
                 "name": "Electrum Server",
                 "port": 50001,
                 "protocol": "tcp",
                 "sensitive": False,
-                "description": "Servidor Electrum para monederos Bitcoin.",
+                "description": "Servidor Electrum TCP para monederos Bitcoin.",
+                "service": "electrs",
+                "extra": True,
                 "port_vars": ["APP_ELECTRS_NODE_PORT"],
             },
         ],
@@ -90,6 +276,8 @@ CATALOG = {
                 "protocol": "tcp",
                 "sensitive": False,
                 "description": "API HTTP de Mempool.",
+                "service": "api",
+                "extra": True,
                 "port_vars": ["APP_MEMPOOL_API_PORT"],
             },
         ],
@@ -228,7 +416,7 @@ CATALOG = {
             },
         ],
     },
-    "paperless-ngx": {
+    "paperless": {
         "name": "Paperless-ngx",
         "ip_vars": ["APP_PAPERLESS_NGX_IP"],
         "services": [
@@ -268,6 +456,142 @@ CATALOG = {
                 "description": "Automatización visual.",
                 "port_vars": ["APP_NODE_RED_PORT"],
             }
+        ],
+    },
+    "node-red-standalone": {
+        "name": "Node-RED",
+        "services": [
+            {
+                "name": "Node-RED",
+                "port": 1881,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Automatización visual.",
+            }
+        ],
+    },
+    "adguard-home": {
+        "name": "AdGuard Home",
+        "services": [
+            {
+                "name": "AdGuard Home",
+                "port": 8095,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Panel web de AdGuard Home.",
+                "service": "server",
+            },
+            {
+                "name": "AdGuard DNS",
+                "port": 53,
+                "protocol": "tcp",
+                "sensitive": True,
+                "description": "DNS de AdGuard Home por TCP.",
+                "service": "server",
+                "extra": True,
+            },
+            {
+                "name": "AdGuard DNS",
+                "port": 53,
+                "protocol": "udp",
+                "sensitive": True,
+                "description": "DNS de AdGuard Home por UDP.",
+                "service": "server",
+                "extra": True,
+            },
+        ],
+    },
+    "technitium-dns": {
+        "name": "Technitium DNS",
+        "services": [
+            {
+                "name": "Technitium DNS",
+                "port": 5380,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Panel web de Technitium DNS.",
+                "service": "dns-server",
+            },
+            {
+                "name": "Technitium DNS",
+                "port": 53,
+                "protocol": "tcp",
+                "sensitive": True,
+                "description": "DNS de Technitium por TCP.",
+                "service": "dns-server",
+                "extra": True,
+            },
+            {
+                "name": "Technitium DNS",
+                "port": 53,
+                "protocol": "udp",
+                "sensitive": True,
+                "description": "DNS de Technitium por UDP.",
+                "service": "dns-server",
+                "extra": True,
+            },
+        ],
+    },
+    "openthread-border-router": {
+        "name": "OpenThread Border Router",
+        "services": [
+            {
+                "name": "OpenThread setup",
+                "port": 7586,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Asistente de configuración de OpenThread.",
+                "service": "setup",
+            },
+            {
+                "name": "OpenThread web",
+                "port": 7587,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Panel web de OpenThread Border Router.",
+                "service": "server",
+                "extra": True,
+            },
+            {
+                "name": "OpenThread REST",
+                "port": 8083,
+                "protocol": "tcp",
+                "sensitive": True,
+                "description": "API REST de OpenThread Border Router.",
+                "service": "server",
+                "extra": True,
+            },
+        ],
+    },
+    "music-assistant": {
+        "name": "Music Assistant",
+        "services": [
+            {
+                "name": "Music Assistant",
+                "port": 8896,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Panel web de Music Assistant.",
+                "service": "web",
+            },
+            {
+                "name": "Music Assistant streams",
+                "port": 8078,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Servidor de streaming de Music Assistant.",
+                "service": "web",
+                "extra": True,
+            },
+            {
+                "name": "Music Assistant Sendspin",
+                "port": 8927,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Servicio Sendspin de Music Assistant.",
+                "service": "web",
+                "extra": True,
+            },
         ],
     },
     "vaultwarden": {
@@ -448,7 +772,7 @@ CATALOG = {
             },
         ],
     },
-    "pihole": {
+    "pi-hole": {
         "name": "Pi-hole",
         "ip_vars": ["APP_PIHOLE_IP"],
         "services": [
@@ -461,11 +785,30 @@ CATALOG = {
                 "port_vars": ["APP_PIHOLE_PORT"],
             },
             {
+                "name": "Pi-hole Web",
+                "port": 8082,
+                "protocol": "tcp",
+                "sensitive": False,
+                "description": "Interfaz web de Pi-hole (versiones recientes).",
+            },
+            {
                 "name": "Pi-hole DNS",
                 "port": 53,
                 "protocol": "tcp",
                 "sensitive": True,
-                "description": "DNS. El proxy local solo soporta TCP.",
+                "description": "DNS de Pi-hole por TCP.",
+                "service": "server",
+                "extra": True,
+                "port_vars": ["APP_PIHOLE_DNS_PORT"],
+            },
+            {
+                "name": "Pi-hole DNS",
+                "port": 53,
+                "protocol": "udp",
+                "sensitive": True,
+                "description": "DNS de Pi-hole por UDP.",
+                "service": "server",
+                "extra": True,
                 "port_vars": ["APP_PIHOLE_DNS_PORT"],
             },
         ],
@@ -530,8 +873,23 @@ SYSTEM_SERVICES = [
 ]
 
 
-def app_name(app_id):
+APP_ALIASES = {
+    # Historic/community app ids that differ from the current Umbrel id.
+    "pihole": "pi-hole",
+    "paperless-ngx": "paperless",
+}
+
+
+def _catalog_entry(app_id):
     entry = CATALOG.get(app_id)
+    if entry is not None:
+        return entry
+    alias = APP_ALIASES.get(app_id)
+    return CATALOG.get(alias) if alias else None
+
+
+def app_name(app_id):
+    entry = _catalog_entry(app_id)
     if entry:
         return entry["name"]
     return app_id
@@ -539,7 +897,7 @@ def app_name(app_id):
 
 def service_for(app_id, port):
     """Devuelve metadatos del catálogo para app_id/puerto, o None."""
-    entry = CATALOG.get(app_id)
+    entry = _catalog_entry(app_id)
     if not entry:
         return None
     for svc in entry["services"]:
@@ -548,8 +906,66 @@ def service_for(app_id, port):
     return None
 
 
+def port_defaults(app_id):
+    """Mapa ``VARIABLE_DE_ENTORNO -> puerto`` conocido para una app.
+
+    Se usa como respaldo cuando ``exports.sh`` no está disponible o no se pudo
+    leer (por ejemplo, en tests o tras una instalación parcial). Compose usa
+    esas variables para interpolar ``ports``, así que sin este mapa los puertos
+    de Bitcoin/Electrs desaparecen de la detección.
+    """
+    entry = _catalog_entry(app_id)
+    if not entry:
+        return {}
+    result: dict[str, int] = {}
+    for svc in entry.get("services", []):
+        try:
+            port = int(svc["port"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        for var in svc.get("port_vars", []) or []:
+            result[str(var)] = port
+    return result
+
+
+def extra_services(app_id, values=None):
+    """Puertos conocidos que no siempre aparecen en ``ports``/``expose``.
+
+    ``values`` es el entorno resuelto de la app (``exports.sh`` + valores por
+    defecto). Solo se devuelven entradas marcadas con ``extra`` y con un
+    servicio de Compose asociado, para no inventar puertos en contenedores
+    arbitrarios.
+    """
+    entry = _catalog_entry(app_id)
+    if not entry:
+        return []
+    resolved = values or {}
+    result: list[dict] = []
+    for svc in entry.get("services", []):
+        if not svc.get("extra") or not svc.get("service"):
+            continue
+        port = svc.get("port")
+        for var in svc.get("port_vars", []) or []:
+            raw = resolved.get(str(var))
+            if raw in (None, ""):
+                continue
+            try:
+                port = int(str(raw).strip())
+            except (TypeError, ValueError):
+                continue
+            break
+        try:
+            port = int(port)
+        except (TypeError, ValueError):
+            continue
+        if not 1 <= port <= 65535:
+            continue
+        result.append({**svc, "port": port})
+    return result
+
+
 def ip_vars(app_id):
-    entry = CATALOG.get(app_id)
+    entry = _catalog_entry(app_id)
     if entry:
         return list(entry.get("ip_vars", []))
     return []
