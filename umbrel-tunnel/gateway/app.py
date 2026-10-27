@@ -45,7 +45,7 @@ import sync
 import wireguard
 from vps import VPSClient, VPSError
 
-VERSION = os.environ.get("APP_VERSION", "1.0.3")
+VERSION = os.environ.get("APP_VERSION", "1.2.0")
 RESERVED_PUBLIC_PORTS = {22}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
 DEV_MODE = os.environ.get("UMBREL_TUNNEL_DEV") == "1"
@@ -637,8 +637,12 @@ def reserved_public_ports(config: dict, protocol: str) -> set[int]:
 
 
 def public_port_in_use(config: dict, port: int, ignore_id: str | None = None, protocol: str = "tcp") -> bool:
+    current = state.find_exposure(config, ignore_id) if ignore_id else None
     for exposure in config.get("exposures", []):
         if exposure.get("id") == ignore_id:
+            continue
+        if (port == 443 and current and current.get("access_mode") == "https"
+                and exposure.get("access_mode") == "https"):
             continue
         if int(exposure.get("public_port", 0)) == port and exposure.get("protocol", "tcp") == protocol:
             return True
@@ -768,7 +772,7 @@ def _sync_exposure(exposure_id: str, retry_conflict: bool = True) -> tuple[dict 
     if retry_conflict:
         current = state.load()
         exposure = state.find_exposure(current, exposure_id)
-        if exposure and int(exposure.get("sync_error_status") or 0) == 409:
+        if exposure and exposure.get("access_mode", "direct") == "direct" and int(exposure.get("sync_error_status") or 0) == 409:
             new_port = None
             previous_port = exposure.get("public_port")
             # Only the state mutation happens under the lock; the retry sync
@@ -842,6 +846,50 @@ def exposure_view(exposure: dict) -> dict:
         view["sync_error_detail"] = exposure["sync_error"]
         view["sync_error"] = _t("sync.forward_failed")
     return view
+
+
+def configure_secure_access(config: dict, exposure: dict, body: dict) -> None:
+    """Configure before syncing, so a new TLS service is never exposed in cleartext."""
+    mode = str(body.get("access_mode") or "direct")
+    if mode not in {"direct", "https", "tls"}:
+        raise ValueError("access_mode: direct / https / tls")
+    if mode == "direct":
+        if "public_port" in body:
+            port = _requested_public_port(body)
+            if port is None:
+                raise ValueError("invalid_public_port")
+            validate_public_port(port, exposure.get("protocol", "tcp"))
+            if public_port_in_use(config, port, exposure["id"], exposure.get("protocol", "tcp")):
+                raise ValueError("public_port_in_use")
+            exposure["public_port"] = port
+        exposure.update(access_mode="direct", domains=[], tls={"mode": "none"})
+        return
+    domain = str(body.get("domain") or "").strip().lower()
+    labels = domain.split(".")
+    if (len(domain) > 253 or len(labels) < 2 or
+            any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", part) for part in labels)):
+        raise ValueError("Dominio público inválido / Invalid public domain")
+    if exposure.get("protocol", "tcp") != "tcp":
+        raise ValueError("HTTPS/TLS requiere TCP / requires TCP")
+    if body.get("accept_acme_terms") is not True:
+        raise ValueError("Acepta las condiciones de Let's Encrypt / Accept Let's Encrypt terms")
+    port = 443 if mode == "https" else _requested_public_port(body)
+    if not port or port in {22, 80} or (mode == "tls" and port == 443):
+        raise ValueError("Puerto TLS inválido / Invalid TLS port")
+    for other in config.get("exposures", []):
+        if other.get("id") == exposure["id"]:
+            continue
+        if domain in other.get("domains", []):
+            raise ValueError("Dominio ya publicado / Domain already published")
+        if other.get("protocol", "tcp") != "tcp":
+            continue
+        other_mode = other.get("access_mode", "direct")
+        other_port = int(other.get("public_port", 0))
+        if other_mode == "direct" and other_port in {80, 443}:
+            raise ValueError("Retira primero las publicaciones TCP 80/443 / Remove direct TCP 80/443 first")
+        if other_port == port and not (mode == "https" and other_mode == "https"):
+            raise ValueError("Puerto ya publicado / Port already published")
+    exposure.update(access_mode=mode, domains=[domain], tls={"mode": "acme"}, public_port=port)
 
 
 def ensure_peer(config: dict, public: str) -> None:
@@ -1153,6 +1201,22 @@ def list_exposures():
     return jsonify([exposure_view(e) for e in config.get("exposures", [])])
 
 
+@app.get("/api/certificates")
+def list_certificates():
+    vps = state.load().get("vps") or {}
+    if not (vps.get("api") and vps.get("token")):
+        return jsonify([])
+    return jsonify(VPSClient(vps["api"], vps["token"]).certificates())
+
+
+@app.post("/api/certificates/retry")
+def retry_certificates():
+    vps = state.load().get("vps") or {}
+    if not (vps.get("api") and vps.get("token")):
+        return api_error("not_paired", 400)
+    return jsonify(VPSClient(vps["api"], vps["token"]).retry_certificates()), 202
+
+
 @app.post("/api/exposures")
 def create_exposure():
     body = request.get_json(silent=True) or {}
@@ -1189,8 +1253,13 @@ def create_exposure():
                     str(body.get("name") or ""),
                     requested_port,
                 )
+                if "access_mode" in body:
+                    configure_secure_access(config, exposure, body)
+                    port_changed = False
             except ValueError as exc:
                 code = str(exc)
+                if "access_mode" in body:
+                    return jsonify({"error": code}), 400
                 return api_error(code, 409 if code == "no_public_port" else 400)
             state.save(config)
 
@@ -1220,7 +1289,13 @@ def update_exposure(exposure_id: str):
             if not exposure:
                 return api_error("exposure_not_found", 404)
 
-            if "public_port" in body:
+            if "access_mode" in body:
+                try:
+                    configure_secure_access(config, exposure, body)
+                except ValueError as exc:
+                    return jsonify({"error": str(exc)}), 400
+
+            if "public_port" in body and "access_mode" not in body:
                 try:
                     public_port = int(body["public_port"])
                     validate_public_port(public_port, exposure.get("protocol", "tcp"))
@@ -1295,8 +1370,10 @@ def resolve_exposure(exposure_id: str):
             else:
                 if (remote.get("target_ip") != exposure.get("tunnel_ip")
                         or remote.get("target_port") != exposure.get("tunnel_port")
-                        or remote.get("protocol", "tcp") != exposure.get("protocol", "tcp")):
-                    return jsonify({"error": "Cannot adopt a different tunnel destination or protocol; restore the Umbrel publication instead."}), 409
+                        or remote.get("protocol", "tcp") != exposure.get("protocol", "tcp")
+                        or (remote.get("access_mode") or "direct") != exposure.get("access_mode", "direct")
+                        or (remote.get("domain") or "") != (exposure.get("domains") or [""])[0]):
+                    return jsonify({"error": "Cannot adopt a different destination, protocol, access mode or domain; restore the Umbrel publication instead."}), 409
                 if public_port_in_use(config, int(remote["public_port"]), exposure_id, exposure.get("protocol", "tcp")):
                     return api_error("public_port_in_use", 409, port=remote["public_port"])
                 exposure["public_port"] = int(remote["public_port"])

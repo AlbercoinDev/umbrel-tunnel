@@ -33,7 +33,7 @@ def vps_name(exposure: dict) -> str:
 def payload(exposure: dict) -> dict:
     # The VPS always DNATs to the Umbrel peer (10.0.0.2 by default), never to
     # the app container IP: HAProxy on the Umbrel side does the last hop.
-    return {
+    result = {
         "name": vps_name(exposure),
         "public_port": int(exposure["public_port"]),
         "target_ip": exposure.get("tunnel_ip") or "10.0.0.2",
@@ -41,7 +41,14 @@ def payload(exposure: dict) -> dict:
         "protocol": str(exposure.get("protocol") or "tcp"),
         "managed_by": "umbrel:" + str(exposure.get("tunnel_ip") or "10.0.0.2"),
         "enabled": True,
+        "access_mode": str(exposure.get("access_mode") or "direct"),
+        "domain": "",
     }
+    if exposure.get("access_mode", "direct") != "direct":
+        result["access_mode"] = exposure["access_mode"]
+        result["domain"] = (exposure.get("domains") or [""])[0]
+        result["accept_acme_terms"] = True
+    return result
 
 
 def _same(remote: dict, desired: dict) -> bool:
@@ -52,6 +59,8 @@ def _same(remote: dict, desired: dict) -> bool:
         and int(remote.get("target_port", 0)) == desired["target_port"]
         and (remote.get("protocol") or "tcp") == desired["protocol"]
         and bool(remote.get("enabled", True)) is True
+        and (remote.get("access_mode") or "direct") == desired.get("access_mode", "direct")
+        and (remote.get("domain") or "") == desired.get("domain", "")
     )
 
 
@@ -163,7 +172,10 @@ def sync(config: dict) -> dict:
         exposure["vps_name"] = vps_name(exposure)
         current = by_id.get(str(exposure.get("vps_forward_id") or "")) or by_name.get(exposure["vps_name"])
         previous = exposure.get("last_remote")
-        if previous and (current is None or any(current.get(key) != value for key, value in previous.items())):
+        if previous and (current is None or any(
+                (current.get(key) or ("direct" if key == "access_mode" else "")) != value
+                if key in {"access_mode", "domain"} else current.get(key) != value
+                for key, value in previous.items())):
             exposure["remote_conflict"] = True
             if current:
                 handled_ids.add(str(current.get("id")))
@@ -207,7 +219,7 @@ def sync(config: dict) -> dict:
                 if not _same(current, desired):
                     client.update_forward(current["id"], desired)
                     result["updated"] += 1
-            exposure["last_remote"] = {key: desired[key] for key in ("name", "public_port", "target_ip", "target_port", "protocol", "enabled")}
+            exposure["last_remote"] = {key: desired[key] for key in ("name", "public_port", "target_ip", "target_port", "protocol", "enabled", "access_mode", "domain") if key in desired}
             _clear_error(exposure)
         except VPSError as exc:
             _mark_error(exposure, str(exc), exc.status)

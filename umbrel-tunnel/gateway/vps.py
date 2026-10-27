@@ -54,6 +54,12 @@ class VPSClient:
     def health(self) -> dict:
         return self._request("GET", "/health")
 
+    def certificates(self) -> list[dict]:
+        return self._request("GET", "/api/certificates")
+
+    def retry_certificates(self) -> dict:
+        return self._request("POST", "/api/certificates/retry", {})
+
     def status(self) -> dict:
         return self._request("GET", "/api/status")
 

@@ -163,7 +163,7 @@
     for (const fwd of state.forwards) {
       const tr = document.createElement('tr');
       tr.append(cell(fwd.name || '—'));
-      tr.append(cell(String(fwd.public_port)));
+      tr.append(cell(`${fwd.domain || ''}:${fwd.public_port} (${fwd.access_mode || 'direct'})`));
       tr.append(cell(`${fwd.target_ip}:${fwd.target_port}`));
       const enabled = document.createElement('td');
       const toggle = document.createElement('input');
@@ -192,10 +192,11 @@
   }
 
   async function load() {
-    const [status, peers, forwards] = await Promise.all([
+    const [status, peers, forwards, certificates] = await Promise.all([
       api('/api/status'),
       api('/api/peers'),
       api('/api/forwards'),
+      api('/api/certificates'),
     ]);
     state.status = status;
     state.peers = peers || [];
@@ -204,6 +205,12 @@
     renderPeers();
     renderTargets();
     renderForwards();
+    $('certificates').replaceChildren();
+    for (const cert of certificates || []) {
+      const p = document.createElement('p');
+      p.textContent = `${cert.domain} · ${cert.state}${cert.not_after ? ' · ' + new Date(cert.not_after).toLocaleString() : ''}${cert.error ? ' · ' + cert.error : ''}`;
+      $('certificates').append(p);
+    }
   }
 
   async function removePeer(peer) {
@@ -281,6 +288,9 @@
       target_ip: String(form.get('target_ip') || '').trim(),
       target_port: Number(form.get('target_port')),
       protocol: 'tcp',
+      access_mode: String(form.get('access_mode') || 'direct'),
+      domain: String(form.get('domain') || '').trim().toLowerCase(),
+      accept_acme_terms: form.get('accept_acme_terms') === 'on',
       enabled: true,
     };
     try {
@@ -303,6 +313,14 @@
     } catch (err) {
       showMessage('token-msg', err.message, false);
     }
+  });
+
+  $('retry-certificates').addEventListener('click', async () => {
+    try {
+      await api('/api/certificates/retry', {method: 'POST'});
+      showMessage('forward-msg', 'Reintento programado. No se eliminan certificados válidos.', true);
+      await load();
+    } catch (err) { showMessage('forward-msg', err.message, false); }
   });
 
   function startPolling() {

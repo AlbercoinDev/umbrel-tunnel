@@ -21,6 +21,9 @@ Internet ──► VPS (IP fija) ──► wg0 ──► Umbrel ──► HAProx
   `ut1.…` que se pega en la app.
 - **Bilingüe**: interfaz en español por defecto e inglés opcional. En la
   primera visita se detecta el idioma del navegador/UmbrelOS.
+- **HTTPS y TLS opcionales**: dominios web compartiendo 443 y terminación TLS
+  TCP (por ejemplo Electrs 50002 → 50001), con certificados de Let's Encrypt y
+  renovación automática. Configurables también después de vincular el VPS.
 
 ## Requisitos
 
@@ -220,7 +223,8 @@ automático.
 
 El VPS crea el DNAT y Umbrel configura HAProxy para TCP o el relay para UDP.
 Una regla aplicada no demuestra que el servicio responda desde Internet.
-Consulta [la gestión de publicaciones y la preparación para TLS](docs/PUBLICATIONS.md).
+Consulta [la gestión de publicaciones](docs/PUBLICATIONS.md) y
+[dominios, HTTPS y TLS TCP con renovación automática](docs/TLS.md).
 
 Los servicios del sistema (SSH, panel de UmbrelOS por HTTP/HTTPS) se marcan como
 **sistema** y **sensible**. El puerto público `22` está bloqueado para no pisar
@@ -352,7 +356,8 @@ handshakes, abrir/cerrar forwards y rotar el token. Los assets estáticos
   `umbrel-tunnel token rotate` o desde la app.
 - `wg0.conf`, claves y estado con permisos `600`/`700`.
 - systemd endurecido: `NoNewPrivileges`, `ProtectSystem=strict`,
-  `ProtectHome`, `RestrictNamespaces`, solo `CAP_NET_ADMIN`/`CAP_NET_RAW`,
+  `ProtectHome`, `RestrictNamespaces`, solo `CAP_NET_ADMIN`/`CAP_NET_RAW`/
+  `CAP_NET_BIND_SERVICE` (listeners HTTPS/TLS),
   límites de memoria y tareas.
 - El puerto público `22` está reservado para el SSH del VPS.
 - Los servicios sensibles (RPC de Bitcoin, LND, Ollama, Portainer, SSH…) se
@@ -491,7 +496,7 @@ Variables de entorno útiles en el gateway:
 | Variable | Por defecto | Uso |
 | --- | --- | --- |
 | `APP_PASSWORD` | — | contraseña de login; Umbrel la inyecta |
-| `APP_VERSION` | `1.0.3` | versión mostrada |
+| `APP_VERSION` | `1.2.0` | versión mostrada |
 | `UMBREL_TUNNEL_DATA` | `/data` | estado, claves y configuración |
 | `UMBREL_APP_DATA` | `/umbrel-app-data` | manifiestos de apps (solo lectura) |
 | `NETWORK_IP` | `10.21.0.0` | red de Umbrel para detectar solapes |

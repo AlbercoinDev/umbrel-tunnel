@@ -33,6 +33,8 @@ type Forward struct {
 	TargetPort int       `json:"target_port"`
 	Protocol   string    `json:"protocol"`
 	ManagedBy  string    `json:"managed_by,omitempty"`
+	AccessMode string    `json:"access_mode,omitempty"`
+	Domain     string    `json:"domain,omitempty"`
 	Enabled    bool      `json:"enabled"`
 	CreatedAt  time.Time `json:"created_at"`
 }
@@ -72,6 +74,8 @@ type forwardJSON struct {
 	TargetPort int        `json:"target_port"`
 	Protocol   string     `json:"protocol"`
 	ManagedBy  string     `json:"managed_by"`
+	AccessMode string     `json:"access_mode"`
+	Domain     string     `json:"domain"`
 	Enabled    *bool      `json:"enabled"`
 	CreatedAt  *time.Time `json:"created_at"`
 }
@@ -157,6 +161,8 @@ func (s *Store) load() error {
 			TargetPort: f.TargetPort,
 			Protocol:   protocol,
 			ManagedBy:  f.ManagedBy,
+			AccessMode: f.AccessMode,
+			Domain:     f.Domain,
 			Enabled:    enabled,
 			CreatedAt:  created,
 		})
@@ -324,6 +330,9 @@ func (s *Store) AddForward(f Forward) error {
 		return fmt.Errorf("el puerto público %d está reservado para el %s", f.PublicPort, what)
 	}
 	for _, existing := range s.forwards {
+		if f.AccessMode == "https" && existing.AccessMode == "https" && f.Domain != existing.Domain {
+			continue
+		}
 		if existing.PublicPort == f.PublicPort && existing.Protocol == f.Protocol {
 			return fmt.Errorf("el puerto %d/%s ya está en uso", f.PublicPort, f.Protocol)
 		}
@@ -356,6 +365,9 @@ func (s *Store) UpdateForward(id string, fn func(*Forward) error) (Forward, erro
 			}
 			for j := range s.forwards {
 				if j == i {
+					continue
+				}
+				if updated.AccessMode == "https" && s.forwards[j].AccessMode == "https" && updated.Domain != s.forwards[j].Domain {
 					continue
 				}
 				if s.forwards[j].PublicPort == updated.PublicPort &&

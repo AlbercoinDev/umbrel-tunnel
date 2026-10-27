@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"umbrel-tunnel/internal/config"
+	"umbrel-tunnel/internal/edge"
 	"umbrel-tunnel/internal/execx"
 	"umbrel-tunnel/internal/pair"
 	"umbrel-tunnel/internal/service"
@@ -55,6 +56,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/peers/{id}", s.auth(s.deletePeer))
 	mux.HandleFunc("GET /api/peers/{id}/config", s.auth(s.peerConfig))
 	mux.HandleFunc("GET /api/forwards", s.auth(s.listForwards))
+	mux.HandleFunc("GET /api/certificates", s.auth(s.certificates))
+	mux.HandleFunc("POST /api/certificates/retry", s.auth(s.retryCertificates))
 	mux.HandleFunc("POST /api/forwards/reconcile", s.auth(s.reconcileForwards))
 	mux.HandleFunc("GET /api/forwards/{id}/check", s.auth(s.checkForward))
 	mux.HandleFunc("POST /api/forwards", s.auth(s.createForward))
@@ -405,13 +408,16 @@ func (s *Server) peerConfig(w http.ResponseWriter, r *http.Request) {
 }
 
 type forwardRequest struct {
-	Name       string `json:"name"`
-	PublicPort int    `json:"public_port"`
-	TargetIP   string `json:"target_ip"`
-	TargetPort int    `json:"target_port"`
-	Protocol   string `json:"protocol"`
-	ManagedBy  string `json:"managed_by"`
-	Enabled    *bool  `json:"enabled"`
+	AcceptACMETerms bool   `json:"accept_acme_terms"`
+	AccessMode      string `json:"access_mode"`
+	Domain          string `json:"domain"`
+	Name            string `json:"name"`
+	PublicPort      int    `json:"public_port"`
+	TargetIP        string `json:"target_ip"`
+	TargetPort      int    `json:"target_port"`
+	Protocol        string `json:"protocol"`
+	ManagedBy       string `json:"managed_by"`
+	Enabled         *bool  `json:"enabled"`
 }
 
 func normalizeProtocol(proto string) (string, error) {
@@ -518,6 +524,9 @@ func (s *Server) createForward(w http.ResponseWriter, r *http.Request) {
 		enabled = *req.Enabled
 	}
 	fwd := state.Forward{
+		ID:         state.NewID(),
+		AccessMode: req.AccessMode,
+		Domain:     req.Domain,
 		Name:       name,
 		PublicPort: req.PublicPort,
 		TargetIP:   strings.TrimSpace(req.TargetIP),
@@ -525,6 +534,15 @@ func (s *Server) createForward(w http.ResponseWriter, r *http.Request) {
 		Protocol:   proto,
 		ManagedBy:  req.ManagedBy,
 		Enabled:    enabled,
+	}
+	if (fwd.AccessMode == "https" || fwd.AccessMode == "tls") && !req.AcceptACMETerms {
+		writeError(w, http.StatusBadRequest, "debes aceptar las condiciones de Let's Encrypt (accept_acme_terms)")
+		return
+	}
+	_, apiPort, _ := s.svc.Cfg.ParseAPIHostPort()
+	if err := edge.Validate(append(s.svc.Store.Forwards(), fwd), apiPort); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	if err := s.svc.Store.AddForward(fwd); err != nil {
 		code := http.StatusBadRequest
@@ -534,7 +552,7 @@ func (s *Server) createForward(w http.ResponseWriter, r *http.Request) {
 		writeError(w, code, err.Error())
 		return
 	}
-	created, _ := s.findForwardByPort(req.PublicPort, proto)
+	created, _ := s.findForwardByID(fwd.ID)
 
 	if err := s.svc.ReloadForwards(r.Context()); err != nil {
 		_, _, _ = s.svc.Store.RemoveForward(created.ID)
@@ -564,13 +582,16 @@ func (s *Server) findForwardByID(id string) (state.Forward, bool) {
 }
 
 type forwardPatch struct {
-	Name       *string `json:"name"`
-	PublicPort *int    `json:"public_port"`
-	TargetIP   *string `json:"target_ip"`
-	TargetPort *int    `json:"target_port"`
-	Protocol   *string `json:"protocol"`
-	ManagedBy  *string `json:"managed_by"`
-	Enabled    *bool   `json:"enabled"`
+	AcceptACMETerms bool    `json:"accept_acme_terms"`
+	AccessMode      *string `json:"access_mode"`
+	Domain          *string `json:"domain"`
+	Name            *string `json:"name"`
+	PublicPort      *int    `json:"public_port"`
+	TargetIP        *string `json:"target_ip"`
+	TargetPort      *int    `json:"target_port"`
+	Protocol        *string `json:"protocol"`
+	ManagedBy       *string `json:"managed_by"`
+	Enabled         *bool   `json:"enabled"`
 }
 
 func (s *Server) patchForward(w http.ResponseWriter, r *http.Request) {
@@ -589,6 +610,12 @@ func (s *Server) patchForward(w http.ResponseWriter, r *http.Request) {
 	}
 
 	updated := before
+	if patch.AccessMode != nil {
+		updated.AccessMode = *patch.AccessMode
+	}
+	if patch.Domain != nil {
+		updated.Domain = *patch.Domain
+	}
 	if patch.ManagedBy != nil {
 		owner := *patch.ManagedBy
 		if len(owner) > 80 || (owner != "" && owner != "vps" && !strings.HasPrefix(owner, "umbrel:")) {
@@ -628,6 +655,21 @@ func (s *Server) patchForward(w http.ResponseWriter, r *http.Request) {
 	updated.Name = name
 	proto, _ := normalizeProtocol(updated.Protocol)
 	updated.Protocol = proto
+	if (updated.AccessMode == "https" || updated.AccessMode == "tls") && (before.AccessMode != updated.AccessMode || before.Domain != updated.Domain) && !patch.AcceptACMETerms {
+		writeError(w, http.StatusBadRequest, "debes aceptar las condiciones de Let's Encrypt")
+		return
+	}
+	candidates := s.svc.Store.Forwards()
+	for i := range candidates {
+		if candidates[i].ID == id {
+			candidates[i] = updated
+		}
+	}
+	_, apiPort, _ := s.svc.Cfg.ParseAPIHostPort()
+	if err := edge.Validate(candidates, apiPort); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if _, err := s.svc.Store.UpdateForward(id, func(f *state.Forward) error {
 		*f = updated

@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"umbrel-tunnel/internal/config"
@@ -18,6 +19,16 @@ type entry struct {
 	name string
 	path string
 	perm os.FileMode
+}
+
+var cacheName = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.+-]{0,299}$`)
+
+func certificateEntry(paths config.Paths, name string) (entry, bool) {
+	parts := strings.Split(name, "/")
+	if len(parts) != 3 || parts[0] != "state" || (parts[1] != "certificates" && parts[1] != "certificates-staging") || !cacheName.MatchString(parts[2]) {
+		return entry{}, false
+	}
+	return entry{name: name, path: filepath.Join(paths.State, parts[1], parts[2]), perm: 0o600}, true
 }
 
 func entries(paths config.Paths) []entry {
@@ -39,7 +50,33 @@ func Create(w io.Writer, paths config.Paths) error {
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
 
-	for _, e := range entries(paths) {
+	all := entries(paths)
+	for _, dir := range []string{"certificates", "certificates-staging"} {
+		root := filepath.Join(paths.State, dir)
+		info, err := os.Lstat(root)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("caché de certificados no es un directorio real: %s", root)
+		}
+		files, err := os.ReadDir(root)
+		if err != nil {
+			return err
+		}
+		for _, file := range files {
+			if !file.Type().IsRegular() {
+				return fmt.Errorf("entrada de caché no regular: %s", file.Name())
+			}
+			if e, ok := certificateEntry(paths, "state/"+dir+"/"+file.Name()); ok {
+				all = append(all, e)
+			}
+		}
+	}
+	for _, e := range all {
 		data, err := os.ReadFile(e.path)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -100,6 +137,22 @@ func Restore(r io.Reader, paths config.Paths, force bool) error {
 		}
 		name := filepath.ToSlash(strings.TrimPrefix(header.Name, "./"))
 		e, ok := allowed[name]
+		if !ok {
+			e, ok = certificateEntry(paths, name)
+			if ok {
+				dir := filepath.Dir(e.path)
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					return err
+				}
+				info, err := os.Lstat(dir)
+				if err != nil {
+					return err
+				}
+				if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+					return fmt.Errorf("directorio de certificados inválido")
+				}
+			}
+		}
 		if !ok {
 			return fmt.Errorf("entrada no permitida en el archivo: %s", header.Name)
 		}

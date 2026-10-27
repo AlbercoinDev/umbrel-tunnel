@@ -19,6 +19,7 @@ import (
 	"umbrel-tunnel/internal/backup"
 	"umbrel-tunnel/internal/config"
 	"umbrel-tunnel/internal/doctor"
+	"umbrel-tunnel/internal/edge"
 	"umbrel-tunnel/internal/execx"
 	"umbrel-tunnel/internal/httpapi"
 	"umbrel-tunnel/internal/pair"
@@ -53,6 +54,19 @@ func main() {
 		err = cmdForwardAPI(ctx, os.Args[2:])
 	case "status":
 		err = cmdStatus(ctx)
+	case "certificates":
+		var data []byte
+		method, path := "GET", "/api/certificates"
+		if len(os.Args) == 3 && os.Args[2] == "retry" {
+			method, path = "POST", path+"/retry"
+		} else if len(os.Args) != 2 {
+			err = fmt.Errorf("uso: certificates [retry]")
+			break
+		}
+		data, err = apiRequest(ctx, method, path, nil)
+		if err == nil {
+			fmt.Print(string(data))
+		}
 	case "token":
 		err = cmdToken(os.Args[2:])
 	case "doctor":
@@ -93,6 +107,7 @@ Comandos:
   forward list|show|check|add|edit|rm|enable|disable|reconcile
                                  gestiona puertos públicos
   status                        estado del VPS (JSON)
+  certificates [retry]          estado/caducidad o reintento de emisión (JSON)
   token show|rotate             muestra o rota el token
   doctor                        diagnóstico del sistema
   update --from URL|PATH        actualiza el binario
@@ -119,6 +134,8 @@ func cmdServe(ctx context.Context, args []string) error {
 	if *listen != "" {
 		svc.Cfg.APIListen = *listen
 	}
+	svc.Edge = edge.New(svc.Paths.State)
+	defer svc.Edge.Close()
 
 	if err := svc.Reconcile(ctx); err != nil {
 		log.Printf("reconcile: %v", err)

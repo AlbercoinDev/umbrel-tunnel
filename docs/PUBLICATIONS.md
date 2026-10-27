@@ -99,26 +99,24 @@ Comprueba que la copia se creó antes de continuar. `update` conserva la
 configuración y reinicia el servicio. Después actualiza la app a 1.1.0 desde la
 tienda de Umbrel, sin desinstalar ni volver a vincular.
 
-## Dominios, HTTPS y TLS: requisito futuro, no disponible aún
+## Dominios, HTTPS y TLS
 
-Las nuevas publicaciones guardan `access_mode: direct`, `domains: []` y
-`tls: {mode: none}`. Son metadatos de preparación: no emiten certificados,
-no aceptan todavía dominios configurables y no añaden cifrado por sí mismos.
+Las publicaciones conservan TCP/UDP directo por defecto. La sección opcional
+**Dominios, HTTPS y TLS** permite publicar un servicio nuevo o convertir uno
+existente, ahora o después de vincular el VPS, sin reinstalar el túnel:
 
-La ampliación futura debe añadir una entidad de publicación por dominio,
-independiente de las reglas DNAT por puerto:
+- `https`: varios dominios comparten 443; el VPS termina HTTPS y conecta por HTTP
+  al servicio a través del proxy local de Umbrel y WireGuard.
+- `tls`: un puerto TCP dedicado termina TLS en el VPS; por ejemplo,
+  `electrs.umbrel.nodobitcoin.org:50002` conecta con Electrs TCP en 50001.
+- Los certificados individuales de Let's Encrypt se emiten y renuevan con ACME.
+  No se solicitan certificados wildcard ni credenciales DNS.
 
-1. HTTPS con terminación en el VPS y varios dominios compartiendo 443.
-2. Terminación TLS para protocolos TCP compatibles y passthrough cuando el
-   certificado lo gestione el servicio. STARTTLS requiere soporte específico;
-   UDP no se convierte en TLS convencional.
-3. ACME con emisión y renovación automáticas, carga sin interrupciones,
-   validación HTTP-01 y/o DNS-01, entorno de pruebas y avisos de caducidad.
-4. Claves privadas protegidas, credenciales DNS restringidas y diagnósticos sin
-   secretos. La emisión exige control del dominio y DNS correctamente apuntado.
-5. Gestión explícita de conflictos con 80/443 ya publicados, sin secuestrarlos
-   ni reservarlos silenciosamente antes de activar esta funcionalidad.
-6. Equivalencia de operaciones de dominios y certificados entre interfaz y CLI.
+El proveedor DNS debe permitir un registro wildcard hacia el VPS. El puerto 80
+debe permanecer accesible para HTTP-01; con Cloudflare usa **Solo DNS**.
+La app no cambia automáticamente DNS, reglas del proveedor ni las opciones
+particulares de cada servicio. Consulta [TLS.md](TLS.md) para configuración,
+actualización segura, pruebas y límites.
 
-WireGuard protege VPS–Umbrel, pero publicar un puerto TCP no añade HTTPS.
-Un certificado tampoco sustituye la autenticación del servicio.
+WireGuard protege VPS–Umbrel; el acceso directo sigue sin añadir cifrado.
+Los certificados no sustituyen la autenticación de las aplicaciones.

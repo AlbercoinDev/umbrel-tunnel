@@ -47,6 +47,11 @@ func seed(t *testing.T, paths config.Paths) {
 func TestRoundTrip(t *testing.T) {
 	src := testPaths(t)
 	seed(t, src)
+	for _, dir := range []string{"certificates", "certificates-staging"} {
+		if err := fsutil.WriteString(filepath.Join(src.State, dir, "web.example.org+rsa"), "private-certificate-cache", 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	var buf bytes.Buffer
 	if err := Create(&buf, src); err != nil {
@@ -68,6 +73,32 @@ func TestRoundTrip(t *testing.T) {
 	info, _ := os.Stat(dst.TokenFile())
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("permisos: %o", info.Mode().Perm())
+	}
+	for _, dir := range []string{"certificates", "certificates-staging"} {
+		path := filepath.Join(dst.State, dir, "web.example.org+rsa")
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != "private-certificate-cache" {
+			t.Fatalf("certificate restore: %q %v", data, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.Mode().Perm() != 0o600 {
+			t.Fatal("certificate permissions")
+		}
+	}
+}
+
+func TestCertificateBackupRejectsSymlinksAndUnsafeNames(t *testing.T) {
+	p := testPaths(t)
+	seed(t, p)
+	if _, ok := certificateEntry(p, "state/certificates/../../token"); ok {
+		t.Fatal("path traversal accepted")
+	}
+	if err := os.Symlink(p.Etc, filepath.Join(p.State, "certificates")); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if Create(&buf, p) == nil {
+		t.Fatal("symlink cache accepted")
 	}
 }
 

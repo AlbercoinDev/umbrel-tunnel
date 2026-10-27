@@ -95,6 +95,9 @@ func cmdForwardAPI(ctx context.Context, args []string) error {
 	targetPort := fs.Int("target-port", 0, "puerto destino")
 	protocol := fs.String("protocol", "tcp", "tcp o udp")
 	disabled := fs.Bool("disabled", false, "crear desactivado")
+	mode := fs.String("access-mode", "direct", "direct, https o tls")
+	domain := fs.String("domain", "", "dominio público completo")
+	terms := fs.Bool("accept-acme-terms", false, "aceptar condiciones de Let's Encrypt y emisión pública")
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
@@ -109,10 +112,10 @@ func cmdForwardAPI(ctx context.Context, args []string) error {
 		path += "/" + url.PathEscape(id) + "/check"
 	case "add":
 		method = "POST"
-		body = map[string]any{"name": *name, "public_port": *port, "target_ip": *target, "target_port": *targetPort, "protocol": *protocol, "enabled": !*disabled, "managed_by": "vps"}
+		body = map[string]any{"name": *name, "public_port": *port, "target_ip": *target, "target_port": *targetPort, "protocol": *protocol, "enabled": !*disabled, "managed_by": "vps", "access_mode": *mode, "domain": *domain, "accept_acme_terms": *terms}
 	case "edit":
 		patch := map[string]any{}
-		values := map[string]any{"name": *name, "public-port": *port, "target-ip": *target, "target-port": *targetPort, "protocol": *protocol}
+		values := map[string]any{"name": *name, "public-port": *port, "target-ip": *target, "target-port": *targetPort, "protocol": *protocol, "access-mode": *mode, "domain": *domain, "accept-acme-terms": *terms}
 		fs.Visit(func(f *flag.Flag) {
 			if value, ok := values[f.Name]; ok {
 				patch[strings.ReplaceAll(f.Name, "-", "_")] = value
@@ -150,9 +153,13 @@ func cmdForwardAPI(ctx context.Context, args []string) error {
 		}
 		if !*asJSON {
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-			fmt.Fprintln(w, "ID\tNOMBRE\tPÚBLICO\tDESTINO\tPROTO\tACTIVO")
+			fmt.Fprintln(w, "ID\tNOMBRE\tPÚBLICO\tDESTINO\tPROTO\tACTIVO\tMODO\tDOMINIO")
 			for _, f := range forwards {
-				fmt.Fprintf(w, "%s\t%s\t%d\t%s:%d\t%s\t%v\n", f.ID, f.Name, f.PublicPort, f.TargetIP, f.TargetPort, f.Protocol, f.Enabled)
+				mode := f.AccessMode
+				if mode == "" {
+					mode = "direct"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%d\t%s:%d\t%s\t%v\t%s\t%s\n", f.ID, f.Name, f.PublicPort, f.TargetIP, f.TargetPort, f.Protocol, f.Enabled, mode, f.Domain)
 			}
 			return w.Flush()
 		}

@@ -78,6 +78,22 @@
       </div>
       <p id="services-empty" class="muted empty" hidden>{{ t('services.empty') }}</p>
     </section>
+    <section class="card" id="secure-publications">
+      <h2>{{ 'Dominios, HTTPS y TLS' if lang == 'es' else 'Domains, HTTPS and TLS' }}</h2>
+      <p>{{ 'Opcional: configúralo ahora o en cualquier momento después de vincular el VPS. Requiere DNS wildcard apuntando al VPS, en modo Solo DNS, y puerto 80 accesible para renovar certificados.' if lang == 'es' else 'Optional: configure now or any time after pairing. Requires wildcard DNS pointing to the VPS in DNS-only mode and port 80 reachable for certificate renewal.' }}</p>
+      <p class="muted">{{ 'Primero añade un servicio manual si no aparece en la lista. Al configurar uno ya publicado se sustituye su acceso directo: no se mantiene abierto en claro. HTTPS usa un destino HTTP; TLS TCP permite, por ejemplo, 50002 → Electrs 50001.' if lang == 'es' else 'Add a manual service first if it is not listed. Configuring an existing publication replaces direct access: it does not remain open in cleartext. HTTPS requires an HTTP backend; TCP TLS supports e.g. 50002 → Electrs 50001.' }}</p>
+      <form id="secure-form" class="stack">
+        <label>{{ 'Servicio' if lang == 'es' else 'Service' }} <select id="secure-service" required></select></label>
+        <label>{{ 'Modo' if lang == 'es' else 'Mode' }} <select id="secure-mode"><option value="https">HTTPS :443 → HTTP</option><option value="tls">TLS TCP → TCP</option></select></label>
+        <label>{{ 'Dominio completo' if lang == 'es' else 'Full domain' }} <input id="secure-domain" placeholder="privatebin.umbrel.nodobitcoin.org" required maxlength="253"></label>
+        <label>{{ 'Puerto público' if lang == 'es' else 'Public port' }} <input id="secure-port" type="number" min="1" max="65535" value="443" required disabled></label>
+        <label><input id="secure-terms" type="checkbox" required> {{ 'Acepto las condiciones de Let’s Encrypt y publicar este servicio en Internet. Los nombres del certificado serán públicos.' if lang == 'es' else 'I accept Let’s Encrypt terms and publishing this service on the Internet. Certificate names will be public.' }} <a href="https://letsencrypt.org/repository/" target="_blank" rel="noopener noreferrer">Let’s Encrypt</a></label>
+        <div class="row"><button type="submit">{{ 'Guardar y publicar cifrado' if lang == 'es' else 'Save and publish encrypted' }}</button><button id="secure-refresh" type="button" class="ghost">{{ 'Actualizar estado' if lang == 'es' else 'Refresh status' }}</button></div>
+      </form>
+      <button id="secure-retry" type="button" class="ghost">{{ 'Reintentar emisión' if lang == 'es' else 'Retry issuance' }}</button>
+      <p id="secure-message" role="status"></p>
+      <div id="secure-status"></div>
+    </section>
   </section>
 
   <section id="tab-open" class="tab-panel">
@@ -312,5 +328,6 @@
   {{ config_json|safe }}
 </script>
 <script src="/static/app.js?v={{ app_version }}"></script>
+<script src="/static/secure.js?v={{ app_version }}" defer></script>
 </body>
 </html>

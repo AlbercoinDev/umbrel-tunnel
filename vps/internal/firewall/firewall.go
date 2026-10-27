@@ -55,7 +55,7 @@ func (m *Manager) Rules(forwards []state.Forward) string {
 	b.WriteString("    chain prerouting {\n")
 	b.WriteString("        type nat hook prerouting priority dstnat; policy accept;\n")
 	for _, f := range forwards {
-		if !f.Enabled {
+		if !f.Enabled || (f.AccessMode != "" && f.AccessMode != "direct") {
 			continue
 		}
 		proto := f.Protocol

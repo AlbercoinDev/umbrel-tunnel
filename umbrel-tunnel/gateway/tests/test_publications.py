@@ -64,3 +64,55 @@ class PublicationTests(unittest.TestCase):
         fixtures.FakeVPS.forwards.append({"id": "manual", "name": "umbrel:operator-rule", "managed_by": "vps"})
         gateway.sync_now()
         self.assertEqual(len(fixtures.FakeVPS.forwards), 1)
+
+    def test_tls_can_be_enabled_later_without_an_extra_cleartext_forward(self):
+        result = self._open_manual(port=50001, public_port=50001).get_json()
+        rule = result["exposure"]
+        response = self._patch('/api/exposures/' + rule['id'], {
+            "access_mode": "tls", "domain": "electrs.example.org",
+            "public_port": 50002, "accept_acme_terms": True,
+        })
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertTrue(response.get_json()["ok"])
+        self.assertEqual(len(fixtures.FakeVPS.forwards), 1)
+        remote = fixtures.FakeVPS.forwards[0]
+        self.assertEqual(remote["access_mode"], "tls")
+        self.assertEqual(remote["public_port"], 50002)
+        self.assertEqual(remote["domain"], "electrs.example.org")
+        self.assertEqual(state.load()["exposures"][0]["target_port"], 50001)
+        self.assertTrue(gateway.sync_now()["ok"])
+
+    def test_multiple_https_domains_share_443_and_require_terms(self):
+        first = self._open_manual(port=8081, public_port=8081).get_json()["exposure"]
+        second = self._open_manual(port=8082, public_port=8082).get_json()["exposure"]
+        for rule, domain in [(first, "web.example.org"), (second, "bin.example.org")]:
+            payload = {"access_mode": "https", "domain": domain, "accept_acme_terms": True}
+            result = self._patch('/api/exposures/' + rule['id'], payload)
+            self.assertTrue(result.get_json()["ok"], result.get_json())
+        self.assertEqual([f["public_port"] for f in fixtures.FakeVPS.forwards], [443, 443])
+        response = self._patch('/api/exposures/' + first['id'], {"access_mode": "https", "domain": "new.example.org"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(state.load()["exposures"][0]["domains"], ["web.example.org"])
+
+    def test_tls_port_conflict_is_not_reassigned(self):
+        rule = self._open_manual(port=50001, public_port=50001).get_json()["exposure"]
+        fixtures.FakeVPS.conflict_ports.add(50002)
+        response = self._patch('/api/exposures/' + rule['id'], {"access_mode": "tls", "domain": "electrs.example.org", "public_port": 50002, "accept_acme_terms": True})
+        self.assertFalse(response.get_json()["ok"])
+        self.assertEqual(state.load()["exposures"][0]["public_port"], 50002)
+
+    def test_new_manual_service_can_start_secure_without_direct_publication(self):
+        response = self._open_manual(port=50001, open=False)
+        self.assertEqual(response.status_code, 201)
+        self.assertEqual(fixtures.FakeVPS.forwards, [])
+        manual = state.load()["manual_services"][0]
+        response = self._post('/api/exposures', {
+            "service_id": f"manual:{manual['id']}:50001:tcp", "access_mode": "tls",
+            "domain": "electrs.example.org", "public_port": 50002,
+            "accept_acme_terms": True,
+        })
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        self.assertTrue(response.get_json()["ok"])
+        self.assertEqual(len(fixtures.FakeVPS.forwards), 1)
+        self.assertEqual(fixtures.FakeVPS.forwards[0]["access_mode"], "tls")
+        self.assertEqual(fixtures.FakeVPS.forwards[0]["public_port"], 50002)

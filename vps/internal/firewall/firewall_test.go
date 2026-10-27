@@ -57,6 +57,19 @@ func TestRulesIncludeForwardAndGuard(t *testing.T) {
 	}
 }
 
+func TestSecurePublicationsNeverGenerateCleartextDNAT(t *testing.T) {
+	m := New(config.DefaultPaths(), config.Default(), &execx.Fake{})
+	forwards := testForwards()
+	forwards = append(forwards, state.Forward{AccessMode: "https", Domain: "web.example.org", PublicPort: 443, TargetIP: "10.0.0.2", TargetPort: 20000, Protocol: "tcp", Enabled: true}, state.Forward{AccessMode: "tls", Domain: "electrs.example.org", PublicPort: 50002, TargetIP: "10.0.0.2", TargetPort: 20001, Protocol: "tcp", Enabled: true})
+	rules := m.Rules(forwards)
+	if strings.Contains(rules, "dport 443") || strings.Contains(rules, "dport 50002") {
+		t.Fatalf("secure ports leaked to DNAT: %s", rules)
+	}
+	if !strings.Contains(rules, "dport 8080 dnat") {
+		t.Fatal("existing direct forward removed")
+	}
+}
+
 // A `dnat` without an explicit family is rejected by nft in an `inet` table.
 func TestRulesAlwaysSpecifyDnatFamily(t *testing.T) {
 	m := New(config.DefaultPaths(), config.Default(), &execx.Fake{})

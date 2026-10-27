@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"umbrel-tunnel/internal/config"
+	"umbrel-tunnel/internal/edge"
 	"umbrel-tunnel/internal/execx"
 	"umbrel-tunnel/internal/firewall"
 	"umbrel-tunnel/internal/pair"
@@ -24,6 +25,7 @@ type Service struct {
 	WG    *wireguard.Manager
 	FW    *firewall.Manager
 	Run   execx.Runner
+	Edge  *edge.Manager
 }
 
 // Open loads configuration and state.
@@ -96,6 +98,18 @@ func (s *Service) ReloadPeers(ctx context.Context) error {
 
 // ReloadForwards regenerates and applies the nftables ruleset.
 func (s *Service) ReloadForwards(ctx context.Context) error {
+	_, port, err := s.Cfg.ParseAPIHostPort()
+	if err != nil {
+		return err
+	}
+	if err := edge.Validate(s.Store.Forwards(), port); err != nil {
+		return err
+	}
+	if s.Edge != nil {
+		if err := s.Edge.Apply(s.Store.Forwards()); err != nil {
+			return err
+		}
+	}
 	return s.FW.Apply(ctx, s.Store.Forwards())
 }
 

@@ -59,12 +59,19 @@
       </table>
       <form id="forward-form" class="row wrap">
         <input name="name" placeholder="nombre" required>
+        <select name="access_mode" aria-label="Modo de acceso"><option value="direct">TCP directo</option><option value="https">HTTPS :443 → HTTP</option><option value="tls">TLS TCP → TCP</option></select>
+        <input name="domain" placeholder="subdominio.dominio.org" aria-label="Dominio público">
         <input name="public_port" type="number" min="1" max="65535" placeholder="público" required>
         <select name="target_ip" id="target-ip"></select>
         <input name="target_port" type="number" min="1" max="65535" placeholder="destino" required>
+        <label><input name="accept_acme_terms" type="checkbox"> Acepto las condiciones de <a href="https://letsencrypt.org/repository/" target="_blank" rel="noopener noreferrer">Let’s Encrypt</a> (HTTPS/TLS)</label>
         <button type="submit">Abrir puerto</button>
       </form>
       <p id="forward-msg" class="msg" hidden></p>
+      <p class="muted">HTTPS/TLS requiere DNS wildcard → VPS en modo Solo DNS y puerto 80 accesible para emisión y renovación. Usa 443 para HTTPS, otro puerto para TLS TCP. El destino debe escuchar ya dentro del túnel; este panel no crea proxies en Umbrel.</p>
+      <h3>Certificados (renovación automática)</h3>
+      <button id="retry-certificates" type="button" class="ghost">Reintentar emisión</button>
+      <div id="certificates"></div>
     </section>
 
     <section class="card">
