@@ -82,9 +82,22 @@ de coordinación autenticado adicional; no se ha abierto una API nueva a Interne
 
 Actualiza el binario del VPS y la imagen del gateway conjuntamente: el gateway
 envía el campo de propiedad `managed_by`, que las API antiguas no reconocen.
-Los cambios de este repositorio no actualizan automáticamente una instalación
-de Umbrel ni publican imágenes o releases. No se han cambiado los digests del
-compose para apuntar a imágenes todavía inexistentes.
+La versión 1.1.0 se distribuye con binarios amd64/arm64 y una imagen multiarch
+fijada por digest en la tienda. Publicar esta versión no actualiza automáticamente
+una instalación existente.
+
+En Debian/Ubuntu, actualiza primero el VPS:
+
+```sh
+sudo umbrel-tunnel backup
+sudo umbrel-tunnel update --from "https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.1.0/umbrel-tunnel-linux-$(dpkg --print-architecture)"
+umbrel-tunnel version
+sudo umbrel-tunnel doctor
+```
+
+Comprueba que la copia se creó antes de continuar. `update` conserva la
+configuración y reinicia el servicio. Después actualiza la app a 1.1.0 desde la
+tienda de Umbrel, sin desinstalar ni volver a vincular.
 
 ## Dominios, HTTPS y TLS: requisito futuro, no disponible aún
 
