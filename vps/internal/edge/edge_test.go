@@ -31,10 +31,13 @@ func TestValidate(t *testing.T) {
 	if err := Validate([]state.Forward{a, b}, 8080); err != nil {
 		t.Fatal(err)
 	}
-	for _, bad := range []state.Forward{secure("*.example.org", "https", 443), secure("127.0.0.1", "tls", 50002), secure("two.example.org", "tls", 443), secure("two.example.org", "tls", 8080), secure("one.example.org", "tls", 50002), {PublicPort: 80, Protocol: "tcp"}, {PublicPort: 443, Protocol: "tcp", Enabled: false}} {
+	for _, bad := range []state.Forward{secure("*.example.org", "https", 443), secure("127.0.0.1", "tls", 50002), secure("two.example.org", "tls", 443), secure("two.example.org", "tls", 8080), secure("one.example.org", "https", 443), {PublicPort: 80, Protocol: "tcp"}, {PublicPort: 443, Protocol: "tcp", Enabled: false}} {
 		if Validate([]state.Forward{a, bad}, 8080) == nil {
 			t.Fatalf("accepted %+v", bad)
 		}
+	}
+	if err := Validate([]state.Forward{a, secure("one.example.org", "tls", 50002), secure("one.example.org", "tls", 50003)}, 8080); err != nil {
+		t.Fatal("one domain must support independent public ports", err)
 	}
 	if Validate([]state.Forward{a, {PublicPort: 443, Protocol: "udp"}}, 8080) != nil {
 		t.Fatal("UDP port should remain independent")
@@ -104,6 +107,67 @@ func TestHTTPProxyAndTrustedHeaders(t *testing.T) {
 	}
 	if m.hostPolicy(context.Background(), "evil.example.org") == nil {
 		t.Fatal("unauthorized certificate host")
+	}
+}
+
+func TestHTTPDomainWithoutCertificateAndSharedPort(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.WriteString(w, r.Host+"|"+r.Header.Get("X-Forwarded-Proto"))
+	}))
+	defer backend.Close()
+	host, port, _ := net.SplitHostPort(strings.TrimPrefix(backend.URL, "http://"))
+	var n int
+	for _, c := range port {
+		n = n*10 + int(c-'0')
+	}
+	m := New(t.TempDir())
+	defer m.Close()
+	m.listen = func(string, string) (net.Listener, error) { return net.Listen("tcp", "127.0.0.1:0") }
+	a := secure("one.example.org", "http", 80)
+	a.TargetIP = host
+	a.TargetPort = n
+	b := a
+	b.Domain = "two.example.org"
+	if err := Validate([]state.Forward{a, b}, 8080); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Apply([]state.Forward{a, b}); err != nil {
+		t.Fatal(err)
+	}
+	for _, domain := range []string{a.Domain, b.Domain} {
+		r := httptest.NewRequest("GET", "http://"+domain+"/", nil)
+		w := httptest.NewRecorder()
+		m.redirect(w, r)
+		if got := w.Body.String(); got != domain+"|http" {
+			t.Fatalf("HTTP domain route %s: %s", domain, got)
+		}
+		if m.hostPolicy(context.Background(), domain) == nil {
+			t.Fatal("HTTP-only domain authorized for certificate")
+		}
+	}
+	if len(m.Status()) != 0 {
+		t.Fatal("HTTP-only domains should not request certificates")
+	}
+	r := httptest.NewRequest("GET", "http://unknown.example.org/", nil)
+	w := httptest.NewRecorder()
+	m.redirect(w, r)
+	if w.Code != 404 {
+		t.Fatal("unknown HTTP domain routed")
+	}
+}
+
+func TestCertificateMetadataSharedAcrossPublicPorts(t *testing.T) {
+	m := New(t.TempDir())
+	defer m.Close()
+	a := secure("electrs.example.org", "tls", 50002)
+	a.Enabled = false
+	b := a
+	b.PublicPort = 50003
+	b.Enabled = true
+	m.routes = []state.Forward{a, b}
+	status := m.Status()
+	if len(status) != 1 || status[0]["enabled"] != true || status[0]["domain"] != a.Domain {
+		t.Fatalf("shared certificate metadata: %v", status)
 	}
 }
 

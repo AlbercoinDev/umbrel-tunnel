@@ -29,22 +29,29 @@ Permite TCP 80 para emisión **y renovación**, TCP 443 si usas HTTPS y cada pue
 TLS dedicado, además de WireGuard. El puerto 80 solo sirve desafíos ACME y
 redirecciones a dominios HTTPS configurados; no da acceso al backend en HTTP.
 Los puertos 80/443 quedan reservados frente a DNAT TCP mientras haya alguna
-publicación cifrada configurada, incluso pausada. Un conflicto se rechaza,
+publicación web HTTP/HTTPS o TLS configurada, incluso pausada. Un conflicto se rechaza,
 nunca se elimina una regla ajena ni se busca otro puerto TLS silenciosamente.
 
 ## Configuración desde Umbrel
 
 1. Vincula el VPS normalmente. Puedes omitir TLS durante la instalación.
-2. En **Servicios y puertos**, baja a **Dominios, HTTPS y TLS**.
+2. En **Configuración y diagnóstico → Dominio base y certificados**, guarda
+   `umbrel.nodobitcoin.org`. No abre puertos ni solicita certificados. Cambiarlo
+   después no reescribe nombres completos de publicaciones existentes.
 3. Si el servicio no aparece, usa **Añadir servicio manual → Solo añadir**.
-4. Elige el servicio y un modo:
-   - **HTTPS**: dominio completo y puerto público 443. El destino debe hablar HTTP.
-   - **TLS TCP**: dominio completo y puerto público dedicado (por ejemplo 50002).
-     El destino debe hablar el protocolo TCP sin TLS (por ejemplo Electrs 50001).
-5. Acepta las condiciones de Let's Encrypt y la publicación en Internet.
-6. Guarda. Una publicación existente se convierte: no se conserva un segundo
-   puerto público en claro. Revisa los errores de sincronización si falla.
-7. Actualiza el estado de certificados; la primera emisión puede tardar minutos.
+4. En la fila del servicio, pulsa **Añadir publicación**. Configura por separado
+   puerto público, dominio opcional, tipo TCP/UDP o web HTTP y terminación TLS
+   opcional. Web + TLS usa HTTPS en 443; TCP + TLS usa un puerto dedicado.
+   El destino habla HTTP o TCP sin TLS respectivamente. El subdominio vacío
+   permite usar el propio dominio base.
+5. Si activas TLS, acepta las condiciones de Let's Encrypt. Confirma la
+   publicación en Internet y revisa el resumen dirección:puerto → destino.
+6. Guarda. **Añadir crea una publicación independiente, no sustituye otra del
+   servicio**. Usa **Editar** para cambiar una entrada existente. Cada entrada
+   permite pausar, reanudar o dejar de publicar. Los puertos elegidos no se
+   sustituyen automáticamente si hay un conflicto.
+7. Consulta el estado del certificado en la fila o en Configuración; la primera
+   emisión puede tardar minutos.
    **Reintentar emisión** programa otra comprobación con límite por dominio;
    no borra certificados ni fuerza reemisiones de certificados válidos.
 
@@ -59,6 +66,19 @@ La configuración de una publicación indica intención, **no** que la CA haya
 emitido el certificado ni que el servicio sea accesible desde Internet.
 Comprueba por separado sincronización, certificado y respuesta de la aplicación.
 
+### Dominio sin certificado
+
+Un nombre DNS no implica TLS ni decide el puerto. Puedes publicar TCP/UDP directo
+con o sin dominio, sin añadir cifrado. El TLS propio del servicio se conserva
+si ya existe. Para varios sitios web en el mismo puerto, elige tipo web HTTP
+sin marcar TLS: el VPS enruta por Host, sin solicitar certificados. HTTP en 80
+puede convivir con ACME. Una entrada HTTP explícita para un nombre sirve HTTP;
+si solo existe HTTPS, el 80 redirige a HTTPS como antes.
+
+TCP/UDP directo no distingue subdominios para repartir la misma IP y puerto
+entre destinos: requiere puertos diferentes. Las publicaciones web sí pueden
+compartir puerto con nombres distintos. Los conflictos se rechazan.
+
 ### PrivateBin
 
 Publica `privatebin.umbrel.nodobitcoin.org` en modo HTTPS hacia su servicio HTTP.
@@ -71,8 +91,11 @@ confianza: esto depende de cada app y no se cambia automáticamente.
 ### Electrs
 
 Añade un servicio manual con el host/contenedor real de Electrs y puerto 50001,
-TCP, **Solo añadir**. Publícalo como TLS TCP con
-`electrs.umbrel.nodobitcoin.org` y puerto público 50002. Configura la cartera con
+TCP, **Solo añadir**. Añade una publicación TCP sin TLS con subdominio `electrs`
+y puerto público 50001. Añade otra al **mismo servicio**, marcando TLS y usando
+el mismo subdominio y puerto público 50002. Ambas apuntan al destino interno
+50001; no necesitas duplicar el servicio ni crear otro túnel. La entrada 50001
+va en claro entre Internet y el VPS por decisión explícita. Configura la cartera con
 ese hostname, puerto 50002 y SSL/TLS activado. El VPS admite clientes sin SNI en
 el puerto dedicado; si envían SNI, debe coincidir con su dominio configurado.
 
@@ -112,11 +135,18 @@ el conflicto: los cambios externos no se sobrescriben sin confirmación.
 API autenticada dentro del túnel:
 
 - `POST /api/forwards` y `PATCH /api/forwards/{id}`: campos `access_mode`
-  (`direct`, `https`, `tls`), `domain` y `accept_acme_terms: true` al activar o
+  (`direct`, `http`, `https`, `tls`), `domain` y `accept_acme_terms: true` al activar o
   cambiar nombre/modo cifrado. UDP no admite estos modos.
 - `GET /api/certificates`: `domain`, `enabled`, `state`, `not_after`, `error`.
   Estados `pending`, `ready`, `expiring` (menos de 14 días), `expired`.
 - `POST /api/certificates/retry`: programa un reintento, HTTP 202.
+
+API local de Umbrel: `POST /api/settings` acepta `base_domain`; `POST /api/exposures`
+acepta `new_publication: true` para añadir sin deduplicar por destino, `subdomain`
+(resuelto contra el dominio base), `access_mode` y `public_port`. La configuración
+guarda nombres completos para preservar las publicaciones al cambiar el dominio
+base. Los clientes antiguos conservan la deduplicación si no solicitan una nueva
+publicación. Editar usa `PATCH /api/exposures/{id}`.
 
 El panel privado del VPS también permite crear publicaciones cifradas y ver
 certificados. No descubre ni crea proxies de Umbrel: para publicar contenedores
@@ -129,7 +159,7 @@ campos nuevos. Antes de actualizar, haz una copia de seguridad verificable.
 Esta versión necesita actualizar también la unidad systemd del VPS:
 `CAP_NET_BIND_SERVICE` permite escuchar en 80/443 bajo el endurecimiento existente.
 **Sustituir solo el binario con `update` no actualiza dicha unidad**. Reejecuta el
-instalador de **1.2.0** (sin `--force`, sin `--purge`), que conserva configuración
+instalador de **1.3.0** (sin `--force`, sin `--purge`), que conserva configuración
 y claves. El siguiente bloque hace backup, descarga el paquete de tu arquitectura,
 verifica su checksum y actualiza binario y unidades systemd. Se interrumpe si falla
 algún paso. El túnel y las publicaciones tendrán una interrupción breve.
@@ -139,20 +169,20 @@ Ejecuta en el VPS antes de actualizar la app de Umbrel:
 ```sh
 sudo bash <<'SH'
 set -euo pipefail
-backup="/root/umbrel-tunnel-before-1.2.0-$(date +%Y%m%d-%H%M%S).tar.gz"
+backup="/root/umbrel-tunnel-before-1.3.0-$(date +%Y%m%d-%H%M%S).tar.gz"
 umbrel-tunnel backup --output "$backup"
 test -s "$backup"
 arch="$(dpkg --print-architecture)"
 case "$arch" in amd64|arm64) ;; *) echo "Arquitectura no soportada: $arch" >&2; exit 1 ;; esac
-work="$(mktemp -d /root/umbrel-tunnel-upgrade-1.2.0.XXXXXX)"
+work="$(mktemp -d /root/umbrel-tunnel-upgrade-1.3.0.XXXXXX)"
 cd "$work"
-base="https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.2.0"
-file="umbrel-tunnel-1.2.0-linux-$arch.tar.gz"
+base="https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.3.0"
+file="umbrel-tunnel-1.3.0-linux-$arch.tar.gz"
 curl -fLsS --retry 2 "$base/$file" -o "$file"
 curl -fLsS --retry 2 "$base/SHA256SUMS" -o SHA256SUMS
 grep -F "  $file" SHA256SUMS | sha256sum --check --strict -
 tar -xzf "$file"
-cd "umbrel-tunnel-1.2.0-linux-$arch"
+cd "umbrel-tunnel-1.3.0-linux-$arch"
 bash ./install.sh
 umbrel-tunnel version
 umbrel-tunnel doctor
@@ -161,7 +191,7 @@ echo "Backup conservado: $backup"
 SH
 ```
 
-Después actualiza **Umbrel Tunnel a 1.2.0** desde la tienda de Umbrel. No
+Después actualiza **Umbrel Tunnel a 1.3.0** desde la tienda de Umbrel. No
 desinstales, no borres los datos y no vuelvas a vincular el VPS. En instalaciones
 con puertos de API/WireGuard personalizados, pasa los mismos valores al instalador
 (`--api-port`, `--wg-port`) para que sus comprobaciones utilicen los puertos reales.

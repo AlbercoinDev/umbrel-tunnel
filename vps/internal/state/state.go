@@ -330,7 +330,7 @@ func (s *Store) AddForward(f Forward) error {
 		return fmt.Errorf("el puerto público %d está reservado para el %s", f.PublicPort, what)
 	}
 	for _, existing := range s.forwards {
-		if f.AccessMode == "https" && existing.AccessMode == "https" && f.Domain != existing.Domain {
+		if (f.AccessMode == "https" || f.AccessMode == "http") && existing.AccessMode == f.AccessMode && f.Domain != existing.Domain {
 			continue
 		}
 		if existing.PublicPort == f.PublicPort && existing.Protocol == f.Protocol {
@@ -367,7 +367,7 @@ func (s *Store) UpdateForward(id string, fn func(*Forward) error) (Forward, erro
 				if j == i {
 					continue
 				}
-				if updated.AccessMode == "https" && s.forwards[j].AccessMode == "https" && updated.Domain != s.forwards[j].Domain {
+				if (updated.AccessMode == "https" || updated.AccessMode == "http") && s.forwards[j].AccessMode == updated.AccessMode && updated.Domain != s.forwards[j].Domain {
 					continue
 				}
 				if s.forwards[j].PublicPort == updated.PublicPort &&

@@ -42,7 +42,7 @@ def payload(exposure: dict) -> dict:
         "managed_by": "umbrel:" + str(exposure.get("tunnel_ip") or "10.0.0.2"),
         "enabled": True,
         "access_mode": str(exposure.get("access_mode") or "direct"),
-        "domain": "",
+        "domain": (exposure.get("domains") or [""])[0],
     }
     if exposure.get("access_mode", "direct") != "direct":
         result["access_mode"] = exposure["access_mode"]

@@ -116,3 +116,73 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(len(fixtures.FakeVPS.forwards), 1)
         self.assertEqual(fixtures.FakeVPS.forwards[0]["access_mode"], "tls")
         self.assertEqual(fixtures.FakeVPS.forwards[0]["public_port"], 50002)
+
+    def _new_publication(self, manual, **values):
+        return self._post('/api/exposures', {"service_id": f"manual:{manual['id']}:{manual['port']}:{manual['protocol']}", "new_publication": True, **values})
+
+    def test_same_service_has_plain_and_tls_same_domain_and_independent_controls(self):
+        self.assertEqual(self._post('/api/settings', {"base_domain": "umbrel.example.org"}).status_code, 200)
+        self._open_manual(port=50001, open=False)
+        manual = state.load()["manual_services"][0]
+        plain = self._new_publication(manual, access_mode="direct", subdomain="electrs", public_port=50001).get_json()
+        secure = self._new_publication(manual, access_mode="tls", subdomain="electrs", public_port=50002, accept_acme_terms=True).get_json()
+        self.assertTrue(plain["ok"], plain)
+        self.assertTrue(secure["ok"], secure)
+        self.assertNotEqual(plain["exposure"]["id"], secure["exposure"]["id"])
+        exposures = state.load()["exposures"]
+        self.assertEqual(len(exposures), 2)
+        self.assertEqual({e["target_port"] for e in exposures}, {50001})
+        self.assertEqual({tuple(e["domains"]) for e in exposures}, {("electrs.umbrel.example.org",)})
+        self.assertEqual({f["public_port"] for f in fixtures.FakeVPS.forwards}, {50001,50002})
+        self.assertTrue(gateway.sync_now()["ok"])
+        paused = self._patch('/api/exposures/' + secure['exposure']['id'], {"enabled": False})
+        self.assertTrue(paused.get_json()["ok"])
+        self.assertEqual([f["public_port"] for f in fixtures.FakeVPS.forwards], [50001])
+        response = self.client.delete('/api/exposures/' + secure['exposure']['id'], headers={"X-CSRF-Token":self._csrf()})
+        self.assertEqual(response.status_code,200)
+        self.assertEqual(len(state.load()["exposures"]),1)
+        self.assertEqual(fixtures.FakeVPS.forwards[0]["domain"], "electrs.umbrel.example.org")
+
+    def test_domain_change_does_not_rewrite_publications_and_settings_do_not_publish(self):
+        self._post('/api/settings', {"base_domain":"umbrel.example.org"})
+        self.assertEqual(fixtures.FakeVPS.forwards,[])
+        self._open_manual(port=50001,open=False)
+        manual=state.load()["manual_services"][0]
+        self._new_publication(manual,access_mode="direct",subdomain="electrs",public_port=50001)
+        old=list(fixtures.FakeVPS.forwards)
+        self._post('/api/settings', {"base_domain":"other.example.org"})
+        self.assertEqual(state.load()["exposures"][0]["domains"],["electrs.umbrel.example.org"])
+        self.assertEqual(fixtures.FakeVPS.forwards,old)
+        self.assertEqual(self._post('/api/settings', {"base_domain":"https://invalid/*"}).status_code,400)
+        self.assertEqual(state.load()["settings"]["base_domain"],"other.example.org")
+
+    def test_domains_without_certificates_and_tcp_port_collision(self):
+        self._post('/api/settings', {"base_domain":"umbrel.example.org"})
+        self._open_manual(port=50001,open=False)
+        manual=state.load()["manual_services"][0]
+        first=self._new_publication(manual,access_mode="direct",subdomain="electrs",public_port=50001)
+        self.assertTrue(first.get_json()["ok"])
+        second=self._new_publication(manual,access_mode="direct",subdomain="different",public_port=50001)
+        self.assertEqual(second.status_code,400)
+        self.assertEqual(len(state.load()["exposures"]),1)
+        self.assertEqual(fixtures.FakeVPS.forwards[0]["public_port"],50001)
+
+    def test_http_without_tls_can_share_port_by_domain(self):
+        self._post('/api/settings', {"base_domain":"umbrel.example.org"})
+        self._open_manual(port=8080,open=False)
+        manual=state.load()["manual_services"][0]
+        for sub in ["one","two"]:
+            response=self._new_publication(manual,access_mode="http",subdomain=sub,public_port=80)
+            self.assertTrue(response.get_json()["ok"],response.get_json())
+        self.assertEqual(len(fixtures.FakeVPS.forwards),2)
+        self.assertTrue(all(e["tls"]["mode"]=="none" for e in state.load()["exposures"]))
+
+    def test_same_domain_multiple_tls_ports_and_plain_domain_conflict_keeps_port(self):
+        self._post('/api/settings', {"base_domain":"umbrel.example.org"})
+        self._open_manual(port=50001,open=False)
+        manual=state.load()["manual_services"][0]
+        for port in [50002,50003]:
+            response=self._new_publication(manual,access_mode="tls",subdomain="electrs",public_port=port,accept_acme_terms=True)
+            self.assertTrue(response.get_json()["ok"],response.get_json())
+        self.assertEqual(len(fixtures.FakeVPS.forwards),2)
+        self.assertEqual(len({f["domain"] for f in fixtures.FakeVPS.forwards}),1)

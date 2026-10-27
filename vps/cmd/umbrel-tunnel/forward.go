@@ -95,7 +95,7 @@ func cmdForwardAPI(ctx context.Context, args []string) error {
 	targetPort := fs.Int("target-port", 0, "puerto destino")
 	protocol := fs.String("protocol", "tcp", "tcp o udp")
 	disabled := fs.Bool("disabled", false, "crear desactivado")
-	mode := fs.String("access-mode", "direct", "direct, https o tls")
+	mode := fs.String("access-mode", "direct", "direct, http, https o tls")
 	domain := fs.String("domain", "", "dominio público completo")
 	terms := fs.Bool("accept-acme-terms", false, "aceptar condiciones de Let's Encrypt y emisión pública")
 	if err := fs.Parse(rest); err != nil {

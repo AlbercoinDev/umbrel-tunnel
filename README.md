@@ -496,7 +496,7 @@ Variables de entorno útiles en el gateway:
 | Variable | Por defecto | Uso |
 | --- | --- | --- |
 | `APP_PASSWORD` | — | contraseña de login; Umbrel la inyecta |
-| `APP_VERSION` | `1.2.0` | versión mostrada |
+| `APP_VERSION` | `1.3.0` | versión mostrada |
 | `UMBREL_TUNNEL_DATA` | `/data` | estado, claves y configuración |
 | `UMBREL_APP_DATA` | `/umbrel-app-data` | manifiestos de apps (solo lectura) |
 | `NETWORK_IP` | `10.21.0.0` | red de Umbrel para detectar solapes |

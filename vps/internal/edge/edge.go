@@ -53,27 +53,31 @@ func Validate(forwards []state.Forward, apiPort int) error {
 	for _, f := range forwards {
 		mode := f.AccessMode
 		if mode == "" || mode == "direct" {
+			if f.Domain != "" && !ValidDomain(f.Domain) {
+				return fmt.Errorf("dominio público inválido")
+			}
 			continue
 		}
-		if mode != "https" && mode != "tls" {
-			return fmt.Errorf("access_mode debe ser direct, https o tls")
+		if mode != "http" && mode != "https" && mode != "tls" {
+			return fmt.Errorf("access_mode debe ser direct, http, https o tls")
 		}
 		if f.Protocol != "tcp" || !ValidDomain(f.Domain) {
-			return fmt.Errorf("HTTPS/TLS requiere TCP y un dominio público válido en minúsculas")
+			return fmt.Errorf("HTTP/HTTPS/TLS requiere TCP y un dominio público válido en minúsculas")
 		}
-		if f.PublicPort == 22 || f.PublicPort == apiPort || f.PublicPort == 80 {
+		if f.PublicPort == 22 || f.PublicPort == apiPort || (f.PublicPort == 80 && mode != "http") {
 			return fmt.Errorf("puerto reservado")
 		}
 		if mode == "https" && f.PublicPort != 443 {
 			return fmt.Errorf("HTTPS usa el puerto público 443")
 		}
-		if mode == "tls" && f.PublicPort == 443 {
+		if (mode == "tls" || mode == "http") && f.PublicPort == 443 {
 			return fmt.Errorf("443 se reserva para HTTPS; elige otro puerto TLS")
 		}
-		if names[f.Domain] {
+		key := fmt.Sprintf("%s:%d", f.Domain, f.PublicPort)
+		if names[key] {
 			return fmt.Errorf("el dominio ya tiene una publicación cifrada")
 		}
-		names[f.Domain] = true
+		names[key] = true
 		secure = true
 	}
 	if secure {
@@ -138,12 +142,34 @@ func (m *Manager) Apply(routes []state.Forward) error {
 	defer m.mu.Unlock()
 	wanted := map[int]bool{}
 	for _, f := range routes {
+		if f.Enabled && f.AccessMode == "http" {
+			wanted[f.PublicPort] = true
+		}
 		if f.Enabled && (f.AccessMode == "https" || f.AccessMode == "tls") {
 			wanted[80] = true
 			wanted[f.PublicPort] = true
 		}
 	}
 	added := map[int]net.Listener{}
+	for port := range wanted {
+		if m.listeners[port] == nil || port == 80 || port == 443 {
+			continue
+		}
+		oldHTTP, newHTTP := false, false
+		for _, f := range m.routes {
+			if f.Enabled && f.PublicPort == port && f.AccessMode == "http" {
+				oldHTTP = true
+			}
+		}
+		for _, f := range routes {
+			if f.Enabled && f.PublicPort == port && f.AccessMode == "http" {
+				newHTTP = true
+			}
+		}
+		if oldHTTP != newHTTP {
+			return fmt.Errorf("pausa la publicación antes de cambiar HTTP/TLS en el mismo puerto / pause before changing HTTP/TLS on the same port")
+		}
+	}
 	for port := range wanted {
 		if m.listeners[port] != nil {
 			continue
@@ -180,7 +206,21 @@ func (m *Manager) Apply(routes []state.Forward) error {
 			srv.MaxHeaderBytes = 64 << 10
 			go srv.Serve(tls.NewListener(ln, cfg))
 		default:
-			go m.serveTCP(ln, port)
+			isHTTP := false
+			for _, f := range routes {
+				if f.Enabled && f.PublicPort == port && f.AccessMode == "http" {
+					isHTTP = true
+				}
+			}
+			if isHTTP {
+				ln = netutil.LimitListener(ln, 128)
+				m.listeners[port] = ln
+				p := port
+				srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { m.proxyRequest(w, r, p) }), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 << 10}
+				go srv.Serve(ln)
+			} else {
+				go m.serveTCP(ln, port)
+			}
 		}
 	}
 	for port, ln := range m.listeners {
@@ -196,7 +236,7 @@ func (m *Manager) route(host string, port int) (state.Forward, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	for _, f := range m.routes {
-		if f.Enabled && (f.AccessMode == "https" || f.AccessMode == "tls") && f.PublicPort == port && f.Domain != "" && (host == "" || f.Domain == host) {
+		if f.Enabled && (f.AccessMode == "http" || f.AccessMode == "https" || f.AccessMode == "tls") && f.PublicPort == port && f.Domain != "" && (host == "" || f.Domain == host) {
 			return f, true
 		}
 	}
@@ -208,6 +248,10 @@ func (m *Manager) redirect(w http.ResponseWriter, r *http.Request) {
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
+	if f, ok := m.route(host, 80); ok && f.AccessMode == "http" {
+		m.proxyRequest(w, r, 80)
+		return
+	}
 	if _, ok := m.route(host, 443); !ok {
 		http.NotFound(w, r)
 		return
@@ -216,12 +260,16 @@ func (m *Manager) redirect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (m *Manager) proxyHTTP(w http.ResponseWriter, r *http.Request) {
+	m.proxyRequest(w, r, 443)
+}
+
+func (m *Manager) proxyRequest(w http.ResponseWriter, r *http.Request, port int) {
 	host := r.Host
 	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
-	f, ok := m.route(host, 443)
-	if !ok || r.TLS == nil || r.TLS.ServerName != host {
+	f, ok := m.route(host, port)
+	if !ok || (port == 443 && (r.TLS == nil || r.TLS.ServerName != host)) {
 		http.Error(w, "dominio no publicado", http.StatusMisdirectedRequest)
 		return
 	}
@@ -230,7 +278,11 @@ func (m *Manager) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 		pr.SetURL(u)
 		pr.Out.Host = host
 		pr.SetXForwarded()
-		pr.Out.Header.Set("X-Forwarded-Proto", "https")
+		if port == 443 {
+			pr.Out.Header.Set("X-Forwarded-Proto", "https")
+		} else {
+			pr.Out.Header.Set("X-Forwarded-Proto", "http")
+		}
 		pr.Out.Header.Del("Forwarded")
 	}, Transport: transport}
 	p.ServeHTTP(w, r)
@@ -342,11 +394,19 @@ func (m *Manager) Status() []map[string]any {
 	}
 	m.mu.RUnlock()
 	out := []map[string]any{}
+	byDomain := map[string]map[string]any{}
 	for _, f := range routes {
 		if f.Domain == "" || (f.AccessMode != "https" && f.AccessMode != "tls") {
 			continue
 		}
+		if previous, ok := byDomain[f.Domain]; ok {
+			if f.Enabled {
+				previous["enabled"] = true
+			}
+			continue
+		}
 		item := map[string]any{"domain": f.Domain, "enabled": f.Enabled, "state": "pending", "error": errs[f.Domain]}
+		byDomain[f.Domain] = item
 		for _, key := range []string{f.Domain, f.Domain + "+rsa"} {
 			data, err := m.certs.Cache.Get(context.Background(), key)
 			if err != nil {

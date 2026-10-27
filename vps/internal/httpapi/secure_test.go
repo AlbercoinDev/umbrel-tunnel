@@ -46,3 +46,24 @@ func TestSecurePublications(t *testing.T) {
 		t.Fatalf("reload: %s", data)
 	}
 }
+
+func TestSameDomainPlainTLSAndHTTPPublications(t *testing.T) {
+	h := newHarness(t)
+	for _, entry := range []struct {
+		domain, mode string
+		port         int
+	}{{"electrs.example.org", "direct", 50001}, {"electrs.example.org", "tls", 50002}, {"electrs.example.org", "tls", 50003}, {"one.example.org", "http", 80}, {"two.example.org", "http", 80}} {
+		resp, body := h.do("POST", "/api/forwards", h.token, map[string]any{"name": entry.domain, "domain": entry.domain, "access_mode": entry.mode, "public_port": entry.port, "target_ip": "10.0.0.2", "target_port": 20000, "accept_acme_terms": true})
+		var f state.Forward
+		h.decode(resp, body, &f)
+		if f.Domain != entry.domain || f.PublicPort != entry.port {
+			t.Fatalf("publication altered: %s", body)
+		}
+	}
+	resp, body := h.do("GET", "/api/forwards", h.token, nil)
+	var forwards []state.Forward
+	h.decode(resp, body, &forwards)
+	if len(forwards) != 5 {
+		t.Fatalf("expected independent publications: %s", body)
+	}
+}

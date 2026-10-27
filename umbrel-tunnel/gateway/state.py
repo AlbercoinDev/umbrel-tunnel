@@ -20,6 +20,7 @@ DEFAULT = {
     "exposures": [],
     "manual_services": [],
     "settings": {
+        "base_domain": "",
         "sync_interval": 30,
         "tunnel_port_start": 20000,
         "tunnel_port_end": 29999,

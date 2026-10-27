@@ -69,7 +69,7 @@
               <th>{{ t('services.col.app') }}</th>
               <th>{{ t('services.col.target') }}</th>
               <th>{{ t('services.col.notes') }}</th>
-              <th>{{ t('services.col.public_port') }}</th>
+              <th>{{ 'Publicaciones (dirección · puerto · cifrado)' if lang == 'es' else 'Publications (address · port · encryption)' }}</th>
               <th>{{ t('services.col.actions') }}</th>
             </tr>
           </thead>
@@ -77,22 +77,6 @@
         </table>
       </div>
       <p id="services-empty" class="muted empty" hidden>{{ t('services.empty') }}</p>
-    </section>
-    <section class="card" id="secure-publications">
-      <h2>{{ 'Dominios, HTTPS y TLS' if lang == 'es' else 'Domains, HTTPS and TLS' }}</h2>
-      <p>{{ 'Opcional: configúralo ahora o en cualquier momento después de vincular el VPS. Requiere DNS wildcard apuntando al VPS, en modo Solo DNS, y puerto 80 accesible para renovar certificados.' if lang == 'es' else 'Optional: configure now or any time after pairing. Requires wildcard DNS pointing to the VPS in DNS-only mode and port 80 reachable for certificate renewal.' }}</p>
-      <p class="muted">{{ 'Primero añade un servicio manual si no aparece en la lista. Al configurar uno ya publicado se sustituye su acceso directo: no se mantiene abierto en claro. HTTPS usa un destino HTTP; TLS TCP permite, por ejemplo, 50002 → Electrs 50001.' if lang == 'es' else 'Add a manual service first if it is not listed. Configuring an existing publication replaces direct access: it does not remain open in cleartext. HTTPS requires an HTTP backend; TCP TLS supports e.g. 50002 → Electrs 50001.' }}</p>
-      <form id="secure-form" class="stack">
-        <label>{{ 'Servicio' if lang == 'es' else 'Service' }} <select id="secure-service" required></select></label>
-        <label>{{ 'Modo' if lang == 'es' else 'Mode' }} <select id="secure-mode"><option value="https">HTTPS :443 → HTTP</option><option value="tls">TLS TCP → TCP</option></select></label>
-        <label>{{ 'Dominio completo' if lang == 'es' else 'Full domain' }} <input id="secure-domain" placeholder="privatebin.umbrel.nodobitcoin.org" required maxlength="253"></label>
-        <label>{{ 'Puerto público' if lang == 'es' else 'Public port' }} <input id="secure-port" type="number" min="1" max="65535" value="443" required disabled></label>
-        <label><input id="secure-terms" type="checkbox" required> {{ 'Acepto las condiciones de Let’s Encrypt y publicar este servicio en Internet. Los nombres del certificado serán públicos.' if lang == 'es' else 'I accept Let’s Encrypt terms and publishing this service on the Internet. Certificate names will be public.' }} <a href="https://letsencrypt.org/repository/" target="_blank" rel="noopener noreferrer">Let’s Encrypt</a></label>
-        <div class="row"><button type="submit">{{ 'Guardar y publicar cifrado' if lang == 'es' else 'Save and publish encrypted' }}</button><button id="secure-refresh" type="button" class="ghost">{{ 'Actualizar estado' if lang == 'es' else 'Refresh status' }}</button></div>
-      </form>
-      <button id="secure-retry" type="button" class="ghost">{{ 'Reintentar emisión' if lang == 'es' else 'Retry issuance' }}</button>
-      <p id="secure-message" role="status"></p>
-      <div id="secure-status"></div>
     </section>
   </section>
 
@@ -244,6 +228,17 @@
   </section>
 
   <section id="tab-advanced" class="tab-panel">
+    <section class="card" id="domain-settings-card">
+      <h2>{{ 'Dominio base y certificados' if lang == 'es' else 'Base domain and certificates' }}</h2>
+      <p class="muted">{{ 'Configura el dominio una vez y elige subdominio, puerto y cifrado al publicar cada servicio. Guardarlo no abre puertos ni solicita certificados. Los cambios no modifican publicaciones existentes.' if lang == 'es' else 'Configure the domain once; choose subdomain, port and encryption for each publication. Saving does not open ports or request certificates. Changes do not modify existing publications.' }}</p>
+      <form id="domain-settings-form" class="stack">
+        <label>{{ 'Dominio base (opcional)' if lang == 'es' else 'Base domain (optional)' }} <input id="base-domain" placeholder="umbrel.nodobitcoin.org" maxlength="253"></label>
+        <p class="muted">{{ 'DNS: dominio base y wildcard hacia el VPS, Solo DNS. Para certificados, mantén TCP 80 accesible. El DNS no selecciona puertos.' if lang == 'es' else 'DNS: base domain and wildcard pointing to the VPS, DNS only. Certificates require reachable TCP 80. DNS does not select ports.' }}</p>
+        <button type="submit">{{ 'Guardar dominio' if lang == 'es' else 'Save domain' }}</button>
+      </form>
+      <p id="domain-message" role="status"></p>
+      <details><summary>{{ 'Estado de certificados' if lang == 'es' else 'Certificate status' }}</summary><div id="certificate-status"></div><button id="certificate-refresh" type="button">{{ 'Actualizar' if lang == 'es' else 'Refresh' }}</button><button id="certificate-retry" type="button">{{ 'Reintentar emisión' if lang == 'es' else 'Retry issuance' }}</button></details>
+    </section>
     <details class="card" id="api-settings-card">
       <summary>{{ t('ui.advanced') }}</summary>
       <h2>{{ t('advanced.api_title') }}</h2>
@@ -259,7 +254,7 @@
 
     <section class="card" id="manual-services-card" hidden>
       <h2>{{ t('advanced.manual_title') }}</h2>
-      <p class="muted">{{ t('advanced.manual_help') }}</p>
+      <p class="muted">{{ 'Guarda el destino y después añade una o varias publicaciones desde su fila, eligiendo puerto, dominio y cifrado.' if lang == 'es' else 'Save the destination, then add one or more publications from its row, choosing port, domain and encryption.' }}</p>
       <form id="manual-service-form" class="grid-form">
         <label>{{ t('advanced.manual_name') }}<input id="manual-service-name" placeholder="{{ t('common.optional') }}"></label>
         <label>{{ t('advanced.manual_host') }}<input id="manual-service-host" placeholder="myapp_web_1" required></label>
@@ -271,9 +266,8 @@
             <option value="both">TCP + UDP</option>
           </select>
         </label>
-        <label>{{ t('advanced.manual_public_port') }}<input id="manual-service-public-port" type="number" min="1" max="65535" placeholder="{{ t('advanced.manual_public_port_placeholder') }}"></label>
+        <label hidden>{{ t('advanced.manual_public_port') }}<input id="manual-service-public-port" type="number" min="1" max="65535" placeholder="{{ t('advanced.manual_public_port_placeholder') }}"></label>
         <div class="row">
-          <button type="submit" data-mode="open">{{ t('advanced.manual_add_open') }}</button>
           <button type="submit" class="ghost" data-mode="add">{{ t('advanced.manual_add_only') }}</button>
         </div>
       </form>
@@ -328,6 +322,5 @@
   {{ config_json|safe }}
 </script>
 <script src="/static/app.js?v={{ app_version }}"></script>
-<script src="/static/secure.js?v={{ app_version }}" defer></script>
 </body>
 </html>

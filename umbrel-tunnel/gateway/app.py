@@ -45,7 +45,7 @@ import sync
 import wireguard
 from vps import VPSClient, VPSError
 
-VERSION = os.environ.get("APP_VERSION", "1.2.0")
+VERSION = os.environ.get("APP_VERSION", "1.3.0")
 RESERVED_PUBLIC_PORTS = {22}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
 DEV_MODE = os.environ.get("UMBREL_TUNNEL_DEV") == "1"
@@ -721,13 +721,14 @@ def _create_or_open_exposure(
     service: dict,
     name: str = "",
     requested_port: int | None = None,
+    new_publication: bool = False,
 ) -> tuple[dict, bool, bool]:
-    """Create an exposure or return the existing one for the same target.
+    """Create an independent publication when requested; preserve legacy dedup.
 
     The caller must hold ``_sync_lock``. Returns ``(exposure, port_changed,
     existing)``.
     """
-    existing = _find_exposure_for_service(config, service)
+    existing = None if new_publication else _find_exposure_for_service(config, service)
     if existing is not None:
         existing["target_ip"] = service["target_ip"]
         existing["target_port"] = service["target_port"]
@@ -772,7 +773,7 @@ def _sync_exposure(exposure_id: str, retry_conflict: bool = True) -> tuple[dict 
     if retry_conflict:
         current = state.load()
         exposure = state.find_exposure(current, exposure_id)
-        if exposure and exposure.get("access_mode", "direct") == "direct" and int(exposure.get("sync_error_status") or 0) == 409:
+        if exposure and not exposure.get("strict_port") and exposure.get("access_mode", "direct") == "direct" and int(exposure.get("sync_error_status") or 0) == 409:
             new_port = None
             previous_port = exposure.get("public_port")
             # Only the state mutation happens under the lock; the retry sync
@@ -819,6 +820,7 @@ def manual_service_view(item: dict, config: dict | None = None) -> dict:
         **item,
         "target": f"{item.get('host')}:{item.get('port')}",
         "exposure": exposure_view(exposure) if exposure else None,
+        "exposures": [exposure_view(e) for e in config.get("exposures", []) if str(e.get("service_id", "")).startswith(prefix)],
     }
 
 
@@ -848,48 +850,66 @@ def exposure_view(exposure: dict) -> dict:
     return view
 
 
-def configure_secure_access(config: dict, exposure: dict, body: dict) -> None:
-    """Configure before syncing, so a new TLS service is never exposed in cleartext."""
+def configure_publication_access(config: dict, exposure: dict, body: dict) -> None:
+    """Resolve domain, port and transport before any public rule is applied."""
     mode = str(body.get("access_mode") or "direct")
-    if mode not in {"direct", "https", "tls"}:
-        raise ValueError("access_mode: direct / https / tls")
+    if mode not in {"direct", "http", "https", "tls"}:
+        raise ValueError("access_mode: direct / http / https / tls")
+    domain = str(body.get("domain") or "").strip().lower()
+    if "subdomain" in body:
+        base = (config.get("settings") or {}).get("base_domain", "")
+        if not base:
+            raise ValueError("Configura primero el dominio base / Configure the base domain first")
+        sub = str(body["subdomain"]).strip().lower()
+        if sub and not all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", part) for part in sub.split(".")):
+            raise ValueError("Subdominio inválido / Invalid subdomain")
+        domain = (sub + "." if sub else "") + base
+    if domain and not valid_public_domain(domain):
+        raise ValueError("Dominio público inválido / Invalid public domain")
     if mode == "direct":
         if "public_port" in body:
             port = _requested_public_port(body)
             if port is None:
                 raise ValueError("invalid_public_port")
             validate_public_port(port, exposure.get("protocol", "tcp"))
-            if public_port_in_use(config, port, exposure["id"], exposure.get("protocol", "tcp")):
+            if any(e.get("id") != exposure["id"] and e.get("protocol", "tcp") == exposure.get("protocol", "tcp") and int(e.get("public_port", 0)) == port for e in config.get("exposures", [])):
                 raise ValueError("public_port_in_use")
             exposure["public_port"] = port
-        exposure.update(access_mode="direct", domains=[], tls={"mode": "none"})
+        exposure.update(access_mode="direct", domains=[domain] if domain else [], tls={"mode": "none"})
+        if any(e.get("id") != exposure["id"] and e.get("access_mode", "direct") in {"http", "https", "tls"} for e in config.get("exposures", [])) and exposure.get("protocol", "tcp") == "tcp" and exposure["public_port"] in {80, 443}:
+            raise ValueError("80/443 reservados para proxy web y ACME / Reserved for web proxy and ACME")
         return
-    domain = str(body.get("domain") or "").strip().lower()
-    labels = domain.split(".")
-    if (len(domain) > 253 or len(labels) < 2 or
-            any(not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", part) for part in labels)):
+    if not valid_public_domain(domain):
         raise ValueError("Dominio público inválido / Invalid public domain")
     if exposure.get("protocol", "tcp") != "tcp":
-        raise ValueError("HTTPS/TLS requiere TCP / requires TCP")
-    if body.get("accept_acme_terms") is not True:
+        raise ValueError("HTTP/HTTPS/TLS requiere TCP / requires TCP")
+    if mode != "http" and body.get("accept_acme_terms") is not True and not (exposure.get("access_mode") == mode and exposure.get("tls", {}).get("mode") == "acme" and exposure.get("domains") == [domain]):
         raise ValueError("Acepta las condiciones de Let's Encrypt / Accept Let's Encrypt terms")
-    port = 443 if mode == "https" else _requested_public_port(body)
-    if not port or port in {22, 80} or (mode == "tls" and port == 443):
-        raise ValueError("Puerto TLS inválido / Invalid TLS port")
+    port = _requested_public_port(body)
+    if mode == "https":
+        if port not in {None, 443}:
+            raise ValueError("HTTPS usa el puerto público 443 / HTTPS uses public port 443")
+        port = 443
+    if not port or port == 22 or (mode != "http" and port == 80) or (mode in {"http", "tls"} and port == 443):
+        raise ValueError("Puerto incompatible con el modo / Port incompatible with access mode")
     for other in config.get("exposures", []):
         if other.get("id") == exposure["id"]:
             continue
-        if domain in other.get("domains", []):
-            raise ValueError("Dominio ya publicado / Domain already published")
         if other.get("protocol", "tcp") != "tcp":
             continue
         other_mode = other.get("access_mode", "direct")
         other_port = int(other.get("public_port", 0))
         if other_mode == "direct" and other_port in {80, 443}:
             raise ValueError("Retira primero las publicaciones TCP 80/443 / Remove direct TCP 80/443 first")
-        if other_port == port and not (mode == "https" and other_mode == "https"):
+        if other_port == port and not (mode in {"http", "https"} and other_mode == mode and domain not in other.get("domains", [])):
             raise ValueError("Puerto ya publicado / Port already published")
-    exposure.update(access_mode=mode, domains=[domain], tls={"mode": "acme"}, public_port=port)
+    exposure.update(access_mode=mode, domains=[domain], tls={"mode": "none" if mode == "http" else "acme"}, public_port=port)
+
+
+def valid_public_domain(domain: str) -> bool:
+    return (len(domain) <= 253 and len(domain.split(".")) >= 2
+            and not re.fullmatch(r"[0-9.]+", domain)
+            and all(re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", part) for part in domain.split(".")))
 
 
 def ensure_peer(config: dict, public: str) -> None:
@@ -1185,6 +1205,7 @@ def services():
         item["public_port"] = int(exposure.get("public_port", 0)) if exposure else 0
         item["default_public_port"] = 2222 if svc["target_port"] == 22 else svc["target_port"]
         item["can_open"] = svc.get("protocol", "tcp") in {"tcp", "udp"}
+        item["exposures"] = [exposure_view(e) for e in config.get("exposures", []) if e.get("service_id") == svc["id"] or (e.get("target_ip") == svc.get("target_ip") and e.get("target_port") == svc.get("target_port") and e.get("protocol", "tcp") == svc.get("protocol", "tcp"))]
         result.append(item)
     return jsonify(result)
 
@@ -1252,10 +1273,12 @@ def create_exposure():
                     service,
                     str(body.get("name") or ""),
                     requested_port,
+                    new_publication=body.get("new_publication") is True,
                 )
                 if "access_mode" in body:
-                    configure_secure_access(config, exposure, body)
+                    configure_publication_access(config, exposure, body)
                     port_changed = False
+                    exposure["strict_port"] = True
             except ValueError as exc:
                 code = str(exc)
                 if "access_mode" in body:
@@ -1291,9 +1314,10 @@ def update_exposure(exposure_id: str):
 
             if "access_mode" in body:
                 try:
-                    configure_secure_access(config, exposure, body)
+                    configure_publication_access(config, exposure, body)
                 except ValueError as exc:
                     return jsonify({"error": str(exc)}), 400
+                exposure["strict_port"] = True
 
             if "public_port" in body and "access_mode" not in body:
                 try:
@@ -1772,6 +1796,11 @@ def update_settings():
     with state.LOCK:
         config = state.load()
         vps = config.setdefault("vps", {})
+        if "base_domain" in body:
+            domain = str(body["base_domain"]).strip().lower()
+            if domain and not valid_public_domain(domain):
+                return jsonify({"error": "Dominio base inválido / Invalid base domain"}), 400
+            config.setdefault("settings", {})["base_domain"] = domain
         if "api" in body:
             api = str(body["api"]).strip().rstrip("/")
             parsed = urllib.parse.urlparse(api)

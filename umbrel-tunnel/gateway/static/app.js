@@ -18,6 +18,7 @@
     status: null,
     services: [],
     exposures: [],
+    certificates: [],
     manualServices: [],
     wg: null,
     bootstrap: null,
@@ -346,6 +347,12 @@
     return translated !== key ? translated : (svc.description || '');
   }
 
+  const say = (es, en) => UT.lang === 'es' ? es : en;
+  function publicationsFor(svc) {
+    return state.exposures.filter(e => e.service_id === svc.id ||
+      (e.target_ip === svc.target_ip && Number(e.target_port) === Number(svc.target_port) && (e.protocol || 'tcp') === (svc.protocol || 'tcp')));
+  }
+
   function renderServices() {
     if (document.activeElement && document.activeElement.matches('#services-body input')) return;
     const body = $('services-body');
@@ -353,7 +360,7 @@
     const query = state.search.trim().toLowerCase();
     const candidates = [...state.services];
     for (const exposure of state.exposures) {
-      if (!candidates.some((svc) => svc.exposure_id === exposure.id)) {
+      if (!candidates.some((svc) => publicationsFor(svc).some(e => e.id === exposure.id))) {
         candidates.push({ id: exposure.service_id || exposure.id, app: exposure.app || exposure.name,
           name: exposure.name, target_ip: exposure.target_ip, target_port: exposure.target_port,
           protocol: exposure.protocol, exposed: true, exposure_id: exposure.id,
@@ -362,6 +369,10 @@
       }
     }
     const list = candidates.filter((svc) => {
+      const pubs = publicationsFor(svc);
+      svc.exposed = pubs.length > 0;
+      svc.exposure_enabled = pubs.some(e => e.enabled);
+      svc.exposure_error = pubs.some(e => e.sync_error);
       const haystack = `${svc.app} ${serviceName(svc)} ${svc.service} ${svc.target_port}`.toLowerCase();
       const matches = state.filter === 'all'
         || (state.filter === 'published' && svc.exposed)
@@ -411,80 +422,40 @@
       tr.append(notes);
 
       const portCell = document.createElement('td');
-      const input = document.createElement('input');
-      input.type = 'number';
-      input.min = '1';
-      input.max = '65535';
-      input.value = String(svc.exposed && svc.public_port
-        ? svc.public_port
-        : (svc.default_public_port || svc.target_port));
-      input.dataset.portFor = svc.id;
-      input.disabled = Boolean(svc.exposed) || !svc.can_open;
-      input.setAttribute('aria-label', t('services.aria.port', { name: displayName }));
-      input.title = t('ui.help.public');
-      portCell.append(input);
+      const pubs = publicationsFor(svc);
+      for (const exposure of pubs) {
+        const publication = el('div', 'publication');
+        const host = (exposure.domains || [])[0] || (((state.status || {}).vps || {}).endpoint || '').replace(/:\d+$/, '') || 'VPS';
+        const mode = exposure.access_mode || 'direct';
+        publication.append(el('strong', '', `${host}:${exposure.public_port}`));
+        publication.append(el('span', 'sub', `${mode === 'direct' ? say('Sin cifrado añadido', 'No added encryption') : mode.toUpperCase()} · ${exposure.enabled ? (exposure.sync_error ? say('Error', 'Error') : say('Aplicado', 'Applied')) : say('Pausado', 'Paused')}`));
+        if (['tls','https'].includes(mode)) {
+          const cert = state.certificates.find(c => c.domain === host);
+          publication.append(el('span', 'sub', `${say('Certificado', 'Certificate')}: ${cert ? cert.state : 'pending'}${cert && cert.not_after ? ' · ' + new Date(cert.not_after).toLocaleDateString() : ''}`));
+        }
+        if (exposure.sync_error) publication.append(el('span', 'error-line', exposure.sync_error_detail || exposure.sync_error));
+        const actions = el('div', 'row');
+        const action = (label, callback) => { const b = el('button', 'ghost small', label); b.type = 'button'; b.onclick = callback; actions.append(b); };
+        action(say('Editar', 'Edit'), () => publicationDialog(svc, exposure));
+        action(t(exposure.enabled ? 'ui.pause' : 'ui.resume'), () => updateExposure(exposure.id, {enabled: !exposure.enabled}));
+        action(t('open.close'), () => deleteExposure(exposure));
+        if (exposure.sync_error) action(t('open.retry'), () => retryExposure(exposure));
+        if (exposure.remote_conflict) for (const choice of ['adopt', 'restore']) action(t(`ui.${choice}`), async () => {
+          try { syncFeedback(await api(`/api/exposures/${exposure.id}/resolve`, {method:'POST', body:JSON.stringify({action:choice})}), ''); await refreshAll(); }
+          catch (err) { showGlobal('error',err.message); }
+        });
+        publication.append(actions); portCell.append(publication);
+      }
+      if (!pubs.length) portCell.append(el('span', 'muted', say('Sin publicaciones', 'No publications')));
       tr.append(portCell);
-
       const actionCell = document.createElement('td');
-      let label = t('services.open');
-      let className = 'small';
-      if (svc.exposed) {
-        label = svc.exposure_enabled ? t('services.opened') : t('services.disabled');
-        className = 'ghost small';
-      } else if (!svc.can_open) {
-        label = t('services.badge.udp');
-        className = 'ghost small';
-      }
-      const button = el('button', className, label);
+      const button = el('button', 'small', say('+ Añadir publicación', '+ Add publication'));
       button.type = 'button';
-      button.disabled = Boolean(svc.exposed) || !svc.can_open;
-      if (!svc.exposed && !svc.can_open) button.title = t('services.udp_unsupported');
-      if (!svc.exposed && svc.can_open) {
-        button.addEventListener('click', () => exposeService(svc, button));
-      }
+      button.disabled = !svc.can_open;
+      button.onclick = () => publicationDialog(svc);
       actionCell.append(button);
-      const exposure = state.exposures.find((item) => item.id === svc.exposure_id);
-      if (exposure) {
-        if (exposure.sync_error) {
-          const details = el('details', 'details');
-          details.append(el('summary', '', t('sync.details')),
-            el('span', 'sub', exposure.sync_error_detail || exposure.sync_error));
-          notes.append(details);
-        }
-        button.hidden = true;
-        const action = (key, callback) => {
-          const node = el('button', 'ghost small', t(key));
-          node.type = 'button';
-          node.addEventListener('click', callback);
-          actionCell.append(node);
-        };
-        action(exposure.enabled ? 'ui.pause' : 'ui.resume', () => updateExposure(exposure.id, { enabled: !exposure.enabled }));
-        action('open.change_port', () => changePublicPort(exposure));
-        action('open.close', () => deleteExposure(exposure));
-        if (exposure.sync_error) action('open.retry', () => retryExposure(exposure));
-        if (exposure.remote_conflict) {
-          ['adopt', 'restore'].forEach((choice) => action(`ui.${choice}`, async () => {
-            try {
-              const result = await api(`/api/exposures/${exposure.id}/resolve`, { method: 'POST', body: JSON.stringify({ action: choice }) });
-              syncFeedback(result, '');
-              await refreshAll();
-            } catch (err) { showGlobal('error', err.message); }
-          }));
-        }
-        if (!exposure.sync_error && exposure.enabled) notes.append(el('span', 'sub', t('ui.applied')));
-        const endpoint = ((state.status || {}).vps || {}).endpoint || '';
-        if (endpoint) {
-          const host = endpoint.replace(/:\d+$/, '');
-          const address = `${host}:${exposure.public_port}`;
-          portCell.append(el('span', 'sub', address));
-          action('ui.copy', async () => {
-            try { await navigator.clipboard.writeText(address); showGlobal('ok', t('ui.copy')); }
-            catch (_) { showGlobal('error', t('connection.copy_failed')); }
-          });
-        }
-      }
       const manual = state.manualServices.find((item) => svc.id.startsWith(`manual:${item.id}:`));
-      if (manual && !exposure) {
+      if (manual && !pubs.length) {
         const remove = el('button', 'danger ghost small', t('advanced.manual_remove'));
         remove.addEventListener('click', () => deleteManualService(manual));
         actionCell.append(remove);
@@ -653,6 +624,78 @@
     } finally {
       setPending(button, false);
     }
+  }
+
+  async function publicationDialog(service, exposure = null) {
+    let settings;
+    try { settings = await api('/api/settings'); } catch (err) { showGlobal('error', err.message); return; }
+    const base = (settings.settings || {}).base_domain || '';
+    const domain = exposure && (exposure.domains || [])[0] || '';
+    const fullDomain = Boolean(domain && (!base || (domain !== base && !domain.endsWith('.' + base))));
+    const mode = exposure && exposure.access_mode || 'direct';
+    const dialog = el('dialog', 'action-dialog publication-dialog');
+    dialog.setAttribute('aria-label', say('Publicar servicio', 'Publish service'));
+    const form = el('form', 'stack');
+    form.append(el('h2', '', say(exposure ? 'Editar publicación' : 'Añadir publicación', exposure ? 'Edit publication' : 'Add publication')));
+    form.append(el('p', 'muted', `${serviceName(service)} → ${service.target_ip}:${service.target_port} · ${String(service.protocol || 'tcp').toUpperCase()}`));
+    const field = (label, node) => { const l = el('label', '', label); l.append(node); form.append(l); return l; };
+    const kind = el('select');
+    for (const [value,label] of [['direct',say('Servicio TCP/UDP', 'TCP/UDP service')],['web',say('Servicio web HTTP', 'HTTP web service')]]) {
+      const option = el('option','',label); option.value=value; kind.append(option);
+    }
+    kind.value = ['http','https'].includes(mode) ? 'web' : 'direct';
+    kind.disabled = service.protocol === 'udp'; field(say('Tipo de servicio', 'Service type'),kind);
+    const port = el('input'); port.type='number'; port.min='1'; port.max='65535'; port.required=true;
+    port.value=String(exposure ? exposure.public_port : (service.default_public_port || service.target_port));
+    field(say('Puerto público', 'Public port'),port);
+    const useDomain=el('input'); useDomain.type='checkbox'; useDomain.checked=Boolean(domain);
+    field(say('Usar dominio / subdominio', 'Use domain / subdomain'),useDomain);
+    const sub=el('input'); sub.maxLength=253;
+    sub.value=fullDomain ? domain : domain === base ? '' : domain.endsWith('.'+base) ? domain.slice(0,-base.length-1) : '';
+    sub.placeholder=fullDomain ? 'electrs.example.org' : 'electrs';
+    const domainField=field(fullDomain ? say('Dominio completo existente', 'Existing full domain') : say('Subdominio (vacío = dominio base)', 'Subdomain (empty = base domain)'), sub);
+    domainField.append(el('span','sub',fullDomain ? '' : (base ? '.'+base : say('Configura primero el dominio base.', 'Configure the base domain first.'))));
+    const configure=el('button','ghost small',say('Configurar dominio base', 'Configure base domain')); configure.type='button';
+    configure.onclick=()=>{dialog.close();switchTab('connection');$('base-domain').focus();}; form.append(configure);
+    const encrypted=el('input'); encrypted.type='checkbox'; encrypted.checked=['tls','https'].includes(mode);
+    field(say('Terminar SSL/TLS en el VPS (certificado automático)', 'Terminate SSL/TLS on VPS (automatic certificate)'),encrypted);
+    const terms=el('input'); terms.type='checkbox'; terms.checked=Boolean(exposure && exposure.tls && exposure.tls.mode==='acme');
+    const termsField=field(say('Acepto las condiciones de Let’s Encrypt; los nombres del certificado serán públicos.', 'I accept Let’s Encrypt terms; certificate names will be public.'),terms);
+    const termsLink=el('a','','Let’s Encrypt'); termsLink.href='https://letsencrypt.org/repository/'; termsLink.target='_blank'; termsLink.rel='noopener noreferrer'; termsField.append(termsLink);
+    const preview=el('p','publication-preview'); form.append(preview);
+    form.append(el('p','muted',say('Sin cifrado añadido no desactiva el TLS propio del servicio. Un mismo destino puede tener varias publicaciones; añadir no sustituye las existentes.', 'No added encryption does not disable a service’s own TLS. One destination can have multiple publications; adding does not replace existing ones.')));
+    const confirm=el('input');confirm.type='checkbox';confirm.required=true;
+    field(say('Confirmo publicar este servicio en Internet.', 'I confirm publishing this service on the Internet.'),confirm);
+    const error=el('p','error-line');error.setAttribute('role','alert'); form.append(error);
+    const buttons=el('div','row'); const cancel=el('button','ghost',t('common.close'));cancel.type='button';cancel.onclick=()=>dialog.close();
+    const save=el('button','',say('Guardar publicación','Save publication'));save.type='submit';buttons.append(cancel,save);form.append(buttons);
+    const update=()=>{
+      encrypted.disabled=service.protocol==='udp';
+      if(encrypted.checked || kind.value==='web') useDomain.checked=true;
+      const needsDomain=useDomain.checked;
+      domainField.hidden=!needsDomain; sub.required=fullDomain && needsDomain;
+      configure.hidden=Boolean(base) || fullDomain;
+      termsField.hidden=!encrypted.checked;terms.required=encrypted.checked;
+      port.disabled=kind.value==='web' && encrypted.checked;
+      const fqdn=needsDomain ? (fullDomain ? sub.value : [sub.value,base].filter(Boolean).join('.')) : (((state.status||{}).vps||{}).endpoint||'VPS').replace(/:\d+$/,'');
+      preview.textContent=`${fqdn}:${port.value} · ${kind.value==='web' ? (encrypted.checked?'HTTPS':'HTTP') : (encrypted.checked?'TLS':String(service.protocol||'tcp').toUpperCase())} → ${service.target_ip}:${service.target_port}`;
+    };
+    kind.onchange=()=>{ if(kind.value==='web')port.value=encrypted.checked?'443':'80';update(); };
+    encrypted.onchange=()=>{if(kind.value==='web')port.value=encrypted.checked?'443':'80';update();};
+    useDomain.onchange=update;sub.oninput=update;port.oninput=update;update();
+    form.onsubmit=async event=>{
+      event.preventDefault();save.disabled=true;error.textContent='';
+      try {
+        if(useDomain.checked && !base && !fullDomain)throw new Error(say('Configura primero el dominio base.', 'Configure the base domain first.'));
+        const payload={access_mode:kind.value==='web'?(encrypted.checked?'https':'http'):(encrypted.checked?'tls':'direct'), public_port:Number(port.value),accept_acme_terms:terms.checked, domain:''};
+        if(useDomain.checked){if(fullDomain)payload.domain=sub.value;else payload.subdomain=sub.value;}
+        const result=await api(exposure?`/api/exposures/${exposure.id}`:'/api/exposures',{method:exposure?'PATCH':'POST',body:JSON.stringify({...payload,service_id:service.id,new_publication:!exposure})});
+        await refreshAll();
+        if(!result.ok){dialog.close();syncFeedback(result,'');return;}
+        dialog.close();showGlobal('ok',say('Publicación guardada. Comprueba el certificado si usas TLS.', 'Publication saved. Check certificate status when using TLS.'));
+      } catch(err){error.textContent=err.message;} finally{save.disabled=false;}
+    };
+    dialog.append(form);document.body.append(dialog);dialog.addEventListener('close',()=>dialog.remove(),{once:true});dialog.showModal();
   }
 
   async function updateExposure(id, patch) {
@@ -859,6 +902,14 @@
     const settings = await api('/api/settings');
     $('settings-api').value = settings.api || '';
     $('settings-interval').value = String((settings.settings && settings.settings.sync_interval) || 30);
+    $('base-domain').value = (settings.settings || {}).base_domain || '';
+    await refreshCertificates();
+  }
+
+  async function refreshCertificates() {
+    state.certificates = await api('/api/certificates');
+    $('certificate-status').replaceChildren();
+    for (const c of state.certificates) $('certificate-status').append(el('p','',`${c.domain} · ${c.state}${c.not_after ? ' · '+new Date(c.not_after).toLocaleString() : ''}${c.error ? ' · '+c.error : ''}`));
   }
 
   async function refreshAll() {
@@ -868,6 +919,7 @@
       refreshServices(),
       refreshExposures(),
       refreshManualServices(),
+      refreshCertificates(),
     ]);
     const failure = results.find((r) => r.status === 'rejected');
     renderServices();
@@ -912,6 +964,14 @@
   }
 
   function bind() {
+    $('settings-slot').prepend($('domain-settings-card'));
+    $('domain-settings-form').onsubmit=async event=>{
+      event.preventDefault();
+      try { await api('/api/settings',{method:'POST',body:JSON.stringify({base_domain:$('base-domain').value})});$('domain-message').textContent=say('Dominio guardado. Las publicaciones existentes no se modifican.', 'Domain saved. Existing publications are unchanged.'); }
+      catch(err){$('domain-message').textContent=err.message;}
+    };
+    $('certificate-refresh').onclick=()=>refreshCertificates().catch(err=>showGlobal('error',err.message));
+    $('certificate-retry').onclick=async()=>{try{await api('/api/certificates/retry',{method:'POST'});showGlobal('ok',say('Reintento programado.','Retry scheduled.'));}catch(err){showGlobal('error',err.message);}};
     $('manual-service-slot').append($('manual-services-card'));
     $('diagnostics-slot').append($('run-diagnostics').closest('section'));
     $('settings-slot').append($('api-settings-card'));

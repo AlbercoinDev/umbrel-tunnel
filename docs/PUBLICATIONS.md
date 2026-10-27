@@ -101,14 +101,20 @@ tienda de Umbrel, sin desinstalar ni volver a vincular.
 
 ## Dominios, HTTPS y TLS
 
-Las publicaciones conservan TCP/UDP directo por defecto. La sección opcional
-**Dominios, HTTPS y TLS** permite publicar un servicio nuevo o convertir uno
-existente, ahora o después de vincular el VPS, sin reinstalar el túnel:
+Las publicaciones conservan TCP/UDP directo por defecto. Configura el dominio
+base opcional en **Configuración y diagnóstico** y usa **Añadir publicación** en
+la fila de cada servicio. El formulario reúne dominio, puerto y cifrado. Un mismo
+destino permite varias entradas independientes, como Electrs con el mismo dominio
+en 50001 sin TLS y 50002 con TLS, ambas hacia el puerto interno 50001.
+Las entradas existentes se conservan; cambiar el dominio base no las reescribe.
 
 - `https`: varios dominios comparten 443; el VPS termina HTTPS y conecta por HTTP
   al servicio a través del proxy local de Umbrel y WireGuard.
 - `tls`: un puerto TCP dedicado termina TLS en el VPS; por ejemplo,
   `electrs.umbrel.nodobitcoin.org:50002` conecta con Electrs TCP en 50001.
+- `http`: proxy web por dominio sin certificado; varios nombres pueden compartir
+  el puerto. TCP/UDP directo también admite un dominio como dirección pública,
+  pero no puede multiplexar destinos por nombre en el mismo puerto.
 - Los certificados individuales de Let's Encrypt se emiten y renuevan con ACME.
   No se solicitan certificados wildcard ni credenciales DNS.
 

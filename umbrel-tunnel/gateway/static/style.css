@@ -145,6 +145,11 @@ input, select, textarea, button {
 textarea { width: 100%; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .82rem; }
 input:focus, textarea:focus, select:focus { outline: 2px solid rgba(247, 147, 26, .55); outline-offset: 1px; }
 input[type="number"] { width: 120px; }
+.publication { padding: .6rem 0; border-bottom: 1px solid var(--border, #333); }
+.publication:last-child { border-bottom: 0; }
+.publication-dialog { width: min(620px, 94vw); max-height: 90vh; overflow-y: auto; }
+.publication-dialog input:not([type="checkbox"]), .publication-dialog select { max-width: 100%; }
+.publication-preview { overflow-wrap: anywhere; padding: .75rem; border: 1px solid var(--border, #333); border-radius: .5rem; }
 button {
   background: var(--accent);
   border: 0;

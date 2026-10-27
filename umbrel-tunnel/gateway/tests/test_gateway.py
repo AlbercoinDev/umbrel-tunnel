@@ -729,7 +729,7 @@ class FakeVPS:
         raise VPSError("forward not found", status=404)
 
     def delete_forward(self, forward_id: str):
-        self.forwards = [f for f in self.forwards if f["id"] != forward_id]
+        type(self).forwards = [f for f in self.forwards if f["id"] != forward_id]
 
     def list_peers(self):
         return [
