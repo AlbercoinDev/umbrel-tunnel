@@ -150,7 +150,9 @@ Para actualizar la tienda:
 1. Cambia el código y publica la imagen multiarquitectura desde este repositorio.
 2. Fija etiqueta y digest en `umbrel-tunnel/docker-compose.yml`.
 3. Copia `umbrel-app.yml` y `docker-compose.yml` a
-   `albercoin-store-umbrel-tunnel/` en la tienda.
+   `albercoin-store-umbrel-tunnel/` en la tienda. Conserva el campo `icon` de la
+   tienda (URL de su `icon.svg`); aquí se usa un SVG inline. El resto de los
+   campos del manifiesto y la configuración Compose deben coincidir.
 4. Sube la tienda a `master` y espera a que Umbrel refresque el catálogo.
 
 ## Release del VPS

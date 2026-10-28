@@ -21,6 +21,7 @@
 - Every `v*` tag triggers **both** VPS release and gateway multi-architecture image publication. The VPS workflow requires the tag without `v` to equal `vps/VERSION`.
 - Umbrel Compose downloads a published image; it does not build local gateway changes. Pin both tag and multi-architecture index digest in `umbrel-tunnel/docker-compose.yml` after publishing.
 - The actual Community App Store is the separate `AlbercoinDev/Umbrel-AppStore-Albercoin` repository. Copy this repo's manifest/Compose there under `albercoin-store-umbrel-tunnel/`; keep that app ID, `APP_HOST=albercoin-store-umbrel-tunnel_gateway_1`, internal port 8081, and manifest port 8642 aligned (CI checks them).
+- Preserve the store manifest's hosted `icon.svg` URL when copying: this repo's manifest uses inline SVG instead.
 
 ## Constraints to preserve
 - Discovery parses other apps' `exports.sh`, `.env`, and Compose as data only: never source or execute them, and do not add a Docker socket mount.
