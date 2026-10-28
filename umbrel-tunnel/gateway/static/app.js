@@ -1266,6 +1266,16 @@
         await loadWg();
         switchTab('connection');
       } catch (err) {
+        if (err.code === 'vps_close_failed' && window.confirm(t('connection.force_unpair_confirm'))) {
+          try {
+            await api('/api/unpair', { method: 'POST', body: JSON.stringify({ force: true }) });
+            showGlobal('error', t('connection.force_unpaired'));
+            await refreshAll();
+            await loadWg();
+            switchTab('connection');
+          } catch (forceErr) { showGlobal('error', forceErr.message); }
+          return;
+        }
         showGlobal('error', err.message);
       }
     });

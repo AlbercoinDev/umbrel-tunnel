@@ -342,9 +342,31 @@ func cmdPeer(ctx context.Context, args []string) error {
 		if !ok {
 			return fmt.Errorf("peer %s no encontrado", args[1])
 		}
+		fs := flag.NewFlagSet("peer config", flag.ContinueOnError)
+		keyFile := fs.String("private-key-file", "", "archivo local con la clave privada del peer (no se guarda en el VPS)")
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
+		}
+		if fs.NArg() != 0 {
+			return fmt.Errorf("argumentos inesperados: %v", fs.Args())
+		}
 		clientKey, err := svc.ClientPrivateKey()
-		if err != nil || clientKey == "" {
-			return fmt.Errorf("no hay clave privada del cliente (modo manual)")
+		if *keyFile != "" {
+			data, readErr := os.ReadFile(*keyFile)
+			if readErr != nil {
+				return readErr
+			}
+			clientKey, err = strings.TrimSpace(string(data)), nil
+		}
+		if err != nil || !service.ValidPubKey(clientKey) {
+			return fmt.Errorf("falta la clave privada de este peer; usa peer config ID --private-key-file RUTA")
+		}
+		derived, err := svc.WG.PubKey(ctx, clientKey)
+		if err != nil {
+			return err
+		}
+		if derived != peer.PublicKey {
+			return fmt.Errorf("la clave privada no corresponde al peer solicitado")
 		}
 		serverPub, err := svc.ServerPublicKey()
 		if err != nil {

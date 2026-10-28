@@ -47,7 +47,7 @@ import sync
 import wireguard
 from vps import VPSClient, VPSError
 
-VERSION = os.environ.get("APP_VERSION", "1.4.0")
+VERSION = os.environ.get("APP_VERSION", "1.4.1")
 RESERVED_PUBLIC_PORTS = {22}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
 DEV_MODE = os.environ.get("UMBREL_TUNNEL_DEV") == "1"
@@ -1660,11 +1660,25 @@ def register_peer():
 
 @app.post("/api/unpair")
 def unpair():
+    with _sync_lock:
+        return _unpair()
+
+
+def _unpair():
     # Network calls happen without the state lock: status/services polling
     # must keep working while the VPS is slow or unreachable.
     config = state.load()
     vps = config.get("vps") or {}
-    if vps.get("api") and vps.get("token"):
+    # Remove public listeners while the peer still provides access to the API.
+    # Do not forget credentials or tear down the tunnel on incomplete cleanup.
+    remote_cleaned = True
+    try:
+        sync.remove_all(config)
+    except VPSError as exc:
+        if (request.get_json(silent=True) or {}).get("force") is not True:
+            return api_error("vps_close_failed", 502, detail=str(exc))
+        remote_cleaned = False
+    if remote_cleaned and vps.get("api") and vps.get("token"):
         client = VPSClient(vps["api"], vps["token"])
         try:
             for peer in client.list_peers():
@@ -1672,7 +1686,6 @@ def unpair():
                     client.delete_peer(peer["id"])
         except VPSError:
             pass
-    sync.remove_all(config)
     with state.LOCK:
         config = state.load()
         config["vps"] = {}
@@ -1687,7 +1700,7 @@ def unpair():
     proxy.stop()
     sync.udp.stop()
     wireguard.remove()
-    return jsonify({"ok": True})
+    return jsonify({"ok": True, "remote_cleaned": remote_cleaned})
 
 
 @app.get("/api/wireguard")
@@ -1765,6 +1778,11 @@ def manual_wireguard():
 
 @app.post("/api/wireguard/rotate")
 def rotate_wireguard():
+    with _sync_lock:
+        return _rotate_wireguard()
+
+
+def _rotate_wireguard():
     config = state.load()
     vps = config.get("vps") or {}
     endpoint = str(vps.get("endpoint") or "")
@@ -1777,29 +1795,45 @@ def rotate_wireguard():
 
     old_text = wireguard.config_text()
     old_private = wireguard.private_key()
+    local_changed = False
     try:
         private, public = wireguard.generate_keypair()
         text = wireguard.build_config(private, client_ip, server_pubkey, endpoint, subnet_cidr, mtu)
+        client = VPSClient(vps["api"], vps["token"], timeout=3)
+        peer = next((p for p in client.list_peers() if p.get("allowed_ip") == client_ip), None)
+        if peer is None:
+            raise VPSError("peer no encontrado; registra primero la clave actual")
+        # Prepare over the OLD tunnel. Old VPS versions reject this endpoint
+        # before any local key/config is changed.
+        rotation = client.prepare_rotation(peer["id"], public)
+        local_changed = True
         wireguard.save_private_key(private)
         wireguard.save_config(text)
         ok, message = wireguard.apply_saved()
         if not ok:
             raise wireguard.WireGuardError(message)
+        deadline = time.monotonic() + 45
+        while True:
+            try:
+                client.confirm_rotation(peer["id"], rotation["rotation_id"])
+                break
+            except VPSError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(1)
         with state.LOCK:
             current = state.load()
-            current["vps"] = {**(current.get("vps") or {}), "peer_registered": False}
+            current["vps"] = {**(current.get("vps") or {}), "peer_registered": True}
             state.save(current)
-            ensure_peer(current, public)
-            state.save(current)
-    except (wireguard.WireGuardError, VPSError) as exc:
+    except (wireguard.WireGuardError, VPSError, OSError) as exc:
         # Roll back to the last working key/config.
         try:
-            if old_private:
+            if local_changed and old_private:
                 wireguard.save_private_key(old_private)
-            if old_text:
+            if local_changed and old_text:
                 wireguard.save_config(old_text)
                 wireguard.apply_saved()
-        except wireguard.WireGuardError:
+        except (wireguard.WireGuardError, OSError):
             pass
         return api_error("wg_rotate_failed", 502, detail=str(exc))
 

@@ -86,5 +86,11 @@ class VPSClient:
     def update_peer(self, peer_id: str, patch: dict) -> dict:
         return self._request("PUT", f"/api/peers/{peer_id}", patch)
 
+    def prepare_rotation(self, peer_id: str, public_key: str) -> dict:
+        return self._request("POST", f"/api/peers/{peer_id}/rotation", {"public_key": public_key})
+
+    def confirm_rotation(self, peer_id: str, rotation_id: str) -> dict:
+        return self._request("POST", f"/api/peers/{peer_id}/rotation/confirm", {"rotation_id": rotation_id})
+
     def delete_peer(self, peer_id: str) -> None:
         self._request("DELETE", f"/api/peers/{peer_id}")

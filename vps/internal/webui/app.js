@@ -287,12 +287,16 @@
       public_port: Number(form.get('public_port')),
       target_ip: String(form.get('target_ip') || '').trim(),
       target_port: Number(form.get('target_port')),
-      protocol: 'tcp',
+      protocol: String(form.get('protocol') || 'tcp'),
       access_mode: String(form.get('access_mode') || 'direct'),
       domain: String(form.get('domain') || '').trim().toLowerCase(),
       accept_acme_terms: form.get('accept_acme_terms') === 'on',
       enabled: true,
     };
+    if (body.protocol === 'udp' && body.access_mode !== 'direct') {
+      showMessage('forward-msg', 'UDP solo admite modo directo, sin terminación HTTP/HTTPS/TLS.', false);
+      return;
+    }
     try {
       await api('/api/forwards', { method: 'POST', body: JSON.stringify(body) });
       event.target.reset();

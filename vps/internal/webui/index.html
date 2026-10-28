@@ -60,6 +60,7 @@
       <form id="forward-form" class="row wrap">
         <input name="name" placeholder="nombre" required>
         <select name="access_mode" aria-label="Modo de acceso"><option value="direct">TCP directo (con o sin dominio)</option><option value="http">HTTP por dominio (sin TLS)</option><option value="https">HTTPS :443 → HTTP</option><option value="tls">TLS TCP → TCP</option></select>
+        <select name="protocol" aria-label="Protocolo"><option value="tcp">TCP</option><option value="udp">UDP (solo directo)</option></select>
         <input name="domain" placeholder="subdominio.dominio.org" aria-label="Dominio público">
         <input name="public_port" type="number" min="1" max="65535" placeholder="público" required>
         <select name="target_ip" id="target-ip"></select>
@@ -76,7 +77,7 @@
 
     <section class="card">
       <h2>Token</h2>
-      <p class="muted">Rotar el token invalida el que usa la app de Umbrel. Tendrás que volver a emparejar.</p>
+      <p class="muted">Rotar el token invalida el que usa Umbrel. Guarda el nuevo token en Configuración y diagnóstico → Opciones avanzadas de la app; no es necesario desvincular ni cambiar las claves WireGuard.</p>
       <button id="rotate" class="danger">Rotar token</button>
       <p id="token-msg" class="msg" hidden></p>
     </section>

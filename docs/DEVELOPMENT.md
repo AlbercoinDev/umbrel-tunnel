@@ -2,7 +2,7 @@
 
 ## Requisitos
 
-- Go 1.22+ para el VPS.
+- Go 1.26.0+ para el VPS (fuente de verdad: `vps/go.mod`).
 - Python 3.11+ para el gateway.
 - Docker + buildx para la imagen del gateway.
 - Node 20+ solo si quieres ejecutar el linter oficial de Umbrel.
@@ -40,7 +40,7 @@ python3 -m venv .venv
 . .venv/bin/activate
 pip install flask pyyaml waitress
 
-python3 -m py_compile app.py catalog.py detect.py i18n.py proxy.py serve.py state.py sync.py vps.py wireguard.py
+python3 -m py_compile *.py
 python3 -m unittest discover -s tests -v
 ```
 
@@ -170,7 +170,7 @@ Para actualizar la tienda:
 ## Convenciones
 
 - Código y nombres de API en inglés; textos de UI en `i18n/*.json`.
-- Errores de API con `{code, error}` y, si aplica, `detail`.
+- Errores Go con `{code, error}` (`code: http_<estado>`); Umbrel usa códigos funcionales y, si aplica, `detail`.
 - Secretos con permisos `600`; escritura atómica.
 - No ejecutar nunca `exports.sh` ni comandos de otras apps.
 - No montar el socket de Docker.

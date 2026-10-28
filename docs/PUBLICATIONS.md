@@ -1,4 +1,4 @@
-# Publicaciones TCP/UDP y futura integración TLS
+# Publicaciones TCP/UDP, HTTP, HTTPS y TLS
 
 ## Uso diario
 
@@ -82,7 +82,7 @@ de coordinación autenticado adicional; no se ha abierto una API nueva a Interne
 
 Actualiza el binario del VPS y la imagen del gateway conjuntamente: el gateway
 envía el campo de propiedad `managed_by`, que las API antiguas no reconocen.
-La versión 1.1.0 se distribuye con binarios amd64/arm64 y una imagen multiarch
+La versión 1.4.1 se distribuye con binarios amd64/arm64 y una imagen multiarch
 fijada por digest en la tienda. Publicar esta versión no actualiza automáticamente
 una instalación existente.
 
@@ -100,7 +100,7 @@ sudo umbrel-tunnel doctor
 Desde 1.3.2 basta `sudo umbrel-tunnel update`.
 
 Comprueba que la copia se creó antes de continuar. `update` conserva la
-configuración y reinicia el servicio. Después actualiza la app a 1.1.0 desde la
+configuración y reinicia el servicio. Después actualiza la app a 1.4.1 desde la
 tienda de Umbrel, sin desinstalar ni volver a vincular.
 
 ## Dominios, HTTPS y TLS

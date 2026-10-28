@@ -19,6 +19,7 @@ SSH_PORT=22
 SSH_KEY=""
 ARCH="auto"
 ENDPOINT=""
+TOKEN=""
 API_PORT=""
 WG_PORT=""
 SUBNET=""
@@ -36,6 +37,7 @@ Uso: ./scripts/push.sh usuario@vps [opciones]
 
 Opciones:
   --endpoint IP        IP pública fija del VPS (si se omite, se detecta allí)
+  --token TOKEN        token generado por la app (debe coincidir con el bootstrap)
   --api-port PORT      puerto de la API dentro del túnel
   --wg-port PORT       puerto UDP de WireGuard
   --subnet CIDR        subred del túnel
@@ -62,6 +64,8 @@ parse_args() {
     case "$1" in
       --endpoint) ENDPOINT="${2:-}"; shift 2 ;;
       --endpoint=*) ENDPOINT="${1#*=}"; shift ;;
+      --token) TOKEN="${2:-}"; shift 2 ;;
+      --token=*) TOKEN="${1#*=}"; shift ;;
       --api-port) API_PORT="${2:-}"; shift 2 ;;
       --api-port=*) API_PORT="${1#*=}"; shift ;;
       --wg-port) WG_PORT="${2:-}"; shift 2 ;;
@@ -139,6 +143,7 @@ build_dist() {
 installer_args() {
   local args=()
   [[ -n "$ENDPOINT" ]] && args+=(--endpoint "$ENDPOINT")
+  [[ -n "$TOKEN" ]] && args+=(--token "$TOKEN")
   [[ -n "$API_PORT" ]] && args+=(--api-port "$API_PORT")
   [[ -n "$WG_PORT" ]] && args+=(--wg-port "$WG_PORT")
   [[ -n "$SUBNET" ]] && args+=(--subnet "$SUBNET")
@@ -147,7 +152,9 @@ installer_args() {
   ((FORCE)) && args+=(--force)
   ((DRY_RUN)) && args+=(--dry-run)
   ((NO_START)) && args+=(--no-start)
-  printf '%s\n' "${args[@]}"
+  # Preserve each argument (including secrets containing spaces or shell chars)
+  # across SSH without evaluating an installer command string remotely.
+  if ((${#args[@]})); then printf '%s\0' "${args[@]}"; fi
 }
 
 main() {
@@ -180,24 +187,25 @@ main() {
 
   local args
   if ((PURGE)); then
-    args="--uninstall --purge"
+    args="$(printf '%s\0' --uninstall --purge | base64 -w0)"
   else
-    args="$(installer_args | paste -sd ' ' -)"
+    args="$(installer_args | base64 -w0)"
   fi
 
   log "instalando en $HOST (puede pedir la contraseña de sudo)"
   ssh -t "${SSH_TTY_OPTS[@]}" "$HOST" \
-    "TARBALL=$(printf '%q' "$remote_tar") INSTALL_ARGS=$(printf '%q' "$args") bash -s" <<'REMOTE'
+    "TARBALL=$(printf '%q' "$remote_tar") INSTALL_ARGS_B64=$(printf '%q' "$args") bash -s" <<'REMOTE'
 set -Eeuo pipefail
+mapfile -d '' -t install_args < <(printf '%s' "$INSTALL_ARGS_B64" | base64 -d)
 dir="$(mktemp -d)"
 cleanup() { rm -rf "$dir"; }
 trap cleanup EXIT
 tar -xzf "$TARBALL" -C "$dir"
 cd "$dir"/umbrel-tunnel-*
 if [[ "$(id -u)" -eq 0 ]]; then
-  ./install.sh $INSTALL_ARGS
+  ./install.sh "${install_args[@]}"
 else
-  sudo ./install.sh $INSTALL_ARGS
+  sudo ./install.sh "${install_args[@]}"
 fi
 REMOTE
 

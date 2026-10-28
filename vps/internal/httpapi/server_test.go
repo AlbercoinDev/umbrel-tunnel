@@ -24,6 +24,7 @@ type harness struct {
 	umbrel  state.Peer
 	handler http.Handler
 	paths   config.Paths
+	api     *Server
 }
 
 func newHarness(t *testing.T) *harness {
@@ -60,7 +61,9 @@ func newHarness(t *testing.T) *harness {
 	}
 
 	h := &harness{t: t, token: pairing.Token, umbrel: peer, paths: paths}
-	h.handler = New(svc, "test", run).Handler()
+	h.api = New(svc, "test", run)
+	h.handler = h.api.Handler()
+	t.Cleanup(func() { h.api.forwardMu.Lock(); h.api.rotation = nil; h.api.forwardMu.Unlock() })
 	h.server = httptest.NewServer(h.handler)
 	t.Cleanup(h.server.Close)
 	return h

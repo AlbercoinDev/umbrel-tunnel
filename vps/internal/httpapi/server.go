@@ -33,6 +33,7 @@ type Server struct {
 	statusAt  time.Time
 	status    wireguard.Status
 	forwardMu sync.Mutex
+	rotation  *peerRotation // protected by forwardMu
 }
 
 // New creates a Server.
@@ -53,6 +54,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/peers", s.auth(s.listPeers))
 	mux.HandleFunc("POST /api/peers", s.auth(s.createPeer))
 	mux.HandleFunc("PUT /api/peers/{id}", s.auth(s.updatePeer))
+	mux.HandleFunc("POST /api/peers/{id}/rotation", s.auth(s.prepareRotation))
+	mux.HandleFunc("POST /api/peers/{id}/rotation/confirm", s.auth(s.confirmRotation))
 	mux.HandleFunc("DELETE /api/peers/{id}", s.auth(s.deletePeer))
 	mux.HandleFunc("GET /api/peers/{id}/config", s.auth(s.peerConfig))
 	mux.HandleFunc("GET /api/forwards", s.auth(s.listForwards))
@@ -107,7 +110,7 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func writeError(w http.ResponseWriter, code int, msg string) {
-	writeJSON(w, code, map[string]string{"error": msg})
+	writeJSON(w, code, map[string]string{"code": fmt.Sprintf("http_%d", code), "error": msg})
 }
 
 func decode(w http.ResponseWriter, r *http.Request, dst any) error {
@@ -248,6 +251,9 @@ func (s *Server) listPeers(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) createPeer(w http.ResponseWriter, r *http.Request) {
 	s.forwardMu.Lock()
 	defer s.forwardMu.Unlock()
+	if s.rotationBusy(w) {
+		return
+	}
 	var req peerRequest
 	if err := decode(w, r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "JSON inválido: "+err.Error())
@@ -319,6 +325,9 @@ type peerUpdateRequest struct {
 func (s *Server) updatePeer(w http.ResponseWriter, r *http.Request) {
 	s.forwardMu.Lock()
 	defer s.forwardMu.Unlock()
+	if s.rotationBusy(w) {
+		return
+	}
 	id := r.PathValue("id")
 	var req peerUpdateRequest
 	if err := decode(w, r, &req); err != nil {
@@ -367,6 +376,9 @@ func (s *Server) updatePeer(w http.ResponseWriter, r *http.Request) {
 func (s *Server) deletePeer(w http.ResponseWriter, r *http.Request) {
 	s.forwardMu.Lock()
 	defer s.forwardMu.Unlock()
+	if s.rotationBusy(w) {
+		return
+	}
 	id := r.PathValue("id")
 	removed, ok, err := s.svc.Store.RemovePeer(id)
 	if err != nil {
@@ -395,6 +407,11 @@ func (s *Server) peerConfig(w http.ResponseWriter, r *http.Request) {
 	clientKey, err := s.svc.ClientPrivateKey()
 	if err != nil || clientKey == "" {
 		writeError(w, http.StatusConflict, "no hay clave privada del cliente (modo emparejamiento manual)")
+		return
+	}
+	derived, err := s.svc.WG.PubKey(r.Context(), clientKey)
+	if err != nil || derived != peer.PublicKey {
+		writeError(w, http.StatusConflict, "la clave privada heredada no corresponde a este peer; usa la CLI con --private-key-file")
 		return
 	}
 	serverPub, err := s.svc.ServerPublicKey()

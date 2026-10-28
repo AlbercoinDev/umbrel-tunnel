@@ -69,16 +69,17 @@ def remove_all(config: dict) -> None:
     vps = config.get("vps") or {}
     if not (vps.get("api") and vps.get("token")):
         return
-    try:
-        client = VPSClient(vps["api"], vps["token"])
-        for forward in client.list_forwards():
-            owner = forward.get("managed_by")
-            ours = owner == "umbrel:" + str(vps.get("umbrel_ip") or "10.0.0.2")
-            legacy = not owner and str(forward.get("name", "")).startswith(NAME_PREFIX)
-            if ours or legacy:
+    client = VPSClient(vps["api"], vps["token"])
+    for forward in client.list_forwards():
+        owner = forward.get("managed_by")
+        ours = owner == "umbrel:" + str(vps.get("umbrel_ip") or "10.0.0.2")
+        legacy = not owner and str(forward.get("name", "")).startswith(NAME_PREFIX)
+        if ours or legacy:
+            try:
                 client.delete_forward(forward["id"])
-    except VPSError:
-        pass
+            except VPSError as exc:
+                if exc.status != 404:
+                    raise
 
 
 def _mark_error(exposure: dict, message: str, status: int | None = None) -> None:

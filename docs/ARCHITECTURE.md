@@ -89,6 +89,16 @@ de otro VPS no puede redirigir el túnel. Si se rota la clave local, la app llam
 a `PUT /api/peers/{id}` y el VPS recarga WireGuard; si la recarga falla, el VPS
 revierte la clave anterior.
 
+Desde 1.4.1, **rotar la clave local activa** no usa directamente ese PUT: la app
+prepara `POST /api/peers/{id}/rotation` por el túnel anterior, recibe un ID y
+cambia la clave local. El VPS espera 2 segundos antes de aplicar la clave nueva
+sin modificar el estado persistente; `POST /api/peers/{id}/rotation/confirm`
+por el túnel nuevo la confirma y persiste. Si no se confirma en aproximadamente
+un minuto, restaura la configuración anterior. Las mutaciones de peers quedan
+bloqueadas mientras la rotación está pendiente; una confirmación repetida es
+idempotente. Al reiniciar antes de confirmar, el daemon reconcilia la clave
+anterior desde el estado persistido.
+
 ## Flujo de una exposición
 
 1. La app detecta un servicio (`target_ip`, `target_port`, protocolo, tipo).
@@ -116,7 +126,7 @@ Las reglas nuevas incluyen propiedad explícita `managed_by`; las independientes
 del VPS se conservan. Una copia de los valores remotos aplicados permite detectar
 cambios externos antes de sobrescribirlos. La CLI de publicaciones usa el daemon
 como propietario único del estado. Véase [Publicaciones](PUBLICATIONS.md) para
-los límites UDP, resolución de conflictos y preparación futura para dominios/TLS.
+los límites UDP y resolución de conflictos, y [TLS](TLS.md) para dominios y certificados.
 
 La sincronización es idempotente: compara el estado remoto con el deseado y
 crea, actualiza o elimina solo lo necesario. Se ejecuta al cambiar algo y cada

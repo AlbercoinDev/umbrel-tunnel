@@ -89,10 +89,17 @@ curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/main/vps
 
 En tu máquina local:
 
+Para una instalación nueva, genera primero el comando en la app de Umbrel y
+copia de él `--umbrel-pubkey` y `--token`. Ambos deben coincidir con el asistente:
+
 ```bash
 cd vps
-./scripts/push.sh root@203.0.113.10 --endpoint 203.0.113.10
+./scripts/push.sh root@203.0.113.10 --endpoint 203.0.113.10 \
+  --umbrel-pubkey '<CLAVE_PUBLICA_DE_LA_APP>' --token '<TOKEN_DE_LA_APP>'
 ```
+
+El ejemplo usa la red predeterminada. Si personalizas las IP del túnel o el MTU,
+usa la opción C y todos los parámetros del comando generado por la app.
 
 `push.sh` compila `amd64`/`arm64`, copia el tarball por SSH y ejecuta el
 instalador. Si `sudo` pide contraseña, la sesión usa TTY para que puedas
@@ -106,14 +113,20 @@ escribirla. Opciones útiles:
 
 ### Opción C: tarball manual
 
+Genera primero el comando en Umbrel, como en la opción A. En el VPS, usa sus
+mismos valores de clave pública, token y red al ejecutar el instalador local.
+El ejemplo usa la red predeterminada; si el asistente muestra otra, copia también
+`--subnet`, `--server-ip`, `--umbrel-ip`, `--api-port`, `--wg-port` y `--mtu`.
+
 ```bash
 cd vps
 make dist
-scp dist/umbrel-tunnel-1.0.1-linux-amd64.tar.gz root@203.0.113.10:/tmp/
+scp dist/umbrel-tunnel-1.4.1-linux-amd64.tar.gz root@203.0.113.10:/tmp/
 ssh root@203.0.113.10
-tar -xzf /tmp/umbrel-tunnel-1.0.1-linux-amd64.tar.gz -C /tmp
-cd /tmp/umbrel-tunnel-1.0.1-linux-amd64
-sudo ./install.sh --endpoint 203.0.113.10
+tar -xzf /tmp/umbrel-tunnel-1.4.1-linux-amd64.tar.gz -C /tmp
+cd /tmp/umbrel-tunnel-1.4.1-linux-amd64
+sudo ./install.sh --endpoint 203.0.113.10 \
+  --umbrel-pubkey '<CLAVE_PUBLICA_DE_LA_APP>' --token '<TOKEN_DE_LA_APP>'
 ```
 
 ### Qué hace el instalador
@@ -330,7 +343,7 @@ umbrel-tunnel pair [--json] [--rotate-token]
 umbrel-tunnel peer list
 umbrel-tunnel peer add --name N --ip 10.0.0.3 [--pubkey KEY]
 umbrel-tunnel peer rm <id>
-umbrel-tunnel peer config <id>
+umbrel-tunnel peer config <id> --private-key-file /ruta/peer.key
 umbrel-tunnel forward list
 umbrel-tunnel forward list --json
 umbrel-tunnel forward show <id>
@@ -341,6 +354,7 @@ umbrel-tunnel forward rm <id>
 umbrel-tunnel forward enable|disable <id>
 umbrel-tunnel forward edit <id> --public-port 9001
 umbrel-tunnel forward reconcile
+umbrel-tunnel certificates [retry]
 umbrel-tunnel status
 umbrel-tunnel token show|rotate
 umbrel-tunnel doctor [--json]
@@ -357,6 +371,12 @@ que un proceso independiente sobrescriba su estado. Requieren el servicio activo
 Los cambios externos sobre publicaciones de Umbrel se detectan como conflictos:
 la app ofrece adoptarlos o restaurar su configuración, sin sobrescribirlos a ciegas.
 
+Los peers creados sin `--pubkey` muestran su clave privada **una sola vez**.
+Guárdala en un archivo privado (`chmod 600`) para generar después su configuración
+con `peer config ID --private-key-file RUTA`. El VPS no conserva esas claves ni
+recibe la privada de Umbrel. La clave suministrada debe corresponder al peer;
+`peer config ID` sin archivo solo admite una clave heredada que coincida.
+
 ## API del VPS
 
 Escucha en `10.0.0.1:8080` (solo túnel). Autenticación `Authorization: Bearer <token>`.
@@ -367,11 +387,38 @@ Escucha en `10.0.0.1:8080` (solo túnel). Autenticación `Authorization: Bearer 
 | GET | `/api/status` | Versión, peers, forwards, handshakes |
 | GET/POST | `/api/peers` | Lista/crea peers |
 | PUT | `/api/peers/{id}` | Rota la clave pública / endpoint de un peer |
+| POST | `/api/peers/{id}/rotation` | Prepara rotación coordinada (clave nueva, cambio diferido y rollback) |
+| POST | `/api/peers/{id}/rotation/confirm` | Confirma por el túnel nuevo y persiste la clave |
 | DELETE | `/api/peers/{id}` | Elimina peer |
-| GET | `/api/peers/{id}/config` | Configuración de un peer creado por el VPS (409 en modo manual) |
+| GET | `/api/peers/{id}/config` | Configuración solo si existe una privada heredada que coincide; en otro caso, 409 y usar CLI con `--private-key-file` |
 | GET/POST | `/api/forwards` | Lista/crea forwards |
 | PATCH/DELETE | `/api/forwards/{id}` | Actualiza/elimina forward |
+| GET | `/api/forwards/{id}/check` | Comprueba el destino TCP del túnel; no verifica acceso desde Internet |
+| POST | `/api/forwards/reconcile` | Reaplica publicaciones y listeners |
+| GET | `/api/certificates` | Estado y caducidad de certificados |
+| POST | `/api/certificates/retry` | Programa reintentos de emisión (202) |
 | POST | `/api/token/rotate` | Rota el token |
+
+Los errores de la API Go incluyen `{code, error}`; `code` es `http_<estado>`
+(por ejemplo `http_409`). La API local de Umbrel usa códigos funcionales y puede
+añadir `detail`.
+
+Desde 1.4.1, la rotación de WireGuard se prepara por el túnel anterior. El VPS
+cambia la clave transcurridos 2 segundos, sin persistirla hasta recibir confirmación
+por el nuevo túnel; si no llega en aproximadamente un minuto, restaura la anterior.
+Actualiza **primero el VPS a 1.4.1**, después Umbrel. Un VPS anterior rechaza la
+operación antes de cambiar la clave local. La rotación interrumpe brevemente el túnel.
+
+La preparación recibe `{"public_key":"CLAVE_NUEVA"}` y devuelve
+`rotation_id`, `switch_after` y `rollback_after` (segundos). La confirmación recibe
+`{"rotation_id":"ID_RECIBIDO"}`; puede repetirse si se pierde la respuesta.
+Mientras hay una rotación pendiente, otras mutaciones de peers devuelven 409.
+
+Desvincular limpia primero las publicaciones y después retira el peer. Si falla
+la limpieza, conserva la conexión para reintentar. Olvidarla localmente requiere
+una segunda confirmación explícita y deja pendiente la limpieza del VPS por SSH.
+Rotar el token de API no requiere desvincular: copia el nuevo token a
+**Configuración y diagnóstico → Opciones avanzadas** de Umbrel.
 
 Un forward usa `public_port`:
 
@@ -391,7 +438,7 @@ Un forward usa `public_port`:
 Desde un equipo conectado al túnel abre `http://10.0.0.1:8080`. La página pide
 el token (`umbrel-tunnel token show`) y lo guarda solo en `sessionStorage`; no hay
 formulario de login persistente ni cookie. Permite ver estado, peers,
-handshakes, abrir/cerrar forwards y rotar el token. Los assets estáticos
+handshakes, abrir/cerrar forwards TCP/UDP, gestionar certificados y rotar el token. Los assets estáticos
 (`/`, `/app.js`, `/style.css`) no contienen secretos, pero todas las llamadas a
 `/api/*` exigen `Authorization: Bearer`.
 
@@ -527,7 +574,7 @@ make dist          # binarios + tarballs + SHA256SUMS en vps/dist/
 # App de Umbrel (gateway)
 cd umbrel-tunnel/gateway
 python3 -m pip install flask pyyaml waitress
-python3 -m py_compile app.py catalog.py detect.py i18n.py proxy.py serve.py state.py sync.py vps.py wireguard.py
+python3 -m py_compile *.py
 python3 -m unittest discover -s tests -v
 ```
 
@@ -552,7 +599,7 @@ Variables de entorno útiles en el gateway:
 | Variable | Por defecto | Uso |
 | --- | --- | --- |
 | `APP_PASSWORD` | — | contraseña de login; Umbrel la inyecta |
-| `APP_VERSION` | `1.4.0` | versión mostrada |
+| `APP_VERSION` | `1.4.1` | versión mostrada |
 | `UMBREL_TUNNEL_DATA` | `/data` | estado, claves y configuración |
 | `UMBREL_APP_DATA` | `/umbrel-app-data` | manifiestos de apps (solo lectura) |
 | `NETWORK_IP` | `10.21.0.0` | red de Umbrel para detectar solapes |

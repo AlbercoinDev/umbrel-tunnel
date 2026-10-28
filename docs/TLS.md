@@ -185,7 +185,7 @@ API autenticada dentro del túnel:
   (`direct`, `http`, `https`, `tls`), `domain` y `accept_acme_terms: true` al activar o
   cambiar nombre/modo cifrado. UDP no admite estos modos.
 - `GET /api/certificates`: `domain`, `enabled`, `state`, `not_after`, `error`.
-  Estados `pending`, `ready`, `expiring` (menos de 14 días), `expired`.
+  Estados `pending`, `error`, `ready`, `expiring` (menos de 14 días), `expired`.
 - `POST /api/certificates/retry`: programa un reintento, HTTP 202.
 
 API local de Umbrel: `POST /api/settings` acepta `base_domain`; `POST /api/exposures`

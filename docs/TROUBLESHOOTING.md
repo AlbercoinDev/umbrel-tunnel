@@ -79,7 +79,26 @@ Si falla:
   apunte a `192.168.x.x`, `127.0.0.1` o un dominio se rechaza por seguridad.
 - La subred no puede solaparse con `NETWORK_IP` de Umbrel.
 - Si el código se generó antes de rotar el token, vuelve a ejecutar
-  `umbrel-tunnel pair` o genera un bootstrap nuevo en la app.
+  `umbrel-tunnel pair`. Si ya estás vinculado, basta actualizar el token en
+  **Configuración y diagnóstico → Opciones avanzadas**, sin desvincular.
+
+## Rotación WireGuard o desvinculación (1.4.1)
+
+- Actualiza primero el VPS a 1.4.1. Los VPS anteriores no tienen la API de
+  rotación coordinada; la app rechaza la operación sin sustituir la clave local.
+- Durante la rotación habrá una interrupción breve. Si no se confirma el túnel
+  nuevo, el VPS vuelve a la clave anterior al cabo de aproximadamente un minuto.
+  Espera ese plazo antes de reintentar; revisa los logs de ambos extremos.
+- Desvincular requiere acceso al VPS para retirar las publicaciones antes del
+  peer. Si falla, las credenciales y el túnel se conservan para reintentar.
+- Si el VPS ya no existe o es irrecuperable, acepta la segunda confirmación para
+  olvidar la conexión **solo localmente**. No demuestra que las reglas remotas
+  estén cerradas. Si el VPS sigue existiendo, entra por SSH, usa
+  `umbrel-tunnel forward list --json`, elimina las reglas propias con
+  `umbrel-tunnel forward rm ID` y después `umbrel-tunnel peer rm ID`.
+- Para `peer config ID`, proporciona `--private-key-file RUTA` con la clave
+  guardada al crear ese peer. No se puede reconstruir la privada desde la pública
+  y una clave de otro peer se rechaza. La privada de Umbrel permanece en Umbrel.
 
 ## HAProxy no arranca o un puerto no responde
 
