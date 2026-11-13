@@ -10,6 +10,7 @@ from __future__ import annotations
 import base64
 import binascii
 import ipaddress
+import json
 import os
 import re
 import subprocess
@@ -19,6 +20,10 @@ DATA_DIR = Path(os.environ.get("UMBREL_TUNNEL_DATA", "/data"))
 DATA_WG_DIR = DATA_DIR / "wireguard"
 DATA_CONF = DATA_WG_DIR / "wg0.conf"
 DATA_KEY = DATA_WG_DIR / "private.key"
+# Written between preparing a key rotation on the VPS and confirming it, so a
+# restart in that window can confirm or roll back instead of keeping a key the
+# VPS will discard.
+PENDING_ROTATION = DATA_WG_DIR / "rotation-pending.json"
 ETC_CONF = Path(os.environ.get("UMBREL_TUNNEL_WG_CONF", "/etc/wireguard/wg0.conf"))
 INTERFACE = "wg0"
 
@@ -285,6 +290,32 @@ def save_private_key(private: str) -> None:
     DATA_WG_DIR.mkdir(parents=True, exist_ok=True)
     DATA_KEY.write_text(private + "\n", encoding="ascii")
     DATA_KEY.chmod(0o600)
+
+
+def save_pending_rotation(data: dict) -> None:
+    DATA_WG_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = PENDING_ROTATION.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(data, handle)
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(tmp, PENDING_ROTATION)
+
+
+def pending_rotation() -> dict:
+    try:
+        data = json.loads(PENDING_ROTATION.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def clear_pending_rotation() -> None:
+    try:
+        PENDING_ROTATION.unlink()
+    except OSError:
+        pass
 
 
 def ensure_keypair() -> tuple[str, str]:

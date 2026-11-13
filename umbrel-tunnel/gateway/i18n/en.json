@@ -258,6 +258,8 @@
   "common.ok": "OK",
   "common.dash": "—",
   "error.unauthorized": "Sign in to continue.",
+  "error.tunnel_forbidden": "The control panel is not available through the WireGuard tunnel.",
+  "error.state_unreadable": "The saved configuration (config.json) cannot be read. It was not modified; check the logs.",
   "error.invalid_vps_ip": "The VPS IP is not valid.",
   "error.vps_ip_not_public": "The VPS IP must be public (IPv4).",
   "error.already_paired": "The app is already paired. Unpair first.",

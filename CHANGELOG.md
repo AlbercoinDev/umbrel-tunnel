@@ -1,5 +1,24 @@
 # Cambios
 
+## 1.4.2
+
+- Gateway: el panel rechaza (403) cualquier petición que llegue por la subred
+  WireGuard. Waitress escucha en todas las interfaces y, con `AllowedIPs` de la
+  subred completa, el VPS u otro peer podían alcanzar `10.0.0.2:8081` sin pasar
+  por `app_proxy`.
+- Instalador del VPS: verifica el binario descargado con el `.sha256` publicado
+  junto a él y se detiene si falta o no coincide. El comando generado por la app
+  fija script y binario al tag de la release (`v1.4.2`) en lugar de `main` y
+  `releases/latest`.
+- Estado: un `config.json` corrupto ya no se sustituye por valores por defecto
+  (lo que borraba vinculación, token y publicaciones al siguiente guardado). Se
+  usa la copia `config.json.bak` o se responde 503 sin tocar el archivo.
+- Retirar una publicación toma el bloqueo de sincronización, para que una
+  sincronización en curso no la vuelva a crear en el VPS; las llamadas de red
+  de retirar y vincular ya no retienen el bloqueo del estado.
+- Rotación WireGuard: si el gateway se reinicia entre preparar y confirmar, al
+  arrancar confirma la rotación o restaura la clave anterior.
+
 ## 1.4.1
 
 - Rotación WireGuard coordinada entre Umbrel y VPS: preparación por el túnel

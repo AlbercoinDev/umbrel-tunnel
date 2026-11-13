@@ -29,7 +29,14 @@
 - La cookie de sesión es HttpOnly, SameSite=Strict y firmada con un secreto
   persistente (`session.key`).
 - Las peticiones mutantes exigen CSRF (`X-CSRF-Token` o campo de formulario).
-- El login tiene límite de intentos por IP (5 en 5 minutos).
+- El login tiene límite de intentos por IP (5 en 5 minutos). Detrás de
+  `app_proxy` todas las peticiones llegan con la IP del proxy, así que el límite
+  es compartido: 5 fallos bloquean el login de todos durante 5 minutos. Se
+  acepta a propósito; confiar en `X-Forwarded-For` permitiría a cualquier
+  contenedor de la red de Docker saltarse el límite.
+- El panel rechaza con 403 las peticiones cuyo origen está en la subred del
+  túnel: ni el VPS ni otros peers WireGuard pueden usarlo aunque `10.0.0.2:8081`
+  sea alcanzable por `wg0`. Solo se sirve a través de `app_proxy`.
 - La CSP es `script-src 'self'`; la configuración de la UI se pasa como JSON en
   un bloque `application/json`, no como script inline.
 - Los errores no incluyen secretos; la configuración de WireGuard se muestra

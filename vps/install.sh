@@ -404,6 +404,18 @@ install_packages() {
   fi
 }
 
+# A downloaded binary runs as root: verify it against the <url>.sha256 file
+# published next to it (make dist / release workflow), like `update` does.
+verify_download() {
+  local file="$1" url="$2" want got
+  want="$(curl -fsSL --retry 2 --max-time 30 "$url.sha256" | awk 'NR == 1 {print tolower($1)}')" \
+    || die "no se pudo descargar $url.sha256; no se instala un binario sin verificar"
+  [[ "$want" =~ ^[0-9a-f]{64}$ ]] || die "checksum inválido en $url.sha256"
+  got="$(sha256sum "$file" | awk '{print $1}')"
+  [[ "$got" == "$want" ]] || die "el checksum del binario no coincide (esperado $want, obtenido $got)"
+  ok "checksum SHA256 verificado"
+}
+
 resolve_binary() {
   if [[ -z "$BINARY" && -n "$BINARY_BASE" ]]; then
     BINARY="${BINARY_BASE%/}/$PROGRAM-linux-$ARCH"
@@ -419,6 +431,7 @@ resolve_binary() {
       tmp="$(mktemp)"
       log "descargando binario"
       curl -fsSL --retry 2 --max-time 120 "$BINARY" -o "$tmp" || die "no se pudo descargar $BINARY"
+      verify_download "$tmp" "$BINARY"
       BIN_SOURCE="$tmp"
     else
       BIN_SOURCE="$BINARY"

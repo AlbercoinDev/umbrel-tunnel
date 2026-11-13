@@ -47,7 +47,10 @@ import sync
 import wireguard
 from vps import VPSClient, VPSError
 
-VERSION = os.environ.get("APP_VERSION", "1.4.1")
+# Release of this gateway; must match vps/VERSION (tests enforce it). The VPS
+# installer and binaries offered to the user are pinned to this tag.
+RELEASE_VERSION = "1.4.2"
+VERSION = os.environ.get("APP_VERSION", RELEASE_VERSION)
 RESERVED_PUBLIC_PORTS = {22}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
 DEV_MODE = os.environ.get("UMBREL_TUNNEL_DEV") == "1"
@@ -57,11 +60,14 @@ PAIR_TOKEN_RE = re.compile(r"(ut1\.[A-Za-z0-9_=-]+)")
 
 # Where the app points users to install the VPS side. Both values can be
 # overridden for forks, testing or air-gapped mirrors.
+# Pinned to the release tag: a `curl | sudo bash` command must not follow a
+# moving branch, and the script and binary must come from the same release.
 DEFAULT_INSTALL_URL = (
-    "https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/main/vps/install.sh"
+    "https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/"
+    f"v{RELEASE_VERSION}/vps/install.sh"
 )
 DEFAULT_BINARY_BASE = (
-    "https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download"
+    f"https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v{RELEASE_VERSION}"
 )
 INSTALL_URL = (
     os.environ.get("UMBREL_TUNNEL_INSTALL_URL", "").strip() or DEFAULT_INSTALL_URL
@@ -177,10 +183,42 @@ def _csrf_ok() -> bool:
     return hmac.compare_digest(str(token).encode("utf-8"), expected.encode("utf-8"))
 
 
+def _tunnel_networks() -> list[ipaddress.IPv4Network]:
+    networks = []
+    try:
+        saved = (state.load().get("vps") or {}).get("subnet")
+    except state.StateError:
+        saved = ""
+    for value in (wireguard.subnet(), saved):
+        try:
+            network = wireguard.validate_subnet(str(value or ""))
+        except wireguard.WireGuardError:
+            continue
+        if network not in networks:
+            networks.append(network)
+    return networks
+
+
+def from_tunnel(remote_addr: str | None) -> bool:
+    """True when the request reached the panel through wg0.
+
+    Waitress listens on every interface, including the tunnel address. The VPS
+    (masqueraded as its tunnel IP) and any other WireGuard peer must never reach
+    the control panel: it is only served through Umbrel's app_proxy.
+    """
+    try:
+        address = ipaddress.ip_address(remote_addr or "")
+    except ValueError:
+        return False
+    return any(address in network for network in _tunnel_networks())
+
+
 @app.before_request
 def authenticate():
     g.lang = i18n.resolve(request)
     g.t = lambda key, **params: i18n.translate(g.lang, key, **params)
+    if from_tunnel(request.remote_addr):
+        return api_error("tunnel_forbidden", 403)
     if request.endpoint in {"static", "login", "login_post", "health", "set_language"}:
         return None
     if request.path.startswith("/static/"):
@@ -1459,7 +1497,10 @@ def resolve_exposure(exposure_id: str):
 
 @app.delete("/api/exposures/<exposure_id>")
 def delete_exposure(exposure_id: str):
-    with state.LOCK:
+    # _sync_lock keeps a concurrent background sync (working on an older
+    # snapshot) from recreating the forward right after it is deleted. The VPS
+    # call runs without state.LOCK so status polling keeps working.
+    with _sync_lock:
         config = state.load()
         exposure = state.find_exposure(config, exposure_id)
         if not exposure:
@@ -1473,10 +1514,14 @@ def delete_exposure(exposure_id: str):
                 # A forward already removed on the VPS must not block cleanup.
                 if exc.status != 404:
                     return api_error("vps_close_failed", 502, detail=str(exc))
-        config["exposures"] = [e for e in config["exposures"] if e.get("id") != exposure_id]
-        state.save(config)
+        with state.LOCK:
+            current = state.load()
+            current["exposures"] = [
+                e for e in current.get("exposures", []) if e.get("id") != exposure_id
+            ]
+            state.save(current)
 
-    result = sync_now()
+        result = sync_now()
     return jsonify({"ok": True, "sync": present_sync(result)})
 
 
@@ -1586,20 +1631,26 @@ def pair():
         return api_error("wg_config", 400, detail=str(exc))
 
     last_error: VPSError | None = None
-    with state.LOCK:
-        config = state.load()
-        # The first API request triggers the WireGuard handshake, so allow a
-        # few seconds before declaring the registration failed.
-        for attempt in range(4):
-            try:
-                ensure_peer(config, public)
-                last_error = None
-                break
-            except VPSError as exc:
-                last_error = exc
-                if attempt < 3:
-                    time.sleep(1)
-        state.save(config)
+    # Network retries run without state.LOCK (status polling must not block on
+    # a slow handshake); only the resulting flag is merged under the lock.
+    config = state.load()
+    # The first API request triggers the WireGuard handshake, so allow a
+    # few seconds before declaring the registration failed.
+    for attempt in range(4):
+        try:
+            ensure_peer(config, public)
+            last_error = None
+            break
+        except VPSError as exc:
+            last_error = exc
+            if attempt < 3:
+                time.sleep(1)
+    if last_error is None:
+        with state.LOCK:
+            current = state.load()
+            if (current.get("vps") or {}).get("api") == api:
+                current["vps"]["peer_registered"] = True
+                state.save(current)
 
     if last_error is not None:
         return (
@@ -1806,6 +1857,12 @@ def _rotate_wireguard():
         # Prepare over the OLD tunnel. Old VPS versions reject this endpoint
         # before any local key/config is changed.
         rotation = client.prepare_rotation(peer["id"], public)
+        wireguard.save_pending_rotation({
+            "peer_id": peer["id"],
+            "rotation_id": rotation["rotation_id"],
+            "old_private": old_private,
+            "old_config": old_text,
+        })
         local_changed = True
         wireguard.save_private_key(private)
         wireguard.save_config(text)
@@ -1821,6 +1878,7 @@ def _rotate_wireguard():
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(1)
+        wireguard.clear_pending_rotation()
         with state.LOCK:
             current = state.load()
             current["vps"] = {**(current.get("vps") or {}), "peer_registered": True}
@@ -1828,11 +1886,8 @@ def _rotate_wireguard():
     except (wireguard.WireGuardError, VPSError, OSError) as exc:
         # Roll back to the last working key/config.
         try:
-            if local_changed and old_private:
-                wireguard.save_private_key(old_private)
-            if local_changed and old_text:
-                wireguard.save_config(old_text)
-                wireguard.apply_saved()
+            _restore_wireguard(old_private if local_changed else "", old_text if local_changed else "")
+            wireguard.clear_pending_rotation()
         except (wireguard.WireGuardError, OSError):
             pass
         return api_error("wg_rotate_failed", 502, detail=str(exc))
@@ -1841,6 +1896,44 @@ def _rotate_wireguard():
     return jsonify(
         {"ok": True, "public_key": public, "message": message, "sync": present_sync(result)}
     )
+
+
+def _restore_wireguard(private: str, text: str) -> None:
+    if private:
+        wireguard.save_private_key(private)
+    if text:
+        wireguard.save_config(text)
+        wireguard.apply_saved()
+
+
+def recover_rotation(config: dict, attempts: int = 10) -> str:
+    """Finish or undo a rotation interrupted by a gateway restart.
+
+    The new key is live locally (startup applied the saved config). If the VPS
+    still holds the rotation it is confirmed over the new tunnel; confirming a
+    committed rotation is idempotent. Otherwise the VPS has rolled back (about
+    one minute after preparing), so the previous key/config are restored.
+    Returns "none", "confirmed" or "restored".
+    """
+    pending = wireguard.pending_rotation()
+    if not pending:
+        return "none"
+    vps = config.get("vps") or {}
+    if vps.get("api") and vps.get("token"):
+        client = VPSClient(vps["api"], vps["token"], timeout=3)
+        for attempt in range(attempts):
+            try:
+                client.confirm_rotation(str(pending.get("peer_id")), str(pending.get("rotation_id")))
+                wireguard.clear_pending_rotation()
+                return "confirmed"
+            except VPSError as exc:
+                if exc.status == 409 and "pendiente" not in str(exc):
+                    break  # rotation unknown/expired on the VPS: it kept the old key
+                if attempt < attempts - 1:
+                    time.sleep(1)
+    _restore_wireguard(str(pending.get("old_private") or ""), str(pending.get("old_config") or ""))
+    wireguard.clear_pending_rotation()
+    return "restored"
 
 
 @app.get("/api/settings")
@@ -2067,6 +2160,12 @@ def handle_vps_error(exc: VPSError):
     return api_error("vps", 502, detail=str(exc))
 
 
+@app.errorhandler(state.StateError)
+def handle_state_error(exc: state.StateError):
+    app.logger.error("estado ilegible: %s", exc)
+    return api_error("state_unreadable", 503, detail=str(exc))
+
+
 @app.errorhandler(404)
 def handle_not_found(_exc):
     if request.path.startswith("/api/"):
@@ -2081,23 +2180,37 @@ def handle_too_large(_exc):
 
 def background_sync() -> None:
     while True:
-        config = state.load()
-        interval = int((config.get("settings") or {}).get("sync_interval", 30))
+        try:
+            config = state.load()
+            interval = int((config.get("settings") or {}).get("sync_interval", 30))
+        except state.StateError:
+            interval = 30
         time.sleep(max(10, interval))
-        config = state.load()
-        if state.paired(config):
-            try:
+        try:
+            if state.paired(state.load()):
                 sync_now()
-            except Exception:  # noqa: BLE001 - el hilo no debe morir
-                pass
+        except Exception:  # noqa: BLE001 - el hilo no debe morir
+            pass
 
 
 def startup() -> None:
-    config = state.load()
+    try:
+        config = state.load()
+    except state.StateError as exc:
+        # Keep serving so the UI shows the error; do not touch the tunnel.
+        app.logger.error("no se aplica WireGuard ni proxy: %s", exc)
+        return
     if wireguard.config_text():
         ok, message = wireguard.apply_saved()
         if not ok:
             app.logger.warning("WireGuard no arrancó: %s", message)
+    try:
+        outcome = recover_rotation(config)
+    except (wireguard.WireGuardError, OSError) as exc:
+        app.logger.error("rotación WireGuard interrumpida sin recuperar: %s", exc)
+    else:
+        if outcome != "none":
+            app.logger.warning("rotación WireGuard interrumpida: %s", outcome)
     if state.paired(config) and not (config.get("vps") or {}).get("peer_registered"):
         public = wireguard.public_key()
         if public:

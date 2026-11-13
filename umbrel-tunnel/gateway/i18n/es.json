@@ -240,6 +240,8 @@
   "common.error": "Error",
   "common.ok": "OK",
   "error.unauthorized": "Inicia sesión para continuar.",
+  "error.tunnel_forbidden": "El panel no está disponible a través del túnel WireGuard.",
+  "error.state_unreadable": "No se puede leer la configuración guardada (config.json). No se ha modificado; revisa los logs.",
   "error.invalid_vps_ip": "La IP del VPS no es válida.",
   "error.vps_ip_not_public": "La IP del VPS debe ser pública (IPv4).",
   "error.already_paired": "La app ya está emparejada. Desempareja primero.",
