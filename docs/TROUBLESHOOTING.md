@@ -84,7 +84,7 @@ Si falla:
 
 ## Rotación WireGuard o desvinculación (1.4.1)
 
-- Actualiza primero el VPS a 1.4.1. Los VPS anteriores no tienen la API de
+- Actualiza primero el VPS a 1.4.1 o posterior. Los VPS anteriores no tienen la API de
   rotación coordinada; la app rechaza la operación sin sustituir la clave local.
 - Durante la rotación habrá una interrupción breve. Si no se confirma el túnel
   nuevo, el VPS vuelve a la clave anterior al cabo de aproximadamente un minuto.
