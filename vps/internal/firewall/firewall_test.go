@@ -55,6 +55,11 @@ func TestRulesIncludeForwardAndGuard(t *testing.T) {
 	if strings.Contains(rules, "9000") {
 		t.Fatalf("forward desactivado incluido:\n%s", rules)
 	}
+	// Peers of a shared VPS are isolated, and the drop precedes the accepts.
+	drop := strings.Index(rules, `iifname "wg0" oifname "wg0" drop`)
+	if drop < 0 || drop > strings.Index(rules, `iifname "wg0" accept`) {
+		t.Fatalf("falta el aislamiento wg0->wg0 antes de los accept:\n%s", rules)
+	}
 }
 
 func TestSecurePublicationsNeverGenerateCleartextDNAT(t *testing.T) {

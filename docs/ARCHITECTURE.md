@@ -99,6 +99,25 @@ bloqueadas mientras la rotación está pendiente; una confirmación repetida es
 idempotente. Al reiniciar antes de confirmar, el daemon reconcilia la clave
 anterior desde el estado persistido.
 
+## VPS compartido (nodos)
+
+Un nodo es un peer con `domain` y `token_sha256`. No hay estructuras aparte:
+borrar el peer elimina también su identidad. La API resuelve en cada petición
+un *principal*: el token de administración da acceso total; el de un nodo solo
+vale desde su `AllowedIP` y limita todo a lo que apunta a esa IP.
+
+- Alta: la app genera `umbrel-tunnel peer add --pubkey K --token T --domain D`.
+  El VPS asigna la siguiente IP libre e imprime un `ut1` con esa IP, el token del
+  nodo y `domain`. La app no compara la IP con su bootstrap (la decide el VPS),
+  pero sí el token, la API, el endpoint y el dominio.
+- Enrutado: HTTP y HTTPS por `Host`/SNI (ya existente); el TLS añadido elige la
+  ruta por SNI dentro del handshake y la vuelve a resolver tras él, porque una
+  sesión reanudada no pasa por `GetCertificate`. TCP/UDP directo sigue siendo
+  DNAT por puerto, así que cada puerto directo pertenece a un único nodo.
+- `state.AddForward` permite el mismo puerto para publicaciones `http`, `https`
+  o `tls` del mismo modo con dominios distintos.
+- Dos nodos no pueden tener dominios iguales ni anidados.
+
 ## Flujo de una exposición
 
 1. La app detecta un servicio (`target_ip`, `target_port`, protocolo, tipo).

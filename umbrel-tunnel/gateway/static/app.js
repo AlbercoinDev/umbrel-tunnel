@@ -326,7 +326,7 @@
     $('bootstrap-public-key').textContent = data.public_key || t('common.dash');
     $('bootstrap-endpoint').textContent = data.endpoint || t('common.dash');
     $('bootstrap-subnet').textContent = data.subnet || t('common.dash');
-    $('bootstrap-tunnel-ip').textContent = data.umbrel_ip || t('common.dash');
+    $('bootstrap-tunnel-ip').textContent = data.umbrel_ip || (data.shared_domain ? t('onboarding.shared_ip') : t('common.dash'));
   }
 
   function renderSyncDetail(sync) {
@@ -1192,11 +1192,12 @@
     $('bootstrap-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const vpsIp = $('bootstrap-vps-ip').value.trim();
+      const sharedDomain = $('bootstrap-shared-domain').value.trim().toLowerCase();
       if (!vpsIp) return;
       try {
         state.bootstrap = await api('/api/bootstrap', {
           method: 'POST',
-          body: JSON.stringify({ vps_ip: vpsIp }),
+          body: JSON.stringify({ vps_ip: vpsIp, shared_domain: sharedDomain }),
         });
         renderBootstrap();
         showMsg('onboarding-msg', t('onboarding.generated'), true);

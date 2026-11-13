@@ -103,7 +103,8 @@ Comandos:
   serve                         arranca la API (lo usa systemd)
   init                          crea configuración, claves y token del servidor
   pair                          imprime el código de emparejamiento
-  peer list|add|rm|config       gestiona peers
+  peer list|add|claim|rm|config gestiona peers; con --domain, un Umbrel
+                                 más en un VPS compartido (ver README)
   forward list|show|check|add|edit|rm|enable|disable|reconcile
                                  gestiona puertos públicos
   status                        estado del VPS (JSON)
@@ -258,7 +259,7 @@ func cmdPair(ctx context.Context, args []string) error {
 
 func cmdPeer(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("uso: umbrel-tunnel peer list|add|rm|config")
+		return fmt.Errorf("uso: umbrel-tunnel peer list|add|claim|rm|config")
 	}
 	svc, err := service.Open(paths(), runner())
 	if err != nil {
@@ -276,26 +277,44 @@ func cmdPeer(ctx context.Context, args []string) error {
 			return err
 		}
 		w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(w, "ID\tNOMBRE\tIP\tCLAVE PÚBLICA")
+		fmt.Fprintln(w, "ID\tNOMBRE\tIP\tDOMINIO\tCLAVE PÚBLICA")
 		for _, p := range peers {
-			fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", p.ID, p.Name, p.AllowedIP, p.PublicKey)
+			domain := p.Domain
+			if domain == "" {
+				domain = "-"
+			}
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", p.ID, p.Name, p.AllowedIP, domain, p.PublicKey)
 		}
 		return w.Flush()
 
 	case "add":
 		fs := flag.NewFlagSet("peer add", flag.ExitOnError)
 		name := fs.String("name", "", "nombre del peer")
-		ip := fs.String("ip", "", "IP dentro del túnel")
+		ip := fs.String("ip", "", "IP dentro del túnel (con --domain se asigna sola)")
 		pub := fs.String("pubkey", "", "clave pública (se genera si se omite)")
 		endpoint := fs.String("endpoint", "", "endpoint conocido (opcional)")
+		domain := fs.String("domain", "", "VPS compartido: dominio propio de este Umbrel")
+		token := fs.String("token", "", "VPS compartido: token propio (se genera si se omite)")
 		if err := fs.Parse(args[1:]); err != nil {
 			return err
 		}
 		if *name == "" {
 			return fmt.Errorf("falta --name")
 		}
-		if err := svc.ValidateIPInSubnet(*ip); err != nil {
-			return err
+		if *domain == "" && *token != "" {
+			return fmt.Errorf("--token requiere --domain")
+		}
+		if *domain != "" && *token == "" {
+			generated, err := config.GenerateToken()
+			if err != nil {
+				return err
+			}
+			*token = generated
+		}
+		if *ip != "" || *domain == "" {
+			if err := svc.ValidateIPInSubnet(*ip); err != nil {
+				return err
+			}
 		}
 		privateKey := ""
 		publicKey := strings.TrimSpace(*pub)
@@ -311,17 +330,57 @@ func cmdPeer(ctx context.Context, args []string) error {
 		} else if !service.ValidPubKey(publicKey) {
 			return fmt.Errorf("clave pública inválida")
 		}
-		_, err := apiRequest(ctx, "POST", "/api/peers", map[string]string{
+		data, err := apiRequest(ctx, "POST", "/api/peers", map[string]string{
 			"name": *name, "public_key": publicKey, "allowed_ip": *ip, "endpoint": *endpoint,
+			"domain": *domain, "token": *token,
 		})
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Peer %s (%s) creado.\n", *name, *ip)
+		var created state.Peer
+		if err := json.Unmarshal(data, &created); err != nil {
+			return err
+		}
+		fmt.Printf("Peer %s (%s) creado.\n", *name, created.AllowedIP)
 		if privateKey != "" {
 			fmt.Printf("Clave privada (guárdala, no se vuelve a mostrar): %s\n", privateKey)
 		}
+		if *domain != "" {
+			return printNodePairing(svc, created, *token)
+		}
 		return nil
+
+	case "claim":
+		if len(args) < 2 || strings.HasPrefix(args[1], "-") {
+			return fmt.Errorf("uso: umbrel-tunnel peer claim <id> --domain DOMINIO [--token TOKEN]")
+		}
+		fs := flag.NewFlagSet("peer claim", flag.ExitOnError)
+		domain := fs.String("domain", "", "dominio propio de este Umbrel")
+		token := fs.String("token", "", "token propio (se genera si se omite)")
+		if err := fs.Parse(args[2:]); err != nil {
+			return err
+		}
+		if *domain == "" {
+			return fmt.Errorf("falta --domain")
+		}
+		if *token == "" {
+			generated, err := config.GenerateToken()
+			if err != nil {
+				return err
+			}
+			*token = generated
+		}
+		data, err := apiRequest(ctx, "PUT", "/api/peers/"+args[1]+"/node", map[string]string{"domain": *domain, "token": *token})
+		if err != nil {
+			return err
+		}
+		var claimed state.Peer
+		if err := json.Unmarshal(data, &claimed); err != nil {
+			return err
+		}
+		fmt.Printf("Peer %s (%s) convertido en nodo de %s.\n", claimed.Name, claimed.AllowedIP, claimed.Domain)
+		fmt.Println("Pega este código en su app; después rota el token de administración con `umbrel-tunnel token rotate`.")
+		return printNodePairing(svc, claimed, *token)
 
 	case "rm":
 		if len(args) < 2 {
@@ -376,6 +435,20 @@ func cmdPeer(ctx context.Context, args []string) error {
 		return nil
 	}
 	return fmt.Errorf("subcomando desconocido: %s", args[0])
+}
+
+// printNodePairing prints the ut1 block of one node of a shared VPS. It carries
+// the node's own token and address, never the administrator token.
+func printNodePairing(svc *service.Service, peer state.Peer, token string) error {
+	p, err := svc.Pairing()
+	if err != nil {
+		return err
+	}
+	p.Token = token
+	p.UmbrelIP = peer.AllowedIP
+	p.Domain = peer.Domain
+	fmt.Print(pair.Block(p))
+	return nil
 }
 
 func cmdToken(args []string) error {

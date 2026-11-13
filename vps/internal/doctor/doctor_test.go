@@ -52,3 +52,17 @@ func TestPortBoundUsesSocketState(t *testing.T) {
 		t.Fatal("un error de ss no es un puerto abierto")
 	}
 }
+
+func TestSharedVPSWarnsWhileAnUmbrelKeepsTheAdminToken(t *testing.T) {
+	legacy := state.Peer{ID: "a", AllowedIP: "10.0.0.2"}
+	node := state.Peer{ID: "b", AllowedIP: "10.0.0.3", Domain: "oficina.example", TokenSHA256: "h"}
+	if got := sharedVPSWarning([]state.Peer{legacy}); got != "" {
+		t.Fatalf("un VPS de un solo Umbrel no debe avisar: %q", got)
+	}
+	if got := sharedVPSWarning([]state.Peer{node}); got != "" {
+		t.Fatalf("todos los peers son nodos: %q", got)
+	}
+	if got := sharedVPSWarning([]state.Peer{legacy, node}); got == "" {
+		t.Fatal("falta el aviso de token de administración compartido")
+	}
+}

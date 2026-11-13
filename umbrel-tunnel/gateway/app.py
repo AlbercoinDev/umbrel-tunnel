@@ -49,7 +49,7 @@ from vps import VPSClient, VPSError
 
 # Release of this gateway; must match vps/VERSION (tests enforce it). The VPS
 # installer and binaries offered to the user are pinned to this tag.
-RELEASE_VERSION = "1.4.2"
+RELEASE_VERSION = "1.5.0"
 VERSION = os.environ.get("APP_VERSION", RELEASE_VERSION)
 RESERVED_PUBLIC_PORTS = {22}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
@@ -420,6 +420,26 @@ def _bootstrap_endpoint(bootstrap: dict) -> str:
     return f"{bootstrap.get('vps_ip', '')}:{int(bootstrap.get('wg_port') or 0)}"
 
 
+def shared_command(bootstrap: dict) -> str:
+    """Command that adds this Umbrel to a VPS already used by another Umbrel.
+
+    The VPS assigns the tunnel address and binds the token to this Umbrel's
+    WireGuard key and domain; nothing is reinstalled on the VPS.
+    """
+    domain = str(bootstrap["shared_domain"])
+    args = [
+        "--name",
+        domain[:64],
+        "--pubkey",
+        str(bootstrap["public_key"]),
+        "--domain",
+        domain,
+        "--token",
+        str(bootstrap["token"]),
+    ]
+    return "sudo umbrel-tunnel peer add {}".format(" ".join(shlex.quote(item) for item in args))
+
+
 def install_command(bootstrap: dict) -> str:
     """Build the one-line VPS installer command shown to the user.
 
@@ -471,7 +491,8 @@ def bootstrap_view(bootstrap: dict) -> dict:
         "mtu": int(bootstrap.get("mtu") or 0),
         "public_key": bootstrap.get("public_key", ""),
         "token_set": bool(bootstrap.get("token")),
-        "command": install_command(bootstrap),
+        "shared_domain": bootstrap.get("shared_domain", ""),
+        "command": shared_command(bootstrap) if bootstrap.get("shared_domain") else install_command(bootstrap),
         "install_url": INSTALL_URL,
         "binary_base": BINARY_BASE,
         "created_at": bootstrap.get("created_at", 0),
@@ -508,6 +529,9 @@ def build_bootstrap(body: dict, existing: dict | None = None) -> dict:
     api_port = _int_in_range(body.get("api_port", 8080), 1, 65535, "invalid_bootstrap")
     wg_port = _int_in_range(body.get("wg_port", 51820), 1, 65535, "invalid_bootstrap")
     mtu = _int_in_range(body.get("mtu", 1420), 1280, 1500, "pair_mtu")
+    shared_domain = str(body.get("shared_domain") or "").strip().lower()
+    if shared_domain and not valid_public_domain(shared_domain):
+        raise BootstrapError("invalid_shared_domain")
 
     subnet = str(body.get("subnet") or "10.0.0.0/24").strip()
     try:
@@ -544,7 +568,9 @@ def build_bootstrap(body: dict, existing: dict | None = None) -> dict:
         "wg_port": wg_port,
         "subnet": str(network),
         "server_ip": str(server_address),
-        "umbrel_ip": str(umbrel_address),
+        # On a shared VPS the VPS assigns the address; it is not compared.
+        "umbrel_ip": "" if shared_domain else str(umbrel_address),
+        "shared_domain": shared_domain,
         "mtu": mtu,
         "token": token,
         "public_key": public_key,
@@ -564,6 +590,8 @@ def bootstrap_mismatch(payload: dict, bootstrap: dict) -> str:
     for field, want in expected.items():
         if want and str(payload.get(field) or "") != want:
             return field
+    if str(bootstrap.get("shared_domain") or "") != str(payload.get("domain") or ""):
+        return "domain"
     want_mtu = bootstrap.get("mtu")
     if want_mtu:
         try:
@@ -636,8 +664,12 @@ def decode_pair(code: str) -> dict:
     server_pubkey = str(payload.get("server_pubkey") or "").strip()
     if server_pubkey and not wireguard.valid_key(server_pubkey):
         raise PairError("pair_pubkey")
+    domain = str(payload.get("domain") or "").strip()
+    if domain and not valid_public_domain(domain):
+        raise PairError("pair_domain")
 
     return {
+        "domain": domain,
         "api": api,
         "token": str(payload["token"]).strip(),
         "endpoint": endpoint,
@@ -906,6 +938,12 @@ def configure_publication_access(config: dict, exposure: dict, body: dict) -> No
         domain = (sub + "." if sub else "") + base
     if domain and not valid_public_domain(domain):
         raise ValueError("Dominio público inválido / Invalid public domain")
+    node_domain = str((config.get("vps") or {}).get("domain") or "")
+    if domain and node_domain and domain != node_domain and not domain.endswith("." + node_domain):
+        raise ValueError(
+            f"Este Umbrel comparte el VPS y solo puede usar {node_domain} o sus subdominios / "
+            f"This Umbrel shares the VPS and may only use {node_domain} or its subdomains"
+        )
     if mode == "direct":
         if "public_port" in body:
             port = _requested_public_port(body)
@@ -1594,8 +1632,12 @@ def pair():
             "umbrel_ip": payload["umbrel_ip"],
             "subnet": payload["subnet"],
             "mtu": payload["mtu"],
+            "domain": payload["domain"],
             "peer_registered": False,
         }
+        if payload["domain"]:
+            # Shared VPS: this Umbrel may only publish under its own domain.
+            config.setdefault("settings", {})["base_domain"] = payload["domain"]
         config["bootstrap"] = {}
         state.save(config)
 
@@ -1947,6 +1989,7 @@ def get_settings():
             "endpoint": vps.get("endpoint", ""),
             "subnet": vps.get("subnet", ""),
             "umbrel_ip": vps.get("umbrel_ip", ""),
+            "node_domain": vps.get("domain", ""),
             "settings": config.get("settings", {}),
         }
     )
@@ -1962,6 +2005,9 @@ def update_settings():
             domain = str(body["base_domain"]).strip().lower()
             if domain and not valid_public_domain(domain):
                 return jsonify({"error": "Dominio base inválido / Invalid base domain"}), 400
+            node_domain = str(vps.get("domain") or "")
+            if node_domain and domain != node_domain and not domain.endswith("." + node_domain):
+                return jsonify({"error": f"El VPS compartido solo admite {node_domain} o sus subdominios / The shared VPS only allows {node_domain} or its subdomains"}), 400
             config.setdefault("settings", {})["base_domain"] = domain
         if "api" in body:
             api = str(body["api"]).strip().rstrip("/")

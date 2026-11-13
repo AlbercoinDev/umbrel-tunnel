@@ -3,7 +3,6 @@ package httpapi
 
 import (
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -52,20 +51,21 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /health", s.health)
 	mux.HandleFunc("GET /api/status", s.auth(s.statusHandler))
 	mux.HandleFunc("GET /api/peers", s.auth(s.listPeers))
-	mux.HandleFunc("POST /api/peers", s.auth(s.createPeer))
-	mux.HandleFunc("PUT /api/peers/{id}", s.auth(s.updatePeer))
-	mux.HandleFunc("POST /api/peers/{id}/rotation", s.auth(s.prepareRotation))
-	mux.HandleFunc("POST /api/peers/{id}/rotation/confirm", s.auth(s.confirmRotation))
-	mux.HandleFunc("DELETE /api/peers/{id}", s.auth(s.deletePeer))
-	mux.HandleFunc("GET /api/peers/{id}/config", s.auth(s.peerConfig))
+	mux.HandleFunc("POST /api/peers", s.adminOnly(s.createPeer))
+	mux.HandleFunc("PUT /api/peers/{id}/node", s.adminOnly(s.setPeerNode))
+	mux.HandleFunc("PUT /api/peers/{id}", s.peerScoped(s.updatePeer))
+	mux.HandleFunc("POST /api/peers/{id}/rotation", s.peerScoped(s.prepareRotation))
+	mux.HandleFunc("POST /api/peers/{id}/rotation/confirm", s.peerScoped(s.confirmRotation))
+	mux.HandleFunc("DELETE /api/peers/{id}", s.peerScoped(s.deletePeer))
+	mux.HandleFunc("GET /api/peers/{id}/config", s.peerScoped(s.peerConfig))
 	mux.HandleFunc("GET /api/forwards", s.auth(s.listForwards))
 	mux.HandleFunc("GET /api/certificates", s.auth(s.certificates))
 	mux.HandleFunc("POST /api/certificates/retry", s.auth(s.retryCertificates))
 	mux.HandleFunc("POST /api/forwards/reconcile", s.auth(s.reconcileForwards))
-	mux.HandleFunc("GET /api/forwards/{id}/check", s.auth(s.checkForward))
+	mux.HandleFunc("GET /api/forwards/{id}/check", s.forwardScoped(s.checkForward))
 	mux.HandleFunc("POST /api/forwards", s.auth(s.createForward))
-	mux.HandleFunc("PATCH /api/forwards/{id}", s.auth(s.patchForward))
-	mux.HandleFunc("DELETE /api/forwards/{id}", s.auth(s.deleteForward))
+	mux.HandleFunc("PATCH /api/forwards/{id}", s.forwardScoped(s.patchForward))
+	mux.HandleFunc("DELETE /api/forwards/{id}", s.forwardScoped(s.deleteForward))
 	mux.HandleFunc("POST /api/token/rotate", s.auth(s.rotateToken))
 	mux.HandleFunc("GET /", s.index)
 	mux.HandleFunc("GET /app.js", s.asset("app.js", "text/javascript; charset=utf-8"))
@@ -82,25 +82,6 @@ func (s *Server) headers(next http.Handler) http.Handler {
 		w.Header().Set("Cache-Control", "no-store")
 		next.ServeHTTP(w, r)
 	})
-}
-
-func (s *Server) auth(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		token, err := s.svc.Paths.LoadToken()
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "token no disponible")
-			return
-		}
-		header := r.Header.Get("Authorization")
-		const prefix = "Bearer "
-		if !strings.HasPrefix(header, prefix) ||
-			subtle.ConstantTimeCompare([]byte(strings.TrimSpace(strings.TrimPrefix(header, prefix))), []byte(token)) != 1 {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="umbrel-tunnel"`)
-			writeError(w, http.StatusUnauthorized, "token inválido")
-			return
-		}
-		next(w, r)
-	}
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
@@ -193,7 +174,18 @@ func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
 		byKey[p.PublicKey] = p
 	}
 
+	who := principalFrom(r)
 	peers := s.svc.Store.Peers()
+	if !who.admin {
+		peers = []state.Peer{who.peer}
+		own := []wireguard.PeerStatus{}
+		for _, p := range st.Peers {
+			if p.PublicKey == who.peer.PublicKey {
+				own = append(own, p)
+			}
+		}
+		st.Peers = own
+	}
 	views := make([]peerView, 0, len(peers))
 	connected := 0
 	for _, p := range peers {
@@ -210,7 +202,7 @@ func (s *Server) statusHandler(w http.ResponseWriter, r *http.Request) {
 		views = append(views, view)
 	}
 
-	forwards := s.svc.Store.Forwards()
+	forwards := s.ownForwards(who)
 	enabled := 0
 	for _, f := range forwards {
 		if f.Enabled {
@@ -237,6 +229,9 @@ type peerRequest struct {
 	PublicKey string `json:"public_key"`
 	AllowedIP string `json:"allowed_ip"`
 	Endpoint  string `json:"endpoint"`
+	// Domain and Token register the peer as an isolated node (admin only).
+	Domain string `json:"domain"`
+	Token  string `json:"token"`
 }
 
 type peerResponse struct {
@@ -244,8 +239,41 @@ type peerResponse struct {
 	PrivateKey string `json:"private_key,omitempty"`
 }
 
-func (s *Server) listPeers(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.svc.Store.Peers())
+func (s *Server) listPeers(w http.ResponseWriter, r *http.Request) {
+	who := principalFrom(r)
+	out := []state.Peer{}
+	for _, p := range s.svc.Store.Peers() {
+		if who.ownsPeer(p.ID) {
+			out = append(out, p.Public())
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) ownForwards(who principal) []state.Forward {
+	out := []state.Forward{}
+	for _, f := range s.svc.Store.Forwards() {
+		if who.owns(f) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// nodeFields validates the optional node identity of a peer.
+func nodeFields(domain, token string) (string, string, error) {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	token = strings.TrimSpace(token)
+	if domain == "" && token == "" {
+		return "", "", nil
+	}
+	if !edge.ValidDomain(domain) {
+		return "", "", fmt.Errorf("dominio del nodo inválido")
+	}
+	if len(token) < 24 || len(token) > 256 {
+		return "", "", fmt.Errorf("el token del nodo debe tener entre 24 y 256 caracteres")
+	}
+	return domain, TokenHash(token), nil
 }
 
 func (s *Server) createPeer(w http.ResponseWriter, r *http.Request) {
@@ -265,6 +293,19 @@ func (s *Server) createPeer(w http.ResponseWriter, r *http.Request) {
 	if req.Name == "" || len(req.Name) > 64 {
 		writeError(w, http.StatusBadRequest, "nombre inválido")
 		return
+	}
+	domain, tokenHash, err := nodeFields(req.Domain, req.Token)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.AllowedIP == "" && domain != "" {
+		ip, err := s.svc.NextFreeIP()
+		if err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		req.AllowedIP = ip
 	}
 	if err := s.svc.ValidateIPInSubnet(req.AllowedIP); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -291,10 +332,12 @@ func (s *Server) createPeer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	peer := state.Peer{
-		Name:      req.Name,
-		PublicKey: req.PublicKey,
-		AllowedIP: req.AllowedIP,
-		Endpoint:  strings.TrimSpace(req.Endpoint),
+		Name:        req.Name,
+		PublicKey:   req.PublicKey,
+		AllowedIP:   req.AllowedIP,
+		Endpoint:    strings.TrimSpace(req.Endpoint),
+		Domain:      domain,
+		TokenSHA256: tokenHash,
 	}
 	if err := s.svc.Store.AddPeer(peer); err != nil {
 		code := http.StatusBadRequest
@@ -312,7 +355,7 @@ func (s *Server) createPeer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "no se pudo aplicar WireGuard: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, peerResponse{Peer: created, PrivateKey: privateKey})
+	writeJSON(w, http.StatusCreated, peerResponse{Peer: created.Public(), PrivateKey: privateKey})
 }
 
 type peerUpdateRequest struct {
@@ -370,7 +413,58 @@ func (s *Server) updatePeer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "no se pudo aplicar WireGuard: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, updated)
+	writeJSON(w, http.StatusOK, updated.Public())
+}
+
+type peerNodeRequest struct {
+	Domain string `json:"domain"`
+	Token  string `json:"token"`
+}
+
+// setPeerNode turns an existing peer (usually the original single Umbrel) into
+// an isolated node of a shared VPS. Its tunnel, keys and publications stay.
+func (s *Server) setPeerNode(w http.ResponseWriter, r *http.Request) {
+	s.forwardMu.Lock()
+	defer s.forwardMu.Unlock()
+	var req peerNodeRequest
+	if err := decode(w, r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "JSON inválido: "+err.Error())
+		return
+	}
+	domain, tokenHash, err := nodeFields(req.Domain, req.Token)
+	if err != nil || domain == "" {
+		if err == nil {
+			err = fmt.Errorf("faltan dominio y token")
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	id := r.PathValue("id")
+	peer, ok := s.svc.Store.PeerByID(id)
+	if !ok {
+		writeError(w, http.StatusNotFound, "peer no encontrado")
+		return
+	}
+	for _, f := range s.svc.Store.Forwards() {
+		if f.TargetIP == peer.AllowedIP && f.Domain != "" && !state.InDomain(f.Domain, domain) {
+			writeError(w, http.StatusConflict, "la publicación "+f.Name+" usa "+f.Domain+", fuera de "+domain)
+			return
+		}
+	}
+	updated, err := s.svc.Store.UpdatePeer(id, func(p *state.Peer) error {
+		p.Domain = domain
+		p.TokenSHA256 = tokenHash
+		return nil
+	})
+	if err != nil {
+		code := http.StatusBadRequest
+		if strings.Contains(err.Error(), "ya existe") {
+			code = http.StatusConflict
+		}
+		writeError(w, code, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, updated.Public())
 }
 
 func (s *Server) deletePeer(w http.ResponseWriter, r *http.Request) {
@@ -476,8 +570,8 @@ func (s *Server) validateForward(name string, publicPort int, targetIP string, t
 	return name, nil
 }
 
-func (s *Server) listForwards(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, s.svc.Store.Forwards())
+func (s *Server) listForwards(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.ownForwards(principalFrom(r)))
 }
 
 // This checks the tunnel destination, never claims to verify Internet access.
@@ -551,6 +645,10 @@ func (s *Server) createForward(w http.ResponseWriter, r *http.Request) {
 		Protocol:   proto,
 		ManagedBy:  req.ManagedBy,
 		Enabled:    enabled,
+	}
+	if code, msg := scopeForward(principalFrom(r), &fwd); code != 0 {
+		writeError(w, code, msg)
+		return
 	}
 	if (fwd.AccessMode == "https" || fwd.AccessMode == "tls") && !req.AcceptACMETerms {
 		writeError(w, http.StatusBadRequest, "debes aceptar las condiciones de Let's Encrypt (accept_acme_terms)")
@@ -672,6 +770,10 @@ func (s *Server) patchForward(w http.ResponseWriter, r *http.Request) {
 	updated.Name = name
 	proto, _ := normalizeProtocol(updated.Protocol)
 	updated.Protocol = proto
+	if code, msg := scopeForward(principalFrom(r), &updated); code != 0 {
+		writeError(w, code, msg)
+		return
+	}
 	if (updated.AccessMode == "https" || updated.AccessMode == "tls") && (before.AccessMode != updated.AccessMode || before.Domain != updated.Domain) && !patch.AcceptACMETerms {
 		writeError(w, http.StatusBadRequest, "debes aceptar las condiciones de Let's Encrypt")
 		return
@@ -731,10 +833,22 @@ func (s *Server) deleteForward(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func (s *Server) rotateToken(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) rotateToken(w http.ResponseWriter, r *http.Request) {
 	token, err := config.GenerateToken()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if who := principalFrom(r); !who.admin {
+		// A node rotates only its own token; the administrator's stays.
+		if _, err := s.svc.Store.UpdatePeer(who.peer.ID, func(p *state.Peer) error {
+			p.TokenSHA256 = TokenHash(token)
+			return nil
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"token": token})
 		return
 	}
 	if err := s.svc.Paths.SaveToken(token); err != nil {

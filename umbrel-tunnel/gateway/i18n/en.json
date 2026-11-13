@@ -360,5 +360,11 @@
   "common.close": "Close",
   "sync.retried_port": "The VPS rejected the port; retried on :{port}.",
   "error.no_public_port": "No free public ports left.",
-  "advanced.manual_port_opened": "Port {port} opened."
+  "advanced.manual_port_opened": "Port {port} opened.",
+  "error.pair_domain": "The code contains an invalid domain.",
+  "error.invalid_shared_domain": "This Umbrel's domain is not valid (use lowercase, for example home.example.com).",
+  "onboarding.shared_label": "Shared VPS: this Umbrel's domain (optional)",
+  "onboarding.shared_placeholder": "office.example.com",
+  "onboarding.shared_help": "Fill it in only if the VPS already serves another Umbrel. The app generates an `umbrel-tunnel peer add` command instead of the installer, and this Umbrel may only publish under that domain and its subdomains.",
+  "onboarding.shared_ip": "assigned by the VPS"
 }

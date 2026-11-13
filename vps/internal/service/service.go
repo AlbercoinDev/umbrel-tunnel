@@ -169,3 +169,32 @@ func (s *Service) ValidateIPInSubnet(ip string) error {
 	}
 	return nil
 }
+
+// NextFreeIP returns the lowest tunnel address not used by the server, the
+// default Umbrel address or any peer. New nodes of a shared VPS get one.
+func (s *Service) NextFreeIP() (string, error) {
+	_, network, err := net.ParseCIDR(s.Cfg.Subnet)
+	if err != nil {
+		return "", err
+	}
+	used := map[string]bool{s.Cfg.ServerIP: true, s.Cfg.UmbrelIP: true}
+	for _, p := range s.Store.Peers() {
+		used[p.AllowedIP] = true
+	}
+	base := network.IP.To4()
+	if base == nil {
+		return "", fmt.Errorf("la subred %s no es IPv4", s.Cfg.Subnet)
+	}
+	ones, bits := network.Mask.Size()
+	size := 1 << uint(bits-ones)
+	for i := 1; i < size-1; i++ {
+		ip := make(net.IP, 4)
+		n := uint32(base[0])<<24 | uint32(base[1])<<16 | uint32(base[2])<<8 | uint32(base[3])
+		n += uint32(i)
+		ip[0], ip[1], ip[2], ip[3] = byte(n>>24), byte(n>>16), byte(n>>8), byte(n)
+		if !used[ip.String()] {
+			return ip.String(), nil
+		}
+	}
+	return "", fmt.Errorf("no quedan IP libres en %s", s.Cfg.Subnet)
+}

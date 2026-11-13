@@ -48,6 +48,8 @@ func (m *Manager) Rules(forwards []state.Forward) string {
 	b.WriteString("    chain forward {\n")
 	b.WriteString("        type filter hook forward priority filter; policy accept;\n")
 	b.WriteString("        ct state established,related accept\n")
+	// Umbrels sharing this VPS must never reach each other through it.
+	fmt.Fprintf(&b, "        iifname %q oifname %q drop\n", m.cfg.Interface, m.cfg.Interface)
 	fmt.Fprintf(&b, "        iifname %q accept\n", m.cfg.Interface)
 	fmt.Fprintf(&b, "        oifname %q accept\n", m.cfg.Interface)
 	b.WriteString("    }\n\n")

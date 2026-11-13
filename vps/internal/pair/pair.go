@@ -25,6 +25,9 @@ type Pairing struct {
 	UmbrelIP     string `json:"umbrel_ip,omitempty"`
 	Subnet       string `json:"subnet,omitempty"`
 	MTU          int    `json:"mtu,omitempty"`
+	// Domain is set when the VPS is shared: this Umbrel may only publish
+	// under it, and the app uses it as its base domain.
+	Domain string `json:"domain,omitempty"`
 }
 
 // Encode serializes a pairing payload.
@@ -78,6 +81,9 @@ func (p Pairing) validate() error {
 	if p.UmbrelIP != "" && net.ParseIP(p.UmbrelIP) == nil {
 		return fmt.Errorf("IP de Umbrel inválida: %q", p.UmbrelIP)
 	}
+	if p.Domain != "" && (p.Domain != strings.ToLower(p.Domain) || strings.ContainsAny(p.Domain, " /:@") || !strings.Contains(p.Domain, ".")) {
+		return fmt.Errorf("dominio inválido: %q", p.Domain)
+	}
 	if p.MTU != 0 && (p.MTU < 1280 || p.MTU > 1500) {
 		return fmt.Errorf("MTU fuera de rango: %d", p.MTU)
 	}
@@ -95,6 +101,9 @@ func Block(p Pairing) string {
 	}
 	if p.ServerPubKey != "" {
 		fmt.Fprintf(&b, "Clave:  %s\n", p.ServerPubKey)
+	}
+	if p.Domain != "" {
+		fmt.Fprintf(&b, "Dominio: %s (IP en el túnel: %s)\n", p.Domain, p.UmbrelIP)
 	}
 	if code, err := Encode(p); err == nil {
 		fmt.Fprintf(&b, "Código: %s\n", code)

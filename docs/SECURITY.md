@@ -20,6 +20,18 @@
 - El `22/tcp` del VPS está reservado y no se puede abrir desde la app.
 - La API exige `Authorization: Bearer <token>` salvo `/health`.
 - El token se guarda en `/etc/umbrel-tunnel/token` (`600`) y se puede rotar.
+- VPS compartido: cada Umbrel adicional es un nodo con token propio. El VPS
+  guarda solo su SHA-256 en `peers.json` y lo acepta únicamente desde la IP del
+  túnel de ese nodo. Un nodo solo lista, edita, comprueba y retira las
+  publicaciones cuyo destino es su IP; el servidor fija `managed_by`; solo puede
+  usar su dominio o subdominios; no puede crear peers ni tocar los ajenos. Las
+  respuestas a recursos ajenos son `404`, sin revelar si existen.
+- nftables descarta el tráfico `wg0 → wg0`: los peers no se alcanzan entre sí a
+  través del VPS. El tráfico público (DNAT) y el edge HTTPS/TLS no se ven
+  afectados.
+- Mientras un Umbrel use el token de administración en un VPS compartido puede
+  modificar las publicaciones de todos; `doctor` lo avisa hasta que se convierta
+  con `peer claim` y se rote el token.
 
 ### App de Umbrel
 

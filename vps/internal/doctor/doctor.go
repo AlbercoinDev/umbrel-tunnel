@@ -113,6 +113,9 @@ func Run(ctx context.Context, svc *service.Service, run execx.Runner, version st
 	} else {
 		r.add("peers", "ok", fmt.Sprintf("%d", len(svc.Store.Peers())))
 	}
+	if detail := sharedVPSWarning(svc.Store.Peers()); detail != "" {
+		r.add("VPS compartido", "warn", detail)
+	}
 
 	if out, err := run.Run(ctx, "systemctl", "is-active", "umbrel-tunnel"); err != nil {
 		r.add("servicio", "warn", strings.TrimSpace(string(out)))
@@ -271,4 +274,21 @@ func portList(ports []int) string {
 func portBound(ctx context.Context, run execx.Runner, port int) bool {
 	out, err := run.Run(ctx, "ss", "-H", "-ltn", fmt.Sprintf("sport = :%d", port))
 	return err == nil && strings.TrimSpace(string(out)) != ""
+}
+
+// sharedVPSWarning flags a shared VPS where some Umbrel still uses the
+// administrator token: that Umbrel could change every other node's rules.
+func sharedVPSWarning(peers []state.Peer) string {
+	nodes, legacy := 0, []string{}
+	for _, p := range peers {
+		if p.IsNode() {
+			nodes++
+		} else {
+			legacy = append(legacy, p.ID)
+		}
+	}
+	if nodes == 0 || len(legacy) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("peers sin dominio propio (%s) usan el token de administración; conviértelos con `peer claim` y ejecuta `token rotate`", strings.Join(legacy, ", "))
 }

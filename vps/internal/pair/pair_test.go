@@ -58,3 +58,24 @@ func TestEncodeValidates(t *testing.T) {
 		t.Fatal("MTU inválido aceptado")
 	}
 }
+
+func TestSharedVPSDomainRoundTripAndValidation(t *testing.T) {
+	in := Pairing{V: 1, API: "http://10.0.0.1:8080", Token: "t", UmbrelIP: "10.0.0.3", Domain: "oficina.example"}
+	code, err := Encode(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := Decode(code)
+	if err != nil || out.Domain != "oficina.example" {
+		t.Fatalf("Decode: %+v %v", out, err)
+	}
+	if !strings.Contains(Block(in), "Dominio: oficina.example") {
+		t.Fatal("el bloque no muestra el dominio")
+	}
+	for _, bad := range []string{"Oficina.example", "oficina", "a b.example", "x.example/evil"} {
+		in.Domain = bad
+		if _, err := Encode(in); err == nil {
+			t.Fatalf("dominio inválido aceptado: %q", bad)
+		}
+	}
+}

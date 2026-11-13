@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,12 +17,39 @@ import (
 
 // Peer is a WireGuard client allowed to use the tunnel.
 type Peer struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	PublicKey string    `json:"public_key"`
-	AllowedIP string    `json:"allowed_ip"`
-	Endpoint  string    `json:"endpoint,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	PublicKey string `json:"public_key"`
+	AllowedIP string `json:"allowed_ip"`
+	Endpoint  string `json:"endpoint,omitempty"`
+	// Domain and TokenSHA256 turn a peer into an isolated node of a shared VPS:
+	// it authenticates with its own token and may only publish under Domain.
+	Domain      string    `json:"domain,omitempty"`
+	TokenSHA256 string    `json:"token_sha256,omitempty"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+// IsNode reports whether the peer has its own scoped API token.
+func (p Peer) IsNode() bool { return p.TokenSHA256 != "" }
+
+// Public hides the token hash from API responses.
+func (p Peer) Public() Peer {
+	p.TokenSHA256 = ""
+	return p
+}
+
+// DomainsOverlap reports whether two node domains are equal or one is a
+// subdomain of the other; overlapping names could hijack each other's routes.
+func DomainsOverlap(a, b string) bool {
+	if a == "" || b == "" {
+		return false
+	}
+	return a == b || strings.HasSuffix(a, "."+b) || strings.HasSuffix(b, "."+a)
+}
+
+// InDomain reports whether name is domain itself or one of its subdomains.
+func InDomain(name, domain string) bool {
+	return domain != "" && (name == domain || strings.HasSuffix(name, "."+domain))
 }
 
 // Forward is a public TCP/UDP port redirected to a peer.
@@ -57,12 +85,14 @@ func NewID() string {
 }
 
 type peerJSON struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	PublicKey string     `json:"public_key"`
-	AllowedIP string     `json:"allowed_ip"`
-	Endpoint  string     `json:"endpoint"`
-	CreatedAt *time.Time `json:"created_at"`
+	ID          string     `json:"id"`
+	Name        string     `json:"name"`
+	PublicKey   string     `json:"public_key"`
+	AllowedIP   string     `json:"allowed_ip"`
+	Endpoint    string     `json:"endpoint"`
+	Domain      string     `json:"domain"`
+	TokenSHA256 string     `json:"token_sha256"`
+	CreatedAt   *time.Time `json:"created_at"`
 }
 
 type forwardJSON struct {
@@ -119,12 +149,14 @@ func (s *Store) load() error {
 			created = *p.CreatedAt
 		}
 		s.peers = append(s.peers, Peer{
-			ID:        p.ID,
-			Name:      p.Name,
-			PublicKey: p.PublicKey,
-			AllowedIP: p.AllowedIP,
-			Endpoint:  p.Endpoint,
-			CreatedAt: created,
+			ID:          p.ID,
+			Name:        p.Name,
+			PublicKey:   p.PublicKey,
+			AllowedIP:   p.AllowedIP,
+			Endpoint:    p.Endpoint,
+			Domain:      p.Domain,
+			TokenSHA256: p.TokenSHA256,
+			CreatedAt:   created,
 		})
 	}
 
@@ -240,6 +272,18 @@ func (s *Store) PeerByIP(ip string) (Peer, bool) {
 	return Peer{}, false
 }
 
+// PeerByTokenHash finds the node that owns a token hash.
+func (s *Store) PeerByTokenHash(hash string) (Peer, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, p := range s.peers {
+		if hash != "" && p.TokenSHA256 == hash {
+			return p, true
+		}
+	}
+	return Peer{}, false
+}
+
 // PeerByID finds a peer by its identifier.
 func (s *Store) PeerByID(id string) (Peer, bool) {
 	s.mu.RLock()
@@ -262,6 +306,9 @@ func (s *Store) AddPeer(p Peer) error {
 		}
 		if existing.AllowedIP == p.AllowedIP {
 			return fmt.Errorf("ya existe un peer con la IP %s", p.AllowedIP)
+		}
+		if DomainsOverlap(existing.Domain, p.Domain) {
+			return fmt.Errorf("ya existe un peer con el dominio %s o uno solapado", existing.Domain)
 		}
 	}
 	if p.ID == "" {
@@ -304,6 +351,9 @@ func (s *Store) UpdatePeer(id string, fn func(*Peer) error) (Peer, error) {
 				if j != i && s.peers[j].AllowedIP == updated.AllowedIP {
 					return Peer{}, fmt.Errorf("ya existe un peer con la IP %s", updated.AllowedIP)
 				}
+				if j != i && DomainsOverlap(s.peers[j].Domain, updated.Domain) {
+					return Peer{}, fmt.Errorf("ya existe un peer con el dominio %s o uno solapado", s.peers[j].Domain)
+				}
 			}
 			s.peers[i] = updated
 			if err := s.saveLocked(); err != nil {
@@ -320,6 +370,16 @@ func (s *Store) UpdatePeer(id string, fn func(*Peer) error) (Peer, error) {
 // redirecting it would lock the administrator out of the server.
 var ReservedPublicPorts = map[int]string{22: "SSH del VPS"}
 
+// sharesByName reports whether two publications can share a public port
+// because the edge tells them apart by HTTP Host or TLS SNI.
+func sharesByName(a, b Forward) bool {
+	switch a.AccessMode {
+	case "http", "https", "tls":
+		return a.AccessMode == b.AccessMode && a.Domain != b.Domain
+	}
+	return false
+}
+
 func (s *Store) AddForward(f Forward) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -330,7 +390,7 @@ func (s *Store) AddForward(f Forward) error {
 		return fmt.Errorf("el puerto público %d está reservado para el %s", f.PublicPort, what)
 	}
 	for _, existing := range s.forwards {
-		if (f.AccessMode == "https" || f.AccessMode == "http") && existing.AccessMode == f.AccessMode && f.Domain != existing.Domain {
+		if sharesByName(f, existing) {
 			continue
 		}
 		if existing.PublicPort == f.PublicPort && existing.Protocol == f.Protocol {
@@ -367,7 +427,7 @@ func (s *Store) UpdateForward(id string, fn func(*Forward) error) (Forward, erro
 				if j == i {
 					continue
 				}
-				if (updated.AccessMode == "https" || updated.AccessMode == "http") && s.forwards[j].AccessMode == updated.AccessMode && updated.Domain != s.forwards[j].Domain {
+				if sharesByName(updated, s.forwards[j]) {
 					continue
 				}
 				if s.forwards[j].PublicPort == updated.PublicPort &&

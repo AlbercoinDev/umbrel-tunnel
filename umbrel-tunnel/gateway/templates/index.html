@@ -196,6 +196,10 @@
         <label class="field">{{ t('onboarding.vps_label') }}
           <input id="bootstrap-vps-ip" inputmode="decimal" placeholder="{{ t('onboarding.vps_placeholder') }}" autocomplete="off" required>
         </label>
+        <label class="field">{{ t('onboarding.shared_label') }}
+          <input id="bootstrap-shared-domain" inputmode="url" placeholder="{{ t('onboarding.shared_placeholder') }}" autocomplete="off" spellcheck="false">
+          <small class="muted">{{ t('onboarding.shared_help') }}</small>
+        </label>
         <div class="row">
           <button type="submit">{{ t('onboarding.generate') }}</button>
         </div>

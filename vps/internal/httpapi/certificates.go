@@ -1,6 +1,10 @@
 package httpapi
 
-import "net/http"
+import (
+	"net/http"
+
+	"umbrel-tunnel/internal/state"
+)
 
 func (s *Server) retryCertificates(w http.ResponseWriter, r *http.Request) {
 	if s.svc.Edge == nil {
@@ -16,5 +20,13 @@ func (s *Server) certificates(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, []any{})
 		return
 	}
-	writeJSON(w, http.StatusOK, s.svc.Edge.Status())
+	who := principalFrom(r)
+	out := []map[string]any{}
+	for _, item := range s.svc.Edge.Status() {
+		domain, _ := item["domain"].(string)
+		if who.admin || state.InDomain(domain, who.peer.Domain) {
+			out = append(out, item)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }

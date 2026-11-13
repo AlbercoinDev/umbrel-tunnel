@@ -68,7 +68,7 @@ ejecutar en el VPS. No tienes que copiar claves a mano.
 El comando tiene esta forma (la app rellena todos los valores):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.4.2/vps/install.sh \
+curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.5.0/vps/install.sh \
   | sudo bash -s -- \
       --endpoint 203.0.113.10 \
       --token '<TOKEN>' \
@@ -79,7 +79,7 @@ curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.4.2/v
       --api-port 8080 \
       --wg-port 51820 \
       --mtu 1420 \
-      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.4.2
+      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.5.0
 ```
 
 `--binary-base` descarga `umbrel-tunnel-linux-amd64` o
@@ -123,10 +123,10 @@ El ejemplo usa la red predeterminada; si el asistente muestra otra, copia tambi�
 ```bash
 cd vps
 make dist
-scp dist/umbrel-tunnel-1.4.2-linux-amd64.tar.gz root@203.0.113.10:/tmp/
+scp dist/umbrel-tunnel-1.5.0-linux-amd64.tar.gz root@203.0.113.10:/tmp/
 ssh root@203.0.113.10
-tar -xzf /tmp/umbrel-tunnel-1.4.2-linux-amd64.tar.gz -C /tmp
-cd /tmp/umbrel-tunnel-1.4.2-linux-amd64
+tar -xzf /tmp/umbrel-tunnel-1.5.0-linux-amd64.tar.gz -C /tmp
+cd /tmp/umbrel-tunnel-1.5.0-linux-amd64
 sudo ./install.sh --endpoint 203.0.113.10 \
   --umbrel-pubkey '<CLAVE_PUBLICA_DE_LA_APP>' --token '<TOKEN_DE_LA_APP>'
 ```
@@ -224,6 +224,63 @@ clave pública del servidor, IP de Umbrel, subred y MTU. La app genera la clave
 local, aplica la configuración y muestra la clave pública que debe registrarse
 en el VPS. Si la app ya está emparejada por API/token, el registro es
 automático.
+
+## VPS compartido: varios Umbrel con dominio propio
+
+Un mismo VPS puede dar servicio a varios Umbrel. Cada Umbrel es un **nodo** con
+su propio dominio público (por ejemplo `casa.example.com` y
+`oficina.example.org`), su propio token y su propia IP en el túnel.
+
+Qué se comparte y qué no:
+
+| Tipo de publicación | ¿Dos Umbrel en el mismo puerto público? | Cómo decide el VPS |
+| --- | --- | --- |
+| HTTPS (443) y HTTP | Sí, con dominios distintos | cabecera `Host` y SNI |
+| TLS añadido (p. ej. Electrum 50002) | Sí, con dominios distintos | SNI del cliente |
+| TCP o UDP directo | No: el puerto es de un solo Umbrel | no hay dominio que leer |
+
+Un cliente TLS que no envía SNI solo se acepta si en ese puerto hay una única
+publicación; si el puerto está compartido, el VPS no elige un Umbrel al azar.
+
+Aislamiento entre nodos:
+
+- Cada nodo solo ve, edita y retira las publicaciones que apuntan a su IP del
+  túnel, y solo puede publicar en su dominio o sus subdominios.
+- El token de un nodo solo funciona desde su IP del túnel, que WireGuard ata a
+  su clave.
+- El VPS descarta el tráfico entre peers (`wg0 → wg0`): un Umbrel no alcanza a
+  otro por el túnel.
+- El token de administración (`/etc/umbrel-tunnel/token`) sigue dando acceso
+  total y queda solo en el VPS: CLI, panel web y diagnóstico.
+
+DNS: crea para cada dominio un registro A (o un wildcard `*.dominio`) hacia la
+IP pública del VPS. Los dominios de dos nodos no pueden coincidir ni estar uno
+dentro del otro.
+
+### Añadir otro Umbrel a un VPS que ya usas
+
+1. En la app del Umbrel nuevo, escribe la IP del VPS y rellena **VPS
+   compartido: dominio de este Umbrel**. La app genera un comando
+   `sudo umbrel-tunnel peer add …` con su clave pública, su token y su dominio.
+2. Ejecuta ese comando en el VPS. El VPS asigna la siguiente IP libre del túnel
+   e imprime un bloque `ut1` con ella y con el dominio.
+3. Pega el bloque en la app. El dominio queda como dominio base.
+
+### Convertir el Umbrel original en nodo
+
+Mientras el primer Umbrel use el token de administración podría modificar las
+publicaciones de los demás (`umbrel-tunnel doctor` lo avisa). Conviértelo antes
+o justo después de añadir el segundo:
+
+```bash
+umbrel-tunnel peer list                                  # ID del Umbrel original
+sudo umbrel-tunnel peer claim <ID> --domain casa.example.com
+# pega el bloque ut1 en su app: Conexión → Cambiar de VPS
+sudo umbrel-tunnel token rotate                          # retira el token admin antiguo
+```
+
+`peer claim` conserva el túnel, las claves y las publicaciones; falla si alguna
+publicación existente usa un dominio fuera del nuevo.
 
 ## Uso
 
@@ -344,6 +401,8 @@ umbrel-tunnel init [opciones]            # configuración, claves, token
 umbrel-tunnel pair [--json] [--rotate-token]
 umbrel-tunnel peer list
 umbrel-tunnel peer add --name N --ip 10.0.0.3 [--pubkey KEY]
+umbrel-tunnel peer add --name N --pubkey KEY --domain D [--token T]   # VPS compartido
+umbrel-tunnel peer claim <id> --domain D [--token T]                 # Umbrel existente → nodo
 umbrel-tunnel peer rm <id>
 umbrel-tunnel peer config <id> --private-key-file /ruta/peer.key
 umbrel-tunnel forward list
@@ -450,6 +509,9 @@ handshakes, abrir/cerrar forwards TCP/UDP, gestionar certificados y rotar el tok
   túnel y descarta el resto.
 - Token Bearer en `/etc/umbrel-tunnel/token` (`600`), rotable con
   `umbrel-tunnel token rotate` o desde la app.
+- En un VPS compartido, cada Umbrel usa su propio token (el VPS guarda solo su
+  SHA-256), válido únicamente desde su IP del túnel y limitado a sus
+  publicaciones y su dominio. Los peers no pueden comunicarse entre sí.
 - `wg0.conf`, claves y estado con permisos `600`/`700`.
 - systemd endurecido: `NoNewPrivileges`, `ProtectSystem=strict`,
   `ProtectHome`, `RestrictNamespaces`, solo `CAP_NET_ADMIN`/`CAP_NET_RAW`/
@@ -556,9 +618,9 @@ propio `install.sh`, reinstala con el instalador (es idempotente y conserva la
 configuración):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.4.2/vps/install.sh \
+curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.5.0/vps/install.sh \
   | sudo bash -s -- --endpoint <IP> \
-      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.4.2
+      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.5.0
 ```
 
 ## Desarrollo
@@ -601,7 +663,7 @@ Variables de entorno útiles en el gateway:
 | Variable | Por defecto | Uso |
 | --- | --- | --- |
 | `APP_PASSWORD` | — | contraseña de login; Umbrel la inyecta |
-| `APP_VERSION` | `1.4.2` | versión mostrada |
+| `APP_VERSION` | `1.5.0` | versión mostrada |
 | `UMBREL_TUNNEL_DATA` | `/data` | estado, claves y configuración |
 | `UMBREL_APP_DATA` | `/umbrel-app-data` | manifiestos de apps (solo lectura) |
 | `NETWORK_IP` | `10.21.0.0` | red de Umbrel para detectar solapes |

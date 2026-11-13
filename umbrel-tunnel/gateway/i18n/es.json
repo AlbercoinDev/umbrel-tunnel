@@ -360,5 +360,11 @@
   "common.close": "Cerrar",
   "sync.retried_port": "El VPS rechazó el puerto; se reintentó en :{port}.",
   "error.no_public_port": "No hay puertos públicos libres.",
-  "advanced.manual_port_opened": "Puerto {port} abierto."
+  "advanced.manual_port_opened": "Puerto {port} abierto.",
+  "error.pair_domain": "El código contiene un dominio inválido.",
+  "error.invalid_shared_domain": "El dominio de este Umbrel no es válido (usa minúsculas, por ejemplo casa.example.com).",
+  "onboarding.shared_label": "VPS compartido: dominio de este Umbrel (opcional)",
+  "onboarding.shared_placeholder": "oficina.example.com",
+  "onboarding.shared_help": "Rellénalo solo si el VPS ya da servicio a otro Umbrel. Se genera el comando `umbrel-tunnel peer add` en lugar del instalador, y este Umbrel solo podrá publicar en ese dominio y sus subdominios.",
+  "onboarding.shared_ip": "la asigna el VPS"
 }

@@ -367,3 +367,92 @@ func TestTCP_TLS_ToCleartextAndCertificateStatus(t *testing.T) {
 		t.Fatal("wrong SNI accepted")
 	}
 }
+
+func cacheSelfSigned(t *testing.T, m *Manager, domain string) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cert := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: domain}, DNSNames: []string{domain}, NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(60 * 24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	der, err := x509.CreateCertificate(rand.Reader, cert, cert, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	data = append(data, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})...)
+	if err = m.certs.Cache.Put(context.Background(), domain+"+rsa", data); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// namedBackend answers every connection with its own name.
+func namedBackend(t *testing.T, name string) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			c.Write([]byte(name))
+			c.Close()
+		}
+	}()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+func TestTLSPortSharedBetweenNodesIsRoutedBySNI(t *testing.T) {
+	public, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer public.Close()
+	port := public.Addr().(*net.TCPAddr).Port
+	m := New(t.TempDir())
+	defer m.Close()
+	a := secure("electrs.casa.example", "tls", port)
+	a.TargetPort = namedBackend(t, "A")
+	b := secure("electrs.oficina.example", "tls", port)
+	b.TargetPort = namedBackend(t, "B")
+	m.routes = []state.Forward{a, b}
+	cacheSelfSigned(t, m, a.Domain)
+	cacheSelfSigned(t, m, b.Domain)
+	go m.serveTCP(public, port)
+
+	dial := func(sni string) (string, error) {
+		c, err := tls.DialWithDialer(&net.Dialer{Timeout: 3 * time.Second}, "tcp", public.Addr().String(), &tls.Config{InsecureSkipVerify: true, ServerName: sni, MinVersion: tls.VersionTLS12})
+		if err != nil {
+			return "", err
+		}
+		defer c.Close()
+		c.SetDeadline(time.Now().Add(3 * time.Second))
+		buf := make([]byte, 1)
+		_, err = io.ReadFull(c, buf)
+		return string(buf), err
+	}
+	for sni, want := range map[string]string{a.Domain: "A", b.Domain: "B"} {
+		got, err := dial(sni)
+		if err != nil || got != want {
+			t.Fatalf("SNI %s: got %q, %v", sni, got, err)
+		}
+	}
+	// Without SNI the port is ambiguous and must not pick a node at random.
+	if got, err := dial(""); err == nil {
+		t.Fatalf("connection without SNI routed to %q", got)
+	}
+}
+
+func TestValidateAllowsSharedTLSPortWithDistinctDomains(t *testing.T) {
+	if err := Validate([]state.Forward{secure("a.example", "tls", 50002), secure("b.example", "tls", 50002)}, 8080); err != nil {
+		t.Fatal(err)
+	}
+	if err := Validate([]state.Forward{secure("a.example", "tls", 50002), secure("a.example", "tls", 50002)}, 8080); err == nil {
+		t.Fatal("same domain and port accepted twice")
+	}
+}

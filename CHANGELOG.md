@@ -1,5 +1,25 @@
 # Cambios
 
+## 1.5.0
+
+- VPS compartido: varios Umbrel pueden usar el mismo VPS, cada uno con su
+  dominio público. Dos Umbrel pueden publicar la misma app en el mismo puerto
+  (HTTPS en 443 o TLS como Electrum en 50002) y el VPS enruta por dominio.
+- Nodos: un peer con `domain` y token propio (`token_sha256` en `peers.json`).
+  El token solo vale desde su IP del túnel; el nodo solo ve y cambia las
+  publicaciones hacia su IP y solo usa su dominio o subdominios. El token de
+  administración conserva el acceso total.
+- TLS añadido: el edge elige la publicación por SNI, de modo que varios
+  dominios comparten un puerto. Sin SNI solo se atiende un puerto no compartido.
+- nftables descarta el tráfico `wg0 → wg0`: los Umbrel no se alcanzan entre sí.
+- CLI: `peer add --domain [--token]` asigna IP libre e imprime el `ut1` del
+  nodo; `peer claim ID --domain` convierte el Umbrel original. `doctor` avisa si
+  conviven nodos con un Umbrel que aún usa el token de administración.
+- App: campo opcional "VPS compartido" en la configuración inicial, que genera
+  `umbrel-tunnel peer add`; el dominio del `ut1` pasa a ser el dominio base y no
+  se pueden usar dominios fuera de él.
+- Las instalaciones de un solo Umbrel no cambian.
+
 ## 1.4.2
 
 - Gateway: el panel rechaza (403) cualquier petición que llegue por la subred

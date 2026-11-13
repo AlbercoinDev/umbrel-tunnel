@@ -274,6 +274,25 @@ func (m *Manager) route(host string, port int) (state.Forward, bool) {
 	return state.Forward{}, false
 }
 
+// tlsRoute selects the TLS publication of a port by SNI. A missing SNI is
+// accepted only when the port has a single TLS publication.
+func (m *Manager) tlsRoute(serverName string, port int) (state.Forward, bool) {
+	if serverName != "" {
+		return m.route(serverName, port)
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	var found state.Forward
+	count := 0
+	for _, f := range m.routes {
+		if f.Enabled && f.AccessMode == "tls" && f.PublicPort == port && f.Domain != "" {
+			found = f
+			count++
+		}
+	}
+	return found, count == 1
+}
+
 func (m *Manager) redirect(w http.ResponseWriter, r *http.Request) {
 	host := r.Host
 	if h, _, err := net.SplitHostPort(host); err == nil {
@@ -337,12 +356,11 @@ func (m *Manager) serveTCP(ln net.Listener, port int) {
 		}
 		go func() {
 			defer func() { <-sem; c.Close() }()
-			f, ok := m.route("", port)
-			if !ok {
-				return
-			}
+			// Several nodes may share a TLS port: pick the publication by SNI.
+			// Without SNI only an unambiguous port (one route) is served.
 			cfg := &tls.Config{MinVersion: tls.VersionTLS12, GetCertificate: func(hello *tls.ClientHelloInfo) (*tls.Certificate, error) {
-				if hello.ServerName != "" && hello.ServerName != f.Domain {
+				f, ok := m.tlsRoute(hello.ServerName, port)
+				if !ok {
 					return nil, fmt.Errorf("SNI no coincide")
 				}
 				copy := *hello
@@ -355,6 +373,12 @@ func (m *Manager) serveTCP(ln net.Listener, port int) {
 				return
 			}
 			c.SetDeadline(time.Time{})
+			// Resolve again after the handshake: resumed sessions skip
+			// GetCertificate, and the route may have changed meanwhile.
+			f, ok := m.tlsRoute(client.ConnectionState().ServerName, port)
+			if !ok {
+				return
+			}
 			backend, err := net.DialTimeout("tcp", net.JoinHostPort(f.TargetIP, fmt.Sprint(f.TargetPort)), 10*time.Second)
 			if err != nil {
 				return
