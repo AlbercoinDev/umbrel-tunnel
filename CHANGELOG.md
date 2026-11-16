@@ -1,5 +1,13 @@
 # Cambios
 
+## 1.5.3
+
+- Gateway: base Alpine 3.24 y Python 3.14 del sistema, con las correcciones de
+  paquetes de la rama estable actual.
+- VPS: sin cambios de código; binarios recompilados con Go 1.26.11.
+- Sin cambios funcionales en emparejamiento, detección, publicaciones,
+  certificados, capacidades ni auditoría.
+
 ## 1.5.2
 
 - Gateway: imagen reconstruida sobre el digest vigente de Alpine 3.22 para

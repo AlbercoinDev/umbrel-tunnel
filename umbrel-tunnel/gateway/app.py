@@ -51,7 +51,7 @@ from vps import VPSClient, VPSError
 
 # Release of this gateway; must match vps/VERSION (tests enforce it). The VPS
 # installer and binaries offered to the user are pinned to this tag.
-RELEASE_VERSION = "1.5.2"
+RELEASE_VERSION = "1.5.3"
 VERSION = os.environ.get("APP_VERSION", RELEASE_VERSION)
 RESERVED_PUBLIC_PORTS = {22}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
