@@ -71,6 +71,8 @@ func main() {
 		err = cmdToken(os.Args[2:])
 	case "doctor":
 		err = cmdDoctor(ctx, os.Args[2:])
+	case "firewall":
+		err = cmdFirewall(ctx, os.Args[2:])
 	case "update":
 		err = cmdUpdate(ctx, os.Args[2:])
 	case "backup":
@@ -111,6 +113,7 @@ Comandos:
   certificates [retry]          estado/caducidad o reintento de emisión (JSON)
   token show|rotate             muestra o rota el token
   doctor                        diagnóstico del sistema
+  firewall confirm|rollback     cancela o aplica el rollback de la última instalación
   update [--from URL|PATH]      actualiza binario y unidades (por defecto, la última release)
   backup|restore                copia de seguridad de configuración y estado
   uninstall [--purge]           desinstala
@@ -508,14 +511,16 @@ func cmdUpdate(ctx context.Context, args []string) error {
 	sha := fs.String("sha256", "", "checksum esperado")
 	noRestart := fs.Bool("no-restart", false, "no reinicia el servicio")
 	noUnits := fs.Bool("no-units", false, "no actualiza las unidades systemd")
+	unsigned := fs.Bool("allow-unsigned-checksum", false, "acepta una release sin firma (emergencia)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	res, err := update.Apply(ctx, update.Options{
-		Source:  *from,
-		SHA256:  *sha,
-		Restart: !*noRestart,
-		Units:   !*noUnits,
+		Source:     *from,
+		SHA256:     *sha,
+		Restart:    !*noRestart,
+		Units:      !*noUnits,
+		UnsignedOK: *unsigned,
 		// systemd waits for the old process and starts the new one; 10s is tight.
 		Runner: execx.Real{Timeout: 60 * time.Second},
 	})
@@ -621,6 +626,28 @@ func cmdUninstall(ctx context.Context, args []string) error {
 	fmt.Println("umbrel-tunnel desinstalado.")
 	if !*purge {
 		fmt.Println("Se conservaron /etc/umbrel-tunnel y /var/lib/umbrel-tunnel (usa --purge para borrarlos).")
+	}
+	return nil
+}
+
+func cmdFirewall(ctx context.Context, args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("uso: firewall confirm|rollback")
+	}
+	run := execx.Real{Timeout: 30 * time.Second}
+	switch args[0] {
+	case "confirm":
+		for _, unit := range []string{"umbrel-tunnel-fwrollback.timer", "umbrel-tunnel-fwrollback.service"} {
+			_, _ = run.Run(ctx, "systemctl", "stop", unit)
+		}
+		fmt.Println("Rollback de firewall cancelado; se mantiene la configuración nueva.")
+	case "rollback":
+		if _, err := run.Run(ctx, "/bin/sh", "/var/lib/umbrel-tunnel/firewall-rollback.sh"); err != nil {
+			return fmt.Errorf("rollback de firewall: %w", err)
+		}
+		fmt.Println("Firewall restaurado a la instantánea anterior.")
+	default:
+		return fmt.Errorf("uso: firewall confirm|rollback")
 	}
 	return nil
 }

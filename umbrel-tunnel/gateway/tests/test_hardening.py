@@ -208,7 +208,19 @@ class ReleasePinTests(fixtures.unittest.TestCase):
         self.assertTrue(gateway.DEFAULT_BINARY_BASE.endswith(f"/releases/download/v{version}"))
         self.assertNotIn("/main/", gateway.DEFAULT_INSTALL_URL)
 
-    def test_installer_verifies_downloaded_binary(self):
+    def test_installer_verifies_signed_checksums(self):
         script = (Path(__file__).resolve().parents[3] / "vps/install.sh").read_text()
         self.assertIn('verify_download "$tmp" "$BINARY"', script)
-        self.assertIn('"$url.sha256"', script)
+        self.assertIn('"$base/SHA256SUMS"', script)
+        self.assertIn('"$base/SHA256SUMS.sig"', script)
+        self.assertIn("openssl pkeyutl -verify", script)
+        self.assertIn("RELEASE_PUBKEY=", script)
+        self.assertNotIn("$url.sha256", script)
+
+    def test_installer_has_firewall_rollback_and_optional_ssh_hardening(self):
+        script = (Path(__file__).resolve().parents[3] / "vps/install.sh").read_text()
+        self.assertIn("systemd-run --unit=umbrel-tunnel-fwrollback --on-active=120", script)
+        self.assertIn("umbrel-tunnel firewall confirm", script)
+        self.assertIn("--harden-ssh", script)
+        self.assertIn("sshd -t", script)
+        self.assertIn("authorized_keys", script)

@@ -1,5 +1,20 @@
 # Cambios
 
+## 1.6.3
+
+- Cadena de suministro: cada release publica `SHA256SUMS.sig`, una firma
+  Ed25519 de `SHA256SUMS` con una clave que no vive en GitHub. `install.sh` y
+  `umbrel-tunnel update` verifican la firma antes de ejecutar o instalar nada;
+  el SHA-256 suelto ya no es suficiente. `--allow-unsigned-checksum` queda solo
+  para una emergencia explícita.
+- Instalador: instantánea de la tabla `inet umbrel_tunnel` y rollback
+  automático a los 120 s. Si sigues conectado, confirma con
+  `umbrel-tunnel firewall confirm`; `doctor` avisa mientras esté pendiente.
+- `--harden-ssh` opcional: desactiva contraseñas SSH y el login de root con
+  contraseña solo si hay claves autorizadas y `sshd -t` valida la configuración.
+- Incluye la salud real por publicación de 1.6.2.
+- El VPS sí debe actualizarse a 1.6.3.
+
 ## 1.6.2
 
 - Salud real por publicación: sonda TCP cada 60 s desde el gateway, con

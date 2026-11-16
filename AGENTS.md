@@ -9,7 +9,7 @@
 - Use Go **1.27.4** as declared in `vps/go.mod`.
 - From `vps/`: `gofmt -l .`, `go vet ./...`, `go test ./...`, then `CGO_ENABLED=0 go build -trimpath -o /tmp/opencode/umbrel-tunnel ./cmd/umbrel-tunnel`. CI rejects any output from `gofmt -l .`; `make check` instead formats files in place before vet/tests.
 - Focused Go test: `go test ./internal/httpapi -run '^TestName$' -count=1` (substitute the actual package/test).
-- Gateway dependencies: `python3 -m pip install flask pyyaml waitress` inside a virtualenv; CI uses Python 3.12. No requirements file or Python build manifest exists.
+- Gateway dependencies: `python3 -m pip install flask pyyaml waitress cryptography` inside a virtualenv; CI uses Python 3.12. No requirements file or Python build manifest exists.
 - From `umbrel-tunnel/gateway/`: `python3 -m py_compile *.py` and `python3 -m unittest discover -s tests -v`.
 - Focused gateway tests: `python3 -m unittest discover -s tests -p 'test_publications.py' -v`; add `-k substring` to filter test names. Tests redirect state/config to temporary directories and mock host operations; passing them does not verify real WireGuard/HAProxy or Umbrel deployment.
 - Local UI: `UMBREL_TUNNEL_DEV=1 UMBREL_TUNNEL_DATA=/tmp/opencode/tunnel-data UMBREL_APP_DATA=/tmp/opencode/app-data PORT=8081 python3 serve.py` (gateway directory). Password is `dev`; never enable dev mode in production. This is not a functional tunnel setup by itself.
@@ -19,6 +19,8 @@
 - From `vps/`, `make dist` deletes/rebuilds `dist/`, cross-compiles static Linux amd64/arm64 binaries, and produces tarballs/checksums. Plain cross-compile targets have no source prerequisites and can reuse stale binaries; prefer `make dist` for release artifacts.
 - Edit system integration sources in `vps/internal/units/files/`, not generated `dist/**/packaging/`. Units are embedded in the Go binary and copied into release tarballs.
 - Every `v*` tag triggers **both** VPS release and gateway multi-architecture image publication. The VPS workflow requires the tag without `v` to equal `vps/VERSION`.
+- VPS releases are signed: the workflow signs `SHA256SUMS` with the Ed25519 key in the `VPS_RELEASE_SIGNING_KEY` secret and publishes `SHA256SUMS.sig`. `install.sh` and `umbrel-tunnel update` verify it with the embedded public key (`vps/release-signing.pub.pem`); keep both copies identical (`internal/update/release-signing.pub.pem`).
+- The installer snapshots the nftables table and schedules a 120 s rollback; `umbrel-tunnel firewall confirm` cancels it. `--harden-ssh` is opt-in and refuses to run without authorized keys.
 - Umbrel Compose downloads a published image; it does not build local gateway changes. Pin both tag and multi-architecture index digest in `umbrel-tunnel/docker-compose.yml` after publishing.
 - The actual Community App Store is the separate `AlbercoinDev/Umbrel-AppStore-Albercoin` repository. Copy this repo's manifest/Compose there under `albercoin-store-umbrel-tunnel/`; keep that app ID, `APP_HOST=albercoin-store-umbrel-tunnel_gateway_1`, internal port 8081, and manifest port 8642 aligned (CI checks them).
 - Preserve the store manifest's hosted `icon.svg` URL when copying: this repo's manifest uses inline SVG instead.

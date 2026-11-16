@@ -34,6 +34,18 @@ jobs:
       - name: Build release artifacts
         run: make dist
 
+      - name: Sign SHA256SUMS
+        env:
+          SIGNING_KEY: ${{ secrets.VPS_RELEASE_SIGNING_KEY }}
+        run: |
+          test -n "$SIGNING_KEY" || { echo "falta el secreto VPS_RELEASE_SIGNING_KEY"; exit 1; }
+          printf '%s\n' "$SIGNING_KEY" > "$RUNNER_TEMP/release-signing.key"
+          chmod 600 "$RUNNER_TEMP/release-signing.key"
+          openssl pkeyutl -sign -rawin \
+            -inkey "$RUNNER_TEMP/release-signing.key" \
+            -in dist/SHA256SUMS -out dist/SHA256SUMS.sig
+          rm -f "$RUNNER_TEMP/release-signing.key"
+
       - name: Publish release
         working-directory: .
         env:
@@ -48,5 +60,7 @@ jobs:
             vps/dist/umbrel-tunnel-linux-arm64.sha256 \
             vps/dist/umbrel-tunnel-*-linux-*.tar.gz \
             vps/dist/SHA256SUMS \
+            vps/dist/SHA256SUMS.sig \
+            vps/release-signing.pub.pem \
             vps/install.sh \
             --clobber

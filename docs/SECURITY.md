@@ -34,6 +34,17 @@
   modificar las publicaciones de todos; `doctor` lo avisa hasta que se convierta
   con `peer claim` y se rote el token.
 
+### Cadena de suministro
+
+- Los binarios y los tarballs se publican con `SHA256SUMS` y una firma Ed25519
+  (`SHA256SUMS.sig`) hecha con una clave que no está en GitHub.
+- `install.sh` y `umbrel-tunnel update` verifican la firma con la clave pública
+  embebida antes de ejecutar o instalar nada. Un SHA-256 servido junto al
+  binario no se acepta como única prueba.
+- La clave privada vive fuera del repositorio; el workflow solo la recibe como
+  secreto al publicar un tag.
+- `--allow-unsigned-checksum` es una excepción explícita para recuperación.
+
 ### App de Umbrel
 
 - Umbrel mantiene su login (`app_proxy` en 1.x; gateway in-process en 2.x) y

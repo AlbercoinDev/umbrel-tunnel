@@ -28,6 +28,10 @@ if [[ -n "$SCRIPT_PATH" && -f "$SCRIPT_PATH" ]]; then
 fi
 
 VERSION="dev"
+
+RELEASE_PUBKEY='-----BEGIN PUBLIC KEY-----
+MCowBQYDK2VwAyEAS9HnMJEHO3p15wHYE8IcZtza6tjnsE4wlKgaY/hGdVk=
+-----END PUBLIC KEY-----'
 if [[ -n "$SCRIPT_DIR" && -r "$SCRIPT_DIR/VERSION" ]]; then
   VERSION="$(tr -d ' \n' <"$SCRIPT_DIR/VERSION")"
 fi
@@ -66,6 +70,7 @@ BINARY_BASE=""
 PUBLIC_API=0
 FORCE=0
 DRY_RUN=0
+HARDEN_SSH=0
 ASSUME_YES=0
 NO_START=0
 UNINSTALL=0
@@ -100,6 +105,7 @@ Opciones:
   --binary-base URL    base de descarga; añade /umbrel-tunnel-linux-$ARCH
   --force              sustituye configuración y wg0.conf existentes
   --no-start           instala pero no arranca los servicios
+  --harden-ssh         desactiva contraseñas SSH si hay claves autorizadas
   --dry-run            muestra lo que haría sin cambiar nada
   --yes                no pregunta (instalación desatendida)
   --uninstall          desinstala umbrel-tunnel
@@ -137,6 +143,7 @@ parse_args() {
       --public-api) PUBLIC_API=1; shift ;;
       --force) FORCE=1; shift ;;
       --no-start) NO_START=1; shift ;;
+      --harden-ssh) HARDEN_SSH=1; shift ;;
       --dry-run) DRY_RUN=1; shift ;;
       --yes|-y) ASSUME_YES=1; shift ;;
       --uninstall) UNINSTALL=1; shift ;;
@@ -311,7 +318,7 @@ check_wireguard_module() {
 
 check_packages() {
   local pkg status
-  for pkg in wireguard wireguard-tools nftables curl ca-certificates iproute2 kmod; do
+  for pkg in wireguard wireguard-tools nftables curl ca-certificates iproute2 kmod openssl; do
     status="$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null || true)"
     if [[ "$status" != *"install ok installed"* ]]; then
       MISSING_PACKAGES+=("$pkg")
@@ -404,16 +411,31 @@ install_packages() {
   fi
 }
 
-# A downloaded binary runs as root: verify it against the <url>.sha256 file
-# published next to it (make dist / release workflow), like `update` does.
+# A downloaded binary runs as root. Verify the Ed25519 signature of SHA256SUMS
+# published in the release, then the binary hash inside that signed file. A
+# checksum fetched from the same server as the binary is not enough.
 verify_download() {
-  local file="$1" url="$2" want got
-  want="$(curl -fsSL --retry 2 --max-time 30 "$url.sha256" | awk 'NR == 1 {print tolower($1)}')" \
-    || die "no se pudo descargar $url.sha256; no se instala un binario sin verificar"
-  [[ "$want" =~ ^[0-9a-f]{64}$ ]] || die "checksum inválido en $url.sha256"
+  local file="$1" url="$2" base name tmp want got
+  base="${url%/*}"
+  name="${url##*/}"
+  tmp="$(mktemp -d)"
+  # shellcheck disable=SC2064
+  trap "rm -rf '$tmp'" RETURN
+  curl -fsSL --retry 2 --max-time 30 "$base/SHA256SUMS" -o "$tmp/SHA256SUMS" \
+    || die "no se pudo descargar SHA256SUMS; no se instala un binario sin verificar"
+  curl -fsSL --retry 2 --max-time 30 "$base/SHA256SUMS.sig" -o "$tmp/SHA256SUMS.sig" \
+    || die "la release no trae SHA256SUMS.sig; actualiza el script o verifica manualmente"
+  printf '%s\n' "$RELEASE_PUBKEY" > "$tmp/release.pem"
+  openssl pkeyutl -verify -pubin -inkey "$tmp/release.pem" -rawin \
+    -in "$tmp/SHA256SUMS" -sigfile "$tmp/SHA256SUMS.sig" >/dev/null 2>&1 \
+    || die "firma de release inválida; no se instala el binario"
+  want="$(awk -v n="$name" '$2 == n {print tolower($1); exit}' "$tmp/SHA256SUMS")"
+  [[ "$want" =~ ^[0-9a-f]{64}$ ]] || die "$name no aparece en SHA256SUMS"
   got="$(sha256sum "$file" | awk '{print $1}')"
   [[ "$got" == "$want" ]] || die "el checksum del binario no coincide (esperado $want, obtenido $got)"
-  ok "checksum SHA256 verificado"
+  trap - RETURN
+  rm -rf "$tmp"
+  ok "firma de release y SHA256 verificados"
 }
 
 resolve_binary() {
@@ -576,6 +598,63 @@ init_config() {
   ok "configuración creada"
 }
 
+snapshot_firewall() {
+  ((DRY_RUN)) && { ok "instantánea de firewall omitida (dry-run)"; return 0; }
+  local dir=/var/lib/umbrel-tunnel
+  mkdir -p "$dir"
+  if nft list table inet umbrel_tunnel >"$dir/nft.before" 2>/dev/null; then
+    ok "instantánea de firewall guardada"
+  else
+    : >"$dir/nft.before"
+  fi
+}
+
+schedule_firewall_rollback() {
+  ((DRY_RUN)) && { ok "rollback de firewall omitido (dry-run)"; return 0; }
+  local dir=/var/lib/umbrel-tunnel script="$dir/firewall-rollback.sh"
+  cat >"$script" <<'ROLLBACK'
+#!/bin/sh
+set -eu
+if [ -s /var/lib/umbrel-tunnel/nft.before ]; then
+  /usr/sbin/nft delete table inet umbrel_tunnel 2>/dev/null || true
+  /usr/sbin/nft -f /var/lib/umbrel-tunnel/nft.before
+else
+  /usr/sbin/nft delete table inet umbrel_tunnel 2>/dev/null || true
+fi
+ROLLBACK
+  chmod 700 "$script"
+  systemctl stop umbrel-tunnel-fwrollback.timer >/dev/null 2>&1 || true
+  systemctl reset-failed umbrel-tunnel-fwrollback.service >/dev/null 2>&1 || true
+  systemd-run --unit=umbrel-tunnel-fwrollback --on-active=120 \
+    --timer-property=AccuracySec=1s /bin/sh "$script" >/dev/null \
+    || { warn "no se pudo programar el rollback de firewall"; return 0; }
+  warn "firewall: rollback automático en 120 s; confirma con: umbrel-tunnel firewall confirm"
+}
+
+harden_ssh() {
+  ((HARDEN_SSH)) || return 0
+  ((DRY_RUN)) && { ok "hardening SSH omitido (dry-run)"; return 0; }
+  local keys=/root/.ssh/authorized_keys
+  if [[ ! -s "$keys" ]]; then
+    warn "sin claves en $keys; no se desactiva la contraseña SSH"
+    return 0
+  fi
+  local drop=/etc/ssh/sshd_config.d/99-umbrel-tunnel.conf
+  mkdir -p /etc/ssh/sshd_config.d
+  cat >"$drop" <<'SSHD'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin prohibit-password
+SSHD
+  if ! sshd -t >/dev/null 2>&1; then
+    rm -f "$drop"
+    warn "sshd -t falló; se revirtió el hardening SSH"
+    return 0
+  fi
+  systemctl reload ssh 2>/dev/null || systemctl reload sshd 2>/dev/null || true
+  ok "SSH endurecido (solo claves); verifica el acceso antes de cerrar la sesión"
+}
+
 enable_services() {
   log "activando servicios"
   run systemctl daemon-reload
@@ -591,8 +670,11 @@ enable_services() {
     return 0
   fi
   restart_unit wg-quick@wg0.service
+  snapshot_firewall
   restart_unit umbrel-tunnel-firewall.service
+  schedule_firewall_rollback
   restart_unit umbrel-tunnel.service
+  harden_ssh
 }
 
 # A failed unit must not abort the script before the control plane is restarted:

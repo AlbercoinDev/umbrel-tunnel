@@ -56,10 +56,11 @@ func TestApplyReplacesBinaryVerifiesVersionAndWritesUnits(t *testing.T) {
 	run := &execx.Fake{}
 
 	result, err := Apply(context.Background(), Options{
-		Source:  server.URL + "/bin",
-		Restart: true,
-		Units:   true,
-		Runner:  run,
+		Source:     server.URL + "/bin",
+		UnsignedOK: true,
+		Restart:    true,
+		Units:      true,
+		Runner:     run,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -94,9 +95,10 @@ func TestApplyRejectsChecksumMismatchWithoutTouchingBinary(t *testing.T) {
 	exe, _ := sandbox(t, script("1.3.1"))
 	server := serve(t, script("1.3.2"))
 	_, err := Apply(context.Background(), Options{
-		Source: server.URL + "/bin",
-		SHA256: strings.Repeat("0", 64),
-		Runner: &execx.Fake{},
+		Source:     server.URL + "/bin",
+		UnsignedOK: true,
+		SHA256:     strings.Repeat("0", 64),
+		Runner:     &execx.Fake{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "checksum") {
 		t.Fatalf("error esperado: %v", err)
@@ -111,8 +113,9 @@ func TestApplyRollsBackWhenNewBinaryCannotRun(t *testing.T) {
 	exe, _ := sandbox(t, script("1.3.1"))
 	server := serve(t, []byte("not an executable\n"))
 	_, err := Apply(context.Background(), Options{
-		Source: server.URL + "/bin",
-		Runner: &execx.Fake{},
+		Source:     server.URL + "/bin",
+		UnsignedOK: true,
+		Runner:     &execx.Fake{},
 	})
 	if err == nil || !strings.Contains(err.Error(), "no se ejecuta") {
 		t.Fatalf("error esperado: %v", err)
@@ -135,9 +138,10 @@ func TestApplyReportsJournalWhenRestartFails(t *testing.T) {
 		},
 	}
 	_, err := Apply(context.Background(), Options{
-		Source:  server.URL + "/bin",
-		Restart: true,
-		Runner:  run,
+		Source:     server.URL + "/bin",
+		UnsignedOK: true,
+		Restart:    true,
+		Runner:     run,
 	})
 	if err == nil || !strings.Contains(err.Error(), "unidad en bucle de reinicio") {
 		t.Fatalf("falta el journal en el error: %v", err)

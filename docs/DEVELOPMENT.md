@@ -38,7 +38,7 @@ unshare -r env UMBREL_TUNNEL_OS_RELEASE=/tmp/opencode/os-release-test \
 cd umbrel-tunnel/gateway
 python3 -m venv .venv
 . .venv/bin/activate
-pip install flask pyyaml waitress
+pip install flask pyyaml waitress cryptography
 
 python3 -m py_compile *.py
 python3 -m unittest discover -s tests -v

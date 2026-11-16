@@ -48,10 +48,11 @@ tarballs: $(BINS)
 # Per-binary sidecars let `umbrel-tunnel update --from <url>` verify the
 # download on its own: update.Apply looks for <url>.sha256 next to the binary.
 checksums: tarballs
+	@cp install.sh $(DIST)/install.sh
 	@cd $(DIST) && for arch in amd64 arm64; do \
 		sha256sum "$(BIN)-linux-$$arch" > "$(BIN)-linux-$$arch.sha256"; \
 	done
-	@cd $(DIST) && sha256sum $(BIN)-$(VERSION)-linux-*.tar.gz $(BIN)-linux-amd64 $(BIN)-linux-arm64 > SHA256SUMS
+	@cd $(DIST) && sha256sum $(BIN)-$(VERSION)-linux-*.tar.gz $(BIN)-linux-amd64 $(BIN)-linux-arm64 install.sh > SHA256SUMS
 	@cat $(DIST)/SHA256SUMS
 
 dist: clean

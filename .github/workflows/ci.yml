@@ -46,6 +46,16 @@ jobs:
         working-directory: .
         run: bash -n vps/install.sh
 
+      - name: signing pipeline (temporary key)
+        run: |
+          make dist >/dev/null
+          openssl genpkey -algorithm ED25519 -out "$RUNNER_TEMP/ci.key"
+          openssl pkey -in "$RUNNER_TEMP/ci.key" -pubout -out "$RUNNER_TEMP/ci.pub"
+          openssl pkeyutl -sign -rawin -inkey "$RUNNER_TEMP/ci.key" \
+            -in dist/SHA256SUMS -out dist/SHA256SUMS.sig
+          openssl pkeyutl -verify -pubin -inkey "$RUNNER_TEMP/ci.pub" -rawin \
+            -in dist/SHA256SUMS -sigfile dist/SHA256SUMS.sig
+
   gateway:
     name: Gateway (Python)
     runs-on: ubuntu-latest

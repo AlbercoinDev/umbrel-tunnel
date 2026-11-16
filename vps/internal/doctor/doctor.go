@@ -117,6 +117,13 @@ func Run(ctx context.Context, svc *service.Service, run execx.Runner, version st
 		r.add("VPS compartido", "warn", detail)
 	}
 
+	if out, err := run.Run(ctx, "systemctl", "is-active", "umbrel-tunnel-fwrollback.timer"); err == nil &&
+		strings.TrimSpace(string(out)) == "active" {
+		r.add("firewall", "warn", "rollback pendiente; confirma con: umbrel-tunnel firewall confirm")
+	} else {
+		r.add("firewall", "ok", "sin rollback pendiente")
+	}
+
 	if out, err := run.Run(ctx, "systemctl", "is-active", "umbrel-tunnel"); err != nil {
 		r.add("servicio", "warn", strings.TrimSpace(string(out)))
 	} else {

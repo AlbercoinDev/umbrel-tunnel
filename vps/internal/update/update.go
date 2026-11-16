@@ -44,6 +44,9 @@ type Options struct {
 	Restart bool
 	Units   bool
 	Runner  execx.Runner
+	// UnsignedOK accepts a release without SHA256SUMS.sig. Only for offline
+	// development or a deliberate emergency; normal updates fail closed.
+	UnsignedOK bool
 }
 
 // DefaultSource is the stable release URL for the running architecture.
@@ -89,8 +92,23 @@ func Apply(ctx context.Context, opts Options) (Result, error) {
 
 	wantSHA := opts.SHA256
 	if wantSHA == "" {
-		// Try a sidecar checksum next to the source.
-		wantSHA = trySidecar(ctx, source)
+		if isURL(source) {
+			signed, err := signedChecksum(ctx, source)
+			if err != nil {
+				if !opts.UnsignedOK {
+					return res, err
+				}
+				wantSHA = trySidecar(ctx, source)
+				if wantSHA == "" {
+					return res, fmt.Errorf("sin checksum verificable: %w", err)
+				}
+			} else {
+				wantSHA = signed
+			}
+		} else {
+			// A local binary is a development path: accept its sidecar.
+			wantSHA = trySidecar(ctx, source)
+		}
 	}
 	if wantSHA != "" {
 		sum := sha256.Sum256(data)
