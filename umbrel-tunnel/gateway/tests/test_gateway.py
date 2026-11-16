@@ -30,6 +30,9 @@ os.environ["UMBREL_TUNNEL_WG_CONF"] = os.path.join(TMP, "wg0.conf")
 os.environ["UMBREL_TUNNEL_HAPROXY_CONF"] = os.path.join(TMP, "haproxy.cfg")
 os.environ["UMBREL_TUNNEL_HAPROXY_PID"] = os.path.join(TMP, "haproxy.pid")
 os.environ["UMBREL_TUNNEL_SCAN"] = "0"
+os.environ["UMBREL_TUNNEL_INSTALL_SCRIPT"] = str(
+    Path(__file__).resolve().parents[1] / "install.sh"
+)
 os.environ.pop("UMBREL_TUNNEL_DEV", None)
 
 import app as gateway  # noqa: E402

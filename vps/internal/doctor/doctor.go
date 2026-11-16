@@ -4,6 +4,7 @@ package doctor
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -17,6 +18,7 @@ import (
 	"umbrel-tunnel/internal/execx"
 	"umbrel-tunnel/internal/service"
 	"umbrel-tunnel/internal/state"
+	"umbrel-tunnel/internal/update"
 )
 
 // Check is a single diagnostic result.
@@ -131,6 +133,22 @@ func Run(ctx context.Context, svc *service.Service, run execx.Runner, version st
 	}
 
 	r.add("binario", "ok", version)
+
+	exe, exeErr := os.Executable()
+	switch {
+	case exeErr != nil:
+		r.add("firma release", "warn", exeErr.Error())
+	default:
+		err := update.VerifyInstalled(ctx, version, exe, "")
+		switch {
+		case err == nil:
+			r.add("firma release", "ok", "SHA256SUMS firmado y binario coincide")
+		case errors.Is(err, update.ErrSignature), errors.Is(err, update.ErrChecksum):
+			r.add("firma release", "fail", err.Error())
+		default:
+			r.add("firma release", "warn", err.Error())
+		}
+	}
 
 	if out, err := run.Run(ctx, "systemctl", "cat", "umbrel-tunnel"); err != nil {
 		r.add("unidad", "warn", "no se pudo leer la unidad")

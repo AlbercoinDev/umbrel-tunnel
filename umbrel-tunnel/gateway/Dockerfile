@@ -23,6 +23,7 @@ COPY i18n ./i18n
 COPY templates ./templates
 COPY static ./static
 
+COPY install.sh /app/install.sh
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 

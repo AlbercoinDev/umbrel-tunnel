@@ -1,5 +1,17 @@
 # Cambios
 
+## 1.6.4
+
+- El paso de instalación del VPS muestra la huella de la clave de release y el
+  SHA-256 del `install.sh` incluido en la imagen, y permite descargarlo sin
+  pedirlo a Internet. La huella mostrada es la del archivo que se ejecuta.
+- `umbrel-tunnel doctor` verifica que el binario en ejecución coincide con el
+  `SHA256SUMS` firmado de su release. Una firma inválida o un binario distinto
+  son un fallo, no un aviso; sin red o en una build de desarrollo avisa.
+- Incluye la firma de releases y el rollback de firewall de 1.6.3, y la salud
+  por publicación de 1.6.2.
+- El VPS debe actualizarse a 1.6.4 por el nuevo `doctor`.
+
 ## 1.6.3
 
 - Cadena de suministro: cada release publica `SHA256SUMS.sig`, una firma

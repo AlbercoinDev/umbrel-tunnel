@@ -4,7 +4,7 @@ storage:
   dataRoot: data
 category: networking
 name: Umbrel Tunnel
-version: "1.6.3"
+version: "1.6.4"
 tagline: Expose Umbrel services through your own VPS over WireGuard
 icon: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iZyIgeDE9IjAlIiB5MT0iMCUiIHgyPSIxMDAlIiB5Mj0iMTAwJSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0eWxlPSJzdG9wLWNvbG9yOiMzOGJkZjgiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdHlsZT0ic3RvcC1jb2xvcjojNjM2NmYxIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgcng9IjIwIiBmaWxsPSJ1cmwoI2cpIi8+CiAgPHBhdGggZD0iTTMwIDUwIEw1MCAzMCBMNzAgNTAgTDUwIDcwIFoiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjgiIGZpbGw9IndoaXRlIi8+CiAgPGxpbmUgeDE9IjUwIiB5MT0iMzAiIHgyPSI1MCIgeTI9IjIwIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxsaW5lIHgxPSI1MCIgeTE9IjcwIiB4Mj0iNTAiIHkyPSI4MCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8bGluZSB4MT0iMzAiIHkxPSI1MCIgeDI9IjIwIiB5Mj0iNTAiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPGxpbmUgeDE9IjcwIiB5MT0iNTAiIHgyPSI4MCIgeTI9IjUwIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K"
 description: >-
@@ -20,16 +20,14 @@ description: >-
   with a fixed public IP. Run the one-line installer on the VPS, then paste the
   pairing code in the app.
 releaseNotes: >-
-  Security release. Release artifacts are now signed: SHA256SUMS has an
-  Ed25519 signature (SHA256SUMS.sig) and both the installer and
-  `umbrel-tunnel update` verify it before running or installing anything, so a
-  compromised download server or GitHub release cannot swap the binary and its
-  checksum together. The installer also snapshots the firewall and schedules an
-  automatic rollback after 120 s unless you confirm with
-  `umbrel-tunnel firewall confirm`; `--harden-ssh` optionally disables password
-  logins when authorized keys exist. Adds the per-publication health checks
-  from 1.6.2 (TCP every 60 s, HTTP HEAD for web, UDP reported as unknown).
-  Update the VPS first to 1.6.3.
+  Transparency release. The VPS setup step now shows the release signing key
+  fingerprint and the SHA-256 of the bundled install.sh, and offers the script
+  directly from the image (never fetched on demand) so you can compare it with
+  the published release before running it. `umbrel-tunnel doctor` now verifies
+  that the running binary matches the signed SHA256SUMS of its release: a bad
+  signature or a different binary is a hard failure. Keeps the Ed25519-signed
+  releases, firewall rollback, optional SSH hardening and per-publication
+  health checks. Update the VPS first to 1.6.4.
 developer: AlbercoinDev
 website: https://github.com/AlbercoinDev/umbrel-tunnel
 dependencies: []

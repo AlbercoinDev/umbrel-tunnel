@@ -1,4 +1,5 @@
 """1.4.2 hardening: tunnel-side panel access, state integrity, locking, release pins."""
+import hashlib
 from pathlib import Path
 from unittest import mock
 
@@ -197,6 +198,49 @@ class RotationRecoveryTests(Base):
             response = self._post("/api/wireguard/rotate", {})
         self.assertEqual(response.status_code, 200, response.get_json())
         self.assertEqual(wireguard.pending_rotation(), {})
+
+
+class TransparencyTests(fixtures.unittest.TestCase):
+    setUp = fixtures.ManualServiceApiTests.setUp
+    _login = fixtures.ManualServiceApiTests._login
+    _csrf = fixtures.ManualServiceApiTests._csrf
+
+    def test_install_script_is_served_with_its_hash(self):
+        root = Path(__file__).resolve().parents[3]
+        expected = (root / "vps/install.sh").read_bytes()
+        response = self.client.get("/api/install-script")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data, expected)
+        digest = hashlib.sha256(expected).hexdigest()
+        self.assertEqual(response.headers["X-SHA256"], digest)
+        status = self.client.get("/api/status").get_json()
+        self.assertEqual(status["release"]["install_sha256"], digest)
+
+    def test_gateway_serves_the_same_installer_as_the_vps_tree(self):
+        root = Path(__file__).resolve().parents[3]
+        self.assertEqual(
+            (root / "vps/install.sh").read_bytes(),
+            (root / "umbrel-tunnel/gateway/install.sh").read_bytes(),
+        )
+
+    def test_status_exposes_the_release_fingerprint(self):
+        status = self.client.get("/api/status").get_json()
+        fingerprint = status["release"]["fingerprint"]
+        self.assertEqual(fingerprint, gateway.RELEASE_SIGNING_FINGERPRINT)
+        self.assertRegex(fingerprint, r"^[0-9A-F]{64}$")
+
+    def test_fingerprint_matches_the_committed_public_key(self):
+        from cryptography.hazmat.primitives import serialization
+
+        root = Path(__file__).resolve().parents[3]
+        key = serialization.load_pem_public_key(
+            (root / "vps/release-signing.pub.pem").read_bytes()
+        )
+        der = key.public_bytes(
+            serialization.Encoding.DER,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        self.assertEqual(hashlib.sha256(der).hexdigest().upper(), gateway.RELEASE_SIGNING_FINGERPRINT)
 
 
 class ReleasePinTests(fixtures.unittest.TestCase):

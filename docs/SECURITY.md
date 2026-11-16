@@ -44,6 +44,11 @@
 - La clave privada vive fuera del repositorio; el workflow solo la recibe como
   secreto al publicar un tag.
 - `--allow-unsigned-checksum` es una excepción explícita para recuperación.
+- `doctor` descarga `SHA256SUMS` y su firma de la release instalada, verifica la
+  firma y compara el hash del binario en ejecución. Una firma inválida o un
+  binario distinto se reportan como fallo; la falta de red, como aviso.
+- El `install.sh` que ofrece la app viaja dentro de la imagen y se muestra con
+  su SHA-256; no se descarga en el momento de la petición.
 
 ### App de Umbrel
 

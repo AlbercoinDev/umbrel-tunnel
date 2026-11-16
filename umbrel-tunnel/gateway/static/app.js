@@ -334,6 +334,9 @@
     if (!active) return;
 
     $('bootstrap-command').textContent = data.command || '';
+    const release = (state.status || {}).release || {};
+    if ($('release-fingerprint')) $('release-fingerprint').textContent = release.fingerprint || t('common.dash');
+    if ($('install-sha')) $('install-sha').textContent = release.install_sha256 || t('common.dash');
     $('bootstrap-public-key').textContent = data.public_key || t('common.dash');
     $('bootstrap-endpoint').textContent = data.endpoint || t('common.dash');
     $('bootstrap-subnet').textContent = data.subnet || t('common.dash');
@@ -1235,6 +1238,9 @@
       }
     });
 
+    $('download-install-script').addEventListener('click', () => {
+      window.location.href = '/api/install-script';
+    });
     $('copy-bootstrap-command').addEventListener('click', async () => {
       try {
         await navigator.clipboard.writeText($('bootstrap-command').textContent);

@@ -12,6 +12,7 @@ file so this app owns the only login boundary.
 from __future__ import annotations
 
 import base64
+import hashlib
 import hmac
 import ipaddress
 import json
@@ -24,6 +25,7 @@ import time
 import urllib.parse
 import uuid
 from datetime import timedelta
+from pathlib import Path
 
 from flask import (
     Flask,
@@ -33,6 +35,7 @@ from flask import (
     redirect,
     render_template,
     request,
+    Response,
     session,
     url_for,
 )
@@ -52,8 +55,13 @@ from vps import VPSClient, VPSError
 
 # Release of this gateway; must match vps/VERSION (tests enforce it). The VPS
 # installer and binaries offered to the user are pinned to this tag.
-RELEASE_VERSION = "1.6.3"
+RELEASE_VERSION = "1.6.4"
 VERSION = os.environ.get("APP_VERSION", RELEASE_VERSION)
+# Huella SHA-256 de la clave Ed25519 que firma SHA256SUMS en cada release.
+RELEASE_SIGNING_FINGERPRINT = (
+    "23AC5BD6BC78F5E37F733730A70CADB256E0A04FF892F3C53E67F43CE22766BD"
+)
+INSTALL_SCRIPT = Path(os.environ.get("UMBREL_TUNNEL_INSTALL_SCRIPT", "/app/install.sh"))
 RESERVED_PUBLIC_PORTS = {22}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
 DEV_MODE = os.environ.get("UMBREL_TUNNEL_DEV") == "1"
@@ -1088,6 +1096,35 @@ def health():
     return jsonify({"ok": True, "version": VERSION})
 
 
+def install_script_sha256() -> str:
+    try:
+        return hashlib.sha256(INSTALL_SCRIPT.read_bytes()).hexdigest()
+    except OSError:
+        return ""
+
+
+@app.get("/api/install-script")
+def install_script():
+    """Entrega el instalador fijado a esta versión, con su SHA-256.
+
+    El archivo viaja dentro de la imagen, no se descarga en cada petición, así
+    que la huella que muestra el panel es exactamente la que se ejecuta.
+    """
+    try:
+        data = INSTALL_SCRIPT.read_bytes()
+    except OSError:
+        return api_error("install_script_missing", 404)
+    return Response(
+        data,
+        mimetype="text/x-shellscript",
+        headers={
+            "Content-Disposition": f'attachment; filename="install-{RELEASE_VERSION}.sh"',
+            "X-SHA256": hashlib.sha256(data).hexdigest(),
+            "Cache-Control": "no-store",
+        },
+    )
+
+
 @app.get("/api/widget")
 def widget():
     """Widget de la pantalla de inicio de umbrelOS (sin secretos ni sesión).
@@ -1174,6 +1211,11 @@ def status():
             "last_sync": present_sync(_last_sync),
             "health": probes.summary(config),
             "health_probe": probes.state(),
+            "release": {
+                "version": RELEASE_VERSION,
+                "fingerprint": RELEASE_SIGNING_FINGERPRINT,
+                "install_sha256": install_script_sha256(),
+            },
         }
     )
 

@@ -370,5 +370,8 @@
   "health.ok": "responde",
   "health.fail": "no responde",
   "health.paused": "pausado",
-  "health.unknown": "sin datos"
+  "health.unknown": "sin datos",
+  "onboarding.download_script": "Descargar install.sh",
+  "onboarding.script_sha": "SHA-256 del script",
+  "onboarding.release_fingerprint": "Huella de la clave de release"
 }

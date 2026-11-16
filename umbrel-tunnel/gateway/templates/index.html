@@ -215,6 +215,11 @@
               <button id="copy-bootstrap-command" class="ghost small" type="button">{{ t('onboarding.copy_command') }}</button>
               <button id="reset-bootstrap" class="danger ghost small" type="button">{{ t('onboarding.reset') }}</button>
             </div>
+            <div class="row">
+              <button id="download-install-script" class="ghost small" type="button">{{ t('onboarding.download_script') }}</button>
+              <span class="sub">{{ t('onboarding.script_sha') }} <code id="install-sha">—</code></span>
+            </div>
+            <p class="sub">{{ t('onboarding.release_fingerprint') }} <code id="release-fingerprint">—</code></p>
           </li>
           <li>
             <strong>{{ t('onboarding.step2') }}</strong>
