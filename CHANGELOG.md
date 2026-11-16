@@ -1,5 +1,11 @@
 # Cambios
 
+## 1.6.1
+
+- `data/secrets.key` falla de forma cerrada si existe pero está corrupto o no
+  se puede leer: no se genera otra clave que dejaría los datos ilegibles.
+- Sin cambios de comportamiento, manifiesto ni VPS respecto a 1.6.0.
+
 ## 1.6.0
 
 - Seguridad: `config.json`, la clave privada de WireGuard, la copia persistente

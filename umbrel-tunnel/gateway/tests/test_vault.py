@@ -66,6 +66,19 @@ class VaultTests(fixtures.unittest.TestCase):
             vault.KEY_FILE.write_text(original_key, encoding="ascii")
             vault._KEY = original
 
+    def test_corrupt_key_file_fails_closed_without_overwriting(self):
+        original_key = vault.KEY_FILE.read_text(encoding="ascii")
+        original = vault._KEY
+        try:
+            vault._KEY = None
+            vault.KEY_FILE.write_text("no-es-hex\n", encoding="ascii")
+            with self.assertRaises(vault.SecretsError):
+                vault.key()
+            self.assertEqual(vault.KEY_FILE.read_text(encoding="ascii"), "no-es-hex\n")
+        finally:
+            vault.KEY_FILE.write_text(original_key, encoding="ascii")
+            vault._KEY = original
+
     def test_wireguard_files_are_encrypted_and_readable(self):
         wireguard.save_config(CONFIG_TEXT)
         self.assertTrue(vault.is_envelope(wireguard.DATA_CONF.read_text(encoding="utf-8")))

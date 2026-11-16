@@ -73,15 +73,21 @@ def _atomic_write(path: Path, text: str) -> None:
 def _load_seed() -> bytes:
     try:
         raw = KEY_FILE.read_text(encoding="ascii").strip()
-        seed = bytes.fromhex(raw)
-        if len(seed) >= 32:
-            return seed
-        raise ValueError("clave corta")
-    except (OSError, ValueError):
+    except FileNotFoundError:
         seed = os.urandom(32)
         _atomic_write(KEY_FILE, seed.hex() + "\n")
         _LOGGER.info("clave de cifrado creada en %s", KEY_FILE)
         return seed
+    except OSError as exc:
+        # No se puede leer: crear otra destruiría la capacidad de descifrar.
+        raise SecretsError(f"no se puede leer {KEY_FILE}: {exc}") from exc
+    try:
+        seed = bytes.fromhex(raw)
+    except ValueError as exc:
+        raise SecretsError(f"{KEY_FILE} no contiene una clave válida") from exc
+    if len(seed) < 32:
+        raise SecretsError(f"{KEY_FILE} contiene una clave demasiado corta")
+    return seed
 
 
 def key() -> bytes:
