@@ -2,7 +2,7 @@
 
 ## Requisitos
 
-- Go 1.26.11+ para el VPS (fuente de verdad: `vps/go.mod`).
+- Go 1.27.4+ para el VPS (fuente de verdad: `vps/go.mod`).
 - Python 3.11+ para el gateway.
 - Docker + buildx para la imagen del gateway.
 - Node 20+ solo si quieres ejecutar el linter oficial de Umbrel.

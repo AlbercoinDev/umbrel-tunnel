@@ -6,7 +6,7 @@
 - TCP uses local HAProxy, UDP uses `udp.py`; HTTPS/TLS termination lives on the VPS in `internal/edge`. The VPS daemon owns mutable peer/forward state; CLI mutations go through its authenticated API rather than independently rewriting JSON.
 
 ## Verification
-- Use Go **1.26.11** as declared in `vps/go.mod`.
+- Use Go **1.27.4** as declared in `vps/go.mod`.
 - From `vps/`: `gofmt -l .`, `go vet ./...`, `go test ./...`, then `CGO_ENABLED=0 go build -trimpath -o /tmp/opencode/umbrel-tunnel ./cmd/umbrel-tunnel`. CI rejects any output from `gofmt -l .`; `make check` instead formats files in place before vet/tests.
 - Focused Go test: `go test ./internal/httpapi -run '^TestName$' -count=1` (substitute the actual package/test).
 - Gateway dependencies: `python3 -m pip install flask pyyaml waitress` inside a virtualenv; CI uses Python 3.12. No requirements file or Python build manifest exists.

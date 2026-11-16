@@ -1,5 +1,13 @@
 # Cambios
 
+## 1.5.4
+
+- VPS: binarios recompilados con Go 1.27.4, la rama estable actual.
+- Gateway: sin cambios de código ni de dependencias; mantiene Alpine 3.24 y
+  Python 3.14.
+- Sin cambios funcionales en emparejamiento, detección, publicaciones,
+  certificados, capacidades ni auditoría.
+
 ## 1.5.3
 
 - Gateway: base Alpine 3.24 y Python 3.14 del sistema, con las correcciones de
