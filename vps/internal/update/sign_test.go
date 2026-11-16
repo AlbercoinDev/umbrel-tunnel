@@ -5,8 +5,13 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
+
+	"umbrel-tunnel/internal/execx"
 )
 
 func TestVerifySignatureAcceptsAndRejects(t *testing.T) {
@@ -65,5 +70,20 @@ func TestUnsignedReleaseFailsClosed(t *testing.T) {
 	}
 	if _, err := signedChecksum(context.Background(), "http://127.0.0.1:1/bin"); err == nil {
 		t.Fatal("una release sin firma no debe validar")
+	}
+}
+
+func TestApplyRejectsUnsignedHTTPByDefault(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/bin" {
+			_, _ = w.Write(script("1.6.3"))
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer server.Close()
+	_, err := Apply(context.Background(), Options{Source: server.URL + "/bin", Runner: &execx.Fake{}})
+	if err == nil || !strings.Contains(err.Error(), "SHA256SUMS") {
+		t.Fatalf("una release sin firma debe rechazarse: %v", err)
 	}
 }
