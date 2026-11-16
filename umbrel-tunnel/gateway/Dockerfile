@@ -1,4 +1,4 @@
-FROM alpine:3.22@sha256:2e0b81d60597f449baa56dc25d355367869d2dca4cd57e866f1e2b52af3eb55f
+FROM alpine:3.22@sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f
 
 # wg-quick is a bash script, so bash is required (Alpine's /bin/sh is ash).
 # kmod + the /lib/modules mount let the container load the host WireGuard

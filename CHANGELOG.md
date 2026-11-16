@@ -1,5 +1,14 @@
 # Cambios
 
+## 1.5.2
+
+- Gateway: imagen reconstruida sobre el digest vigente de Alpine 3.22 para
+  incorporar las correcciones de paquetes del sistema.
+- VPS: binarios recompilados con Go 1.26.11 y `golang.org/x/crypto` 0.59.0 /
+  `golang.org/x/net` 0.62.0.
+- Sin cambios funcionales en emparejamiento, detección, publicaciones,
+  certificados, capacidades ni auditoría.
+
 ## 1.5.1
 
 - Gateway: el contenedor parte de `cap_drop: ALL` y solo recupera `NET_ADMIN`,
