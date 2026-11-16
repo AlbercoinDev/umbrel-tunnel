@@ -62,11 +62,11 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install flask pyyaml waitress
+          python -m pip install flask pyyaml waitress cryptography
 
       - name: Compile
         run: |
-          python -m py_compile app.py audit.py catalog.py detect.py i18n.py proxy.py reachability.py scan.py targets.py udp.py serve.py state.py sync.py vps.py wireguard.py
+          python -m py_compile app.py audit.py catalog.py detect.py health.py i18n.py proxy.py reachability.py scan.py targets.py udp.py serve.py state.py sync.py vault.py vps.py wireguard.py
 
       - name: Tests
         run: python -m unittest discover -s tests -v
