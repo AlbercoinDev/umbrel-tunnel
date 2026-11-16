@@ -9,17 +9,24 @@ services:
 
   gateway:
     # Multi-arch release image (linux/amd64 + linux/arm64), pinned by digest.
-    image: ghcr.io/albercoindev/umbrel-tunnel-gateway:1.5.0@sha256:82499de10317b6194517f712009f09b135c8a6bab15d5bb64c93816b102d1ddc
+    image: ghcr.io/albercoindev/umbrel-tunnel-gateway:1.5.1
     # Restart after crashes. A clean exit is treated as an intentional stop.
     restart: on-failure
     stop_grace_period: 30s
     init: true
+    # Start from no capabilities and add back only what the gateway uses.
     # NET_ADMIN creates wg0 and binds HAProxy to the tunnel address.
     # SYS_MODULE + /lib/modules lets the container load the host WireGuard
     # module on first start, as the official Umbrel WireGuard app does.
+    # DAC_OVERRIDE is required because umbrelOS mounts ${APP_DATA_DIR} as
+    # 1000:1000 while the process runs as root: without it a fresh install
+    # cannot write config.json or the WireGuard state.
+    cap_drop:
+      - ALL
     cap_add:
       - NET_ADMIN
       - SYS_MODULE
+      - DAC_OVERRIDE
     security_opt:
       - no-new-privileges:true
     volumes:

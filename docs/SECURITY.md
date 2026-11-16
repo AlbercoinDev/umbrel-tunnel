@@ -56,17 +56,21 @@
 
 ## Privilegios del contenedor
 
-El gateway necesita privilegios de host poco habituales. Están limitados y
-justificados:
+El contenedor parte de `cap_drop: ALL`. Solo recupera las capacidades que usa:
 
 | Privilegio | Motivo |
 | --- | --- |
 | `NET_ADMIN` | crear `wg0`, asignar la IP del túnel y escuchar en ella con HAProxy |
 | `SYS_MODULE` + `/lib/modules:ro` | cargar el módulo WireGuard del host en el primer arranque |
+| `DAC_OVERRIDE` | escribir en `data`, que umbrelOS monta como `1000:1000`, sin ejecutar como root con todas las capacidades |
 | `${UMBREL_ROOT}/app-data:ro` | detectar apps instaladas sin el socket de Docker |
 
 No se monta el socket de Docker. No se usa `network_mode: host`. No se usa
 `privileged: true`. `no-new-privileges:true` está activo.
+
+La reducción se probó con una instalación nueva y con un upgrade desde 1.5.0:
+sin `DAC_OVERRIDE` el proceso no puede crear `config.json` en un directorio
+`1000:1000`, aunque sea root. Es un requisito de umbrelOS, no del gateway.
 
 El montaje de `app-data` es el privilegio más amplio: permite leer manifiestos y
 compose de otras apps. El código solo lee archivos regulares, rechaza symlinks,
@@ -101,6 +105,14 @@ Por eso `validate_api_url` exige:
 La misma validación se aplica al cambiar la URL desde **Avanzado** cuando ya se
 conoce la subred.
 
+Los **servicios manuales** pasan además por `targets.validate`: se rechazan
+loopback, link-local, multicast, direcciones reservadas y destinos que resuelven
+a esos rangos. Las direcciones privadas y los nombres DNS de contenedores Docker
+siguen permitidos. Un nombre que todavía no resuelve se acepta para no romper
+apps que arrancan después; la comprobación se repite cuando el destino se
+resuelve. No se bloquea por número de puerto: muchos servicios legítimos usan
+8080/8443 y hacerlo rompería publicaciones existentes.
+
 Además, el flujo app-first guarda un *bootstrap* pendiente con el token, el
 endpoint, la URL de la API, la subred, la IP de Umbrel y el MTU. Al pegar el
 código, la app rechaza (`pair_bootstrap_mismatch`) cualquier valor que no
@@ -108,6 +120,18 @@ coincida con ese bootstrap. El token del bootstrap se guarda en
 `/data/config.json` (`600`) y se elimina al emparejar o desemparejar. El
 comando de instalación se construye con `shlex.quote` porque se pega en una
 shell de root.
+
+## Auditoría
+
+`data/audit.log` (`0600`, JSONL) registra login, emparejamiento, publicaciones,
+servicios manuales, ajustes y rotaciones. Cada línea encadena el hash de la
+anterior; `audit.verify()` se ejecuta en `GET /api/diagnostics` y detecta líneas
+alteradas o borradas. Los tokens, contraseñas, claves privadas y códigos `ut1`
+se redactan antes de escribir.
+
+La cadena no protege frente a root ni frente a quien pueda reescribir el archivo
+completo: es una ayuda de trazabilidad y detección, no un WORM. La rotación a
+`audit.log.1` reinicia la cadena del archivo activo.
 
 ## Recomendaciones operativas
 

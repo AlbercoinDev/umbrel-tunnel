@@ -1,5 +1,21 @@
 # Cambios
 
+## 1.5.1
+
+- Gateway: el contenedor parte de `cap_drop: ALL` y solo recupera `NET_ADMIN`,
+  `SYS_MODULE` y `DAC_OVERRIDE`. `DAC_OVERRIDE` es necesario porque umbrelOS
+  monta `data` como `1000:1000`; sin él una instalación nueva no puede escribir
+  la configuración.
+- Servicios manuales: se rechazan destinos de loopback, link-local (metadatos
+  cloud), multicast y direcciones reservadas. Las direcciones privadas y los
+  nombres de contenedor Docker siguen permitidos, y un nombre que aún no
+  resuelve se acepta para no romper apps que arrancan después.
+- Auditoría: `data/audit.log` (0600, JSONL) con cadena de hashes para login,
+  emparejamiento, publicaciones, servicios manuales, ajustes y rotaciones.
+  `GET /api/diagnostics` incluye el resultado de `audit.verify()`.
+- CI: `govulncheck`, `bandit` (alta severidad), comprobación de sintaxis de los
+  scripts y Dependabot para Go, Docker y Actions.
+
 ## 1.5.0
 
 - VPS compartido: varios Umbrel pueden usar el mismo VPS, cada uno con su

@@ -37,6 +37,7 @@ from flask import (
     url_for,
 )
 
+import audit
 import detect
 import i18n
 import proxy
@@ -44,12 +45,13 @@ import reachability
 import scan
 import state
 import sync
+import targets
 import wireguard
 from vps import VPSClient, VPSError
 
 # Release of this gateway; must match vps/VERSION (tests enforce it). The VPS
 # installer and binaries offered to the user are pinned to this tag.
-RELEASE_VERSION = "1.5.0"
+RELEASE_VERSION = "1.5.1"
 VERSION = os.environ.get("APP_VERSION", RELEASE_VERSION)
 RESERVED_PUBLIC_PORTS = {22}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
@@ -1041,18 +1043,21 @@ def login_post():
     if not _csrf_ok():
         return render_template("login.html", next_url=next_url, error=_t("login.csrf")), 403
     if _rate_limited(ip):
+        audit.log("login_rate_limited", ip=ip)
         return render_template("login.html", next_url=next_url, error=_t("login.rate_limited")), 429
     password = request.form.get("password", "")
     if not APP_PASSWORD or not hmac.compare_digest(
         password.encode("utf-8"), APP_PASSWORD.encode("utf-8")
     ):
         _record_failure(ip)
+        audit.log("login_failed", ip=ip)
         return render_template("login.html", next_url=next_url, error=_t("login.invalid")), 401
     _clear_failures(ip)
     session.clear()
     session["auth"] = True
     session["csrf"] = secrets.token_urlsafe(32)
     session.permanent = True
+    audit.log("login_success", ip=ip)
     return redirect(next_url)
 
 
@@ -1222,6 +1227,14 @@ def diagnostics():
     checks.append({"id": "proxy", "ok": (not needs_tcp or bool(proxy_status.get("running")))
                    and (not udp_count or (udp_status["running"] and udp_status["listeners"] == udp_count)),
                    "detail": f"UDP: {udp_status['listeners']} listeners, {udp_status['sessions']} sessions"})
+    audit_status = audit.verify()
+    checks.append(
+        {
+            "id": "audit",
+            "ok": audit_status["ok"],
+            "detail": audit_status["reason"],
+        }
+    )
 
     return jsonify(
         {
@@ -1233,6 +1246,7 @@ def diagnostics():
             "forwards": forwards_report,
             "proxy": proxy_status,
             "udp": udp_status,
+            "audit": audit_status,
             "checks": checks,
             "exposures": [
                 {
@@ -1399,6 +1413,12 @@ def create_exposure():
         if saved is None:
             return api_error("exposure_not_found", 404)
 
+    audit.log(
+        "exposure_opened" if existing else "exposure_created",
+        exposure_id=str((saved or {}).get("id") or ""),
+        service_id=service_id,
+        access_mode=mode,
+    )
     payload = {
         "ok": not result.get("errors"),
         "existing": existing,
@@ -1456,6 +1476,12 @@ def update_exposure(exposure_id: str):
 
     if saved is None:
         return api_error("exposure_not_found", 404)
+    audit.log(
+        "exposure_updated",
+        exposure_id=exposure_id,
+        fields=sorted(str(key) for key in body),
+        enabled=saved.get("enabled"),
+    )
     return jsonify(
         {
             "ok": not result.get("errors"),
@@ -1559,6 +1585,12 @@ def delete_exposure(exposure_id: str):
             ]
             state.save(current)
 
+        audit.log(
+            "exposure_deleted",
+            exposure_id=exposure_id,
+            service_id=exposure.get("service_id"),
+            public_port=exposure.get("public_port"),
+        )
         result = sync_now()
     return jsonify({"ok": True, "sync": present_sync(result)})
 
@@ -1641,6 +1673,11 @@ def pair():
         config["bootstrap"] = {}
         state.save(config)
 
+    audit.log(
+        "vps_paired",
+        endpoint=payload["endpoint"],
+        shared_domain=bool(payload["domain"]),
+    )
     if not payload["endpoint"] or not payload["server_pubkey"]:
         return jsonify(
             {
@@ -1695,6 +1732,7 @@ def pair():
                 state.save(current)
 
     if last_error is not None:
+        audit.log("peer_register_failed", detail=str(last_error))
         return (
             jsonify(
                 {
@@ -1748,6 +1786,7 @@ def register_peer():
         current = state.load()
         current.setdefault("vps", {})["peer_registered"] = True
         state.save(current)
+    audit.log("peer_registered")
     return jsonify({"ok": True, "public_key": public})
 
 
@@ -1793,6 +1832,7 @@ def _unpair():
     proxy.stop()
     sync.udp.stop()
     wireguard.remove()
+    audit.log("vps_unpaired", remote_cleaned=remote_cleaned)
     return jsonify({"ok": True, "remote_cleaned": remote_cleaned})
 
 
@@ -1932,8 +1972,10 @@ def _rotate_wireguard():
             wireguard.clear_pending_rotation()
         except (wireguard.WireGuardError, OSError):
             pass
+        audit.log("wireguard_rotate_failed", detail=str(exc))
         return api_error("wg_rotate_failed", 502, detail=str(exc))
 
+    audit.log("wireguard_rotated")
     result = sync_now()
     return jsonify(
         {"ok": True, "public_key": public, "message": message, "sync": present_sync(result)}
@@ -2040,6 +2082,11 @@ def update_settings():
                 return api_error("invalid_interval_range", 400)
             config.setdefault("settings", {})["sync_interval"] = interval
         state.save(config)
+    audit.log(
+        "settings_updated",
+        fields=sorted(str(key) for key in body),
+        credentials_changed=bool(body.get("token")),
+    )
     return jsonify({"ok": True})
 
 
@@ -2063,6 +2110,10 @@ def add_manual_service():
         return api_error("invalid_manual_service", 400)
     if not HOST_RE.match(host) or not (1 <= port <= 65535) or protocol not in {"tcp", "udp"}:
         return api_error("invalid_manual_service", 400)
+    try:
+        host = targets.validate(host)
+    except targets.TargetError as exc:
+        return api_error("invalid_manual_service", 400, detail=str(exc))
 
     wants_open = bool(body.get("open"))
     if wants_open and protocol not in {"tcp", "udp"}:
@@ -2130,6 +2181,13 @@ def add_manual_service():
     if exposure is not None:
         payload["exposure"] = exposure_view(exposure)
         payload["ok"] = not result.get("errors")
+    audit.log(
+        "manual_service_added" if created else "manual_service_opened",
+        host=host,
+        port=port,
+        protocol=protocol,
+        opened=exposure is not None,
+    )
     return jsonify(payload), 201
 
 
@@ -2198,6 +2256,7 @@ def delete_manual_service(service_id: str):
                 return api_error("manual_service_not_found", 404)
             state.save(config)
         detect_cached(force=True)
+    audit.log("manual_service_deleted", service_id=service_id)
     return jsonify({"ok": True})
 
 

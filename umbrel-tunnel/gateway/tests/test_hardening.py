@@ -2,8 +2,11 @@
 from pathlib import Path
 from unittest import mock
 
+import yaml
+
 import test_gateway as fixtures
 import app as gateway
+import audit
 import state
 import wireguard
 from vps import VPSError
@@ -36,6 +39,53 @@ class TunnelAccessTests(Base):
         with mock.patch.object(gateway.wireguard, "subnet", return_value="10.9.0.0/24"):
             self.assertTrue(gateway.from_tunnel("10.9.0.1"))
         self.assertFalse(gateway.from_tunnel("not-an-ip"))
+
+
+class ContainerPrivilegeTests(fixtures.unittest.TestCase):
+    def test_gateway_drops_all_capabilities_and_adds_only_required_ones(self):
+        compose = yaml.safe_load(
+            (Path(__file__).resolve().parents[2] / "docker-compose.yml").read_text(
+                encoding="utf-8"
+            )
+        )
+        gateway = (compose.get("services") or {}).get("gateway") or {}
+        self.assertEqual(gateway.get("cap_drop"), ["ALL"])
+        self.assertEqual(
+            set(gateway.get("cap_add") or []),
+            {"NET_ADMIN", "SYS_MODULE", "DAC_OVERRIDE"},
+        )
+        self.assertNotIn("privileged", gateway)
+        self.assertNotIn("network_mode", gateway)
+        volumes = " ".join(str(item) for item in gateway.get("volumes") or [])
+        self.assertNotIn("docker.sock", volumes)
+
+
+class AuditIntegrationTests(Base):
+    def test_login_is_recorded_and_the_chain_is_valid(self):
+        audit.AUDIT_FILE.unlink(missing_ok=True)
+        self._login()
+        text = audit.AUDIT_FILE.read_text(encoding="utf-8")
+        self.assertIn("login_success", text)
+        self.assertEqual(audit.verify(), {"ok": True, "entries": 1, "reason": "ok"})
+
+
+class ManualTargetValidationTests(Base):
+    def test_manual_service_rejects_loopback_and_metadata(self):
+        for host in ("127.0.0.1", "169.254.169.254", "[::1]"):
+            response = self._post(
+                "/api/manual-services",
+                {"host": host, "port": 8080, "protocol": "tcp"},
+            )
+            self.assertEqual(response.status_code, 400, host)
+            self.assertEqual(response.get_json()["code"], "invalid_manual_service")
+
+    def test_manual_service_still_accepts_a_container_name(self):
+        response = self._post(
+            "/api/manual-services",
+            {"host": "demo_web_1", "port": 8080, "protocol": "tcp"},
+        )
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(response.get_json()["ok"])
 
 
 class StateIntegrityTests(fixtures.unittest.TestCase):
