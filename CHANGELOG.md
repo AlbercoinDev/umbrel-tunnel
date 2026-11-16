@@ -1,5 +1,24 @@
 # Cambios
 
+## 1.6.0
+
+- Seguridad: `config.json`, la clave privada de WireGuard, la copia persistente
+  de `wg0.conf` y la rotación pendiente se guardan cifrados con AES-256-GCM.
+  La clave vive en `data/secrets.key` (`0600`), se deriva con scrypt y viaja con
+  los datos para no romper restauraciones. Los archivos en texto plano se
+  migran automáticamente al arrancar.
+- Seguridad: los destinos manuales se revalidan en cada sincronización y el
+  relay UDP fija una IP aprobada por sesión (anti-rebinding). Se bloquean
+  además CGNAT (`100.64/10`, incluidos metadatos cloud), `192.0.0.0/24` y
+  `198.18.0.0/15`.
+- umbrelOS 2.x: la app funciona con el gateway in-process, sin `app_proxy`, y
+  añade el widget de pantalla de inicio (`three-stats`: estado del túnel,
+  servicios sanos y dominio público).
+- `data/haproxy.cfg` queda fuera de las copias de seguridad de Umbrel por ser
+  regenerable.
+- VPS: sin cambios de código; los binarios se recompilan con el mismo Go
+  1.27.4. No hace falta actualizar el VPS.
+
 ## 1.5.4
 
 - VPS: binarios recompilados con Go 1.27.4, la rama estable actual.

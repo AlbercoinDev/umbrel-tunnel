@@ -16,6 +16,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import targets
+
 DATA_DIR = Path(os.environ.get("UMBREL_TUNNEL_DATA", "/data"))
 DATA_CFG = DATA_DIR / "haproxy.cfg"
 ETC_CFG = Path(os.environ.get("UMBREL_TUNNEL_HAPROXY_CONF", "/etc/haproxy/haproxy.cfg"))
@@ -46,6 +48,10 @@ def _valid_target(host: str, port: int) -> tuple[str, int]:
         raise ProxyError(f"destino inválido: {host!r}")
     if not (1 <= int(port) <= 65535):
         raise ProxyError(f"puerto destino inválido: {port}")
+    try:
+        host = targets.validate(host)
+    except targets.TargetError as exc:
+        raise ProxyError(f"destino bloqueado: {host!r} ({exc})") from exc
     return host, int(port)
 
 

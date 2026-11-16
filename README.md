@@ -42,6 +42,16 @@ Internet ──► VPS (IP fija) ──► wg0 ──► Umbrel ──► HAProx
   `AlbercoinDev/Umbrel-AppStore-Albercoin`. Para desarrollo, copia la carpeta
   `umbrel-tunnel/` a `app-data/albercoin-store-umbrel-tunnel/`.
 
+## umbrelOS 1.x y 2.x
+
+La app funciona en ambos. En 1.x el panel se sirve a través del contenedor
+`app_proxy` de Umbrel. En 2.x ese contenedor ya no existe: umbreld ejecuta el
+gateway de apps en proceso y enruta las peticiones al contenedor directamente.
+La app no depende de `app_proxy` para autenticar, porque mantiene su propio
+login con `APP_PASSWORD`; el widget de la pantalla de inicio (`/api/widget`) se
+sirve sin sesión y sin secretos, como espera umbreld. `data/haproxy.cfg` es
+regenerable y queda fuera de las copias de seguridad de Umbrel.
+
 ## Flujo recomendado: primero la app, después el VPS
 
 La app genera las claves y el token, y te muestra el comando exacto que debes
@@ -68,7 +78,7 @@ ejecutar en el VPS. No tienes que copiar claves a mano.
 El comando tiene esta forma (la app rellena todos los valores):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.5.4/vps/install.sh \
+curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.0/vps/install.sh \
   | sudo bash -s -- \
       --endpoint 203.0.113.10 \
       --token '<TOKEN>' \
@@ -79,7 +89,7 @@ curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.5.4/v
       --api-port 8080 \
       --wg-port 51820 \
       --mtu 1420 \
-      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.5.4
+      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.0
 ```
 
 `--binary-base` descarga `umbrel-tunnel-linux-amd64` o
@@ -123,10 +133,10 @@ El ejemplo usa la red predeterminada; si el asistente muestra otra, copia tambi�
 ```bash
 cd vps
 make dist
-scp dist/umbrel-tunnel-1.5.4-linux-amd64.tar.gz root@203.0.113.10:/tmp/
+scp dist/umbrel-tunnel-1.6.0-linux-amd64.tar.gz root@203.0.113.10:/tmp/
 ssh root@203.0.113.10
-tar -xzf /tmp/umbrel-tunnel-1.5.4-linux-amd64.tar.gz -C /tmp
-cd /tmp/umbrel-tunnel-1.5.4-linux-amd64
+tar -xzf /tmp/umbrel-tunnel-1.6.0-linux-amd64.tar.gz -C /tmp
+cd /tmp/umbrel-tunnel-1.6.0-linux-amd64
 sudo ./install.sh --endpoint 203.0.113.10 \
   --umbrel-pubkey '<CLAVE_PUBLICA_DE_LA_APP>' --token '<TOKEN_DE_LA_APP>'
 ```
@@ -520,9 +530,16 @@ handshakes, abrir/cerrar forwards TCP/UDP, gestionar certificados y rotar el tok
 - El puerto público `22` está reservado para el SSH del VPS.
 - Los servicios sensibles (RPC de Bitcoin, LND, Ollama, Portainer, SSH…) se
   marcan en la UI para que decidas con contexto.
-- La app de Umbrel mantiene el login de Umbrel (`app_proxy`) **y** su propio
-  login con `APP_PASSWORD` (cookie de sesión firmada, HttpOnly, SameSite,
-  CSRF y límite de intentos).
+- La app de Umbrel mantiene el login de Umbrel (`app_proxy` en 1.x, gateway
+  in-process en 2.x) **y** su propio login con `APP_PASSWORD` (cookie de sesión
+  firmada, HttpOnly, SameSite, CSRF y límite de intentos). El único endpoint
+  sin sesión es `/api/widget`, que no devuelve secretos.
+- Secretos cifrados en reposo con AES-256-GCM (`config.json`, clave privada de
+  WireGuard, copia persistente de `wg0.conf` y rotación pendiente). La clave de
+  256 bits vive en `data/secrets.key` (`0600`) y se deriva con scrypt; los
+  archivos en texto plano se migran solos al arrancar. Una copia completa del
+  directorio de datos incluye la clave: el aislamiento frente a eso depende del
+  cifrado del disco y de los permisos de Umbrel.
 - La configuración de WireGuard se genera desde campos estructurados. Se
   rechazan directivas arbitrarias como `PostUp`, `PostDown`, `PreUp`,
   `PreDown` o `SaveConfig`.
@@ -535,10 +552,14 @@ handshakes, abrir/cerrar forwards TCP/UDP, gestionar certificados y rotar el tok
   de Docker. Monta `${UMBREL_ROOT}/app-data` en solo lectura para detectar apps;
   es el privilegio de host más amplio del paquete y está documentado en
   [docs/SECURITY.md](docs/SECURITY.md).
-- Los servicios manuales rechazan loopback, link-local, multicast y direcciones
-  reservadas; las direcciones privadas y los nombres de contenedor Docker siguen
-  permitidos. No se bloquea por número de puerto para no romper apps que usan
-  8080/8443.
+- Los servicios manuales rechazan loopback, link-local (incluidos los
+  metadatos cloud), CGNAT y direcciones reservadas; las direcciones privadas y
+  los nombres de contenedor Docker siguen permitidos. No se bloquea por número
+  de puerto para no romper apps que usan 8080/8443.
+- Anti-rebinding: cada sincronización vuelve a resolver el destino y descarta
+  la publicación si ahora apunta a una red bloqueada, sin afectar a las demás.
+  El relay UDP fija la IP aprobada al abrir la sesión para que una segunda
+  resolución no pueda desviar el tráfico.
 - La app escribe `data/audit.log` (`0600`) con una cadena de hashes para login,
   emparejamiento, publicaciones, ajustes y rotaciones. El estado de la cadena
   aparece en `GET /api/diagnostics`.
@@ -626,9 +647,9 @@ propio `install.sh`, reinstala con el instalador (es idempotente y conserva la
 configuración):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.5.4/vps/install.sh \
+curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.0/vps/install.sh \
   | sudo bash -s -- --endpoint <IP> \
-      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.5.4
+      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.0
 ```
 
 ## Desarrollo
@@ -671,7 +692,7 @@ Variables de entorno útiles en el gateway:
 | Variable | Por defecto | Uso |
 | --- | --- | --- |
 | `APP_PASSWORD` | — | contraseña de login; Umbrel la inyecta |
-| `APP_VERSION` | `1.5.4` | versión mostrada |
+| `APP_VERSION` | `1.6.0` | versión mostrada |
 | `UMBREL_TUNNEL_DATA` | `/data` | estado, claves y configuración |
 | `UMBREL_APP_DATA` | `/umbrel-app-data` | manifiestos de apps (solo lectura) |
 | `NETWORK_IP` | `10.21.0.0` | red de Umbrel para detectar solapes |

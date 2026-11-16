@@ -51,7 +51,7 @@ from vps import VPSClient, VPSError
 
 # Release of this gateway; must match vps/VERSION (tests enforce it). The VPS
 # installer and binaries offered to the user are pinned to this tag.
-RELEASE_VERSION = "1.5.4"
+RELEASE_VERSION = "1.6.0"
 VERSION = os.environ.get("APP_VERSION", RELEASE_VERSION)
 RESERVED_PUBLIC_PORTS = {22}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
@@ -221,7 +221,7 @@ def authenticate():
     g.t = lambda key, **params: i18n.translate(g.lang, key, **params)
     if from_tunnel(request.remote_addr):
         return api_error("tunnel_forbidden", 403)
-    if request.endpoint in {"static", "login", "login_post", "health", "set_language"}:
+    if request.endpoint in {"static", "login", "login_post", "health", "widget", "set_language"}:
         return None
     if request.path.startswith("/static/"):
         return None
@@ -1083,6 +1083,58 @@ def index():
 @app.get("/api/health")
 def health():
     return jsonify({"ok": True, "version": VERSION})
+
+
+@app.get("/api/widget")
+def widget():
+    """Widget de la pantalla de inicio de umbrelOS (sin secretos ni sesión).
+
+    umbreld lo consulta directamente al contenedor, sin cookies, tanto en 1.x
+    como en el gateway in-process de 2.x. Devuelve el formato ``three-stats``
+    y el ``refresh`` en el cuerpo: umbreld lo exige para no mostrar guiones.
+    """
+    try:
+        config = state.load()
+    except state.StateError:
+        config = {}
+    wg = wireguard.status()
+    exposures = [e for e in (config.get("exposures") or []) if e.get("enabled", True)]
+    healthy = sum(1 for e in exposures if not e.get("sync_error"))
+    domain = str((config.get("settings") or {}).get("base_domain") or "").strip()
+
+    handshake = max(
+        (int(peer.get("latest_handshake") or 0) for peer in wg.get("peers") or []),
+        default=0,
+    )
+    tunnel_text = "Connected" if wg.get("connected") else "Not connected"
+    if handshake and wg.get("connected"):
+        age = max(0, int(time.time()) - int(handshake))
+        tunnel_sub = f"handshake {age}s ago"
+    elif wg.get("running"):
+        tunnel_sub = "no handshake"
+    else:
+        tunnel_sub = "wireguard down"
+
+    return jsonify(
+        {
+            "type": "three-stats",
+            "refresh": "30s",
+            "link": "",
+            "items": [
+                {"icon": "route", "text": tunnel_text, "subtext": tunnel_sub},
+                {
+                    "icon": "server-2",
+                    "text": f"{healthy}/{len(exposures)}",
+                    "subtext": "services healthy",
+                },
+                {
+                    "icon": "world",
+                    "text": domain or "\u2014",
+                    "subtext": "public domain" if domain else "no domain",
+                },
+            ],
+        }
+    )
 
 
 @app.get("/api/status")
@@ -2299,6 +2351,16 @@ def background_sync() -> None:
 
 
 def startup() -> None:
+    # Migra los archivos heredados en texto plano a sobres cifrados antes de
+    # aplicar WireGuard, para que una actualización no deje secretos sin cifrar.
+    try:
+        if state.migrate_encryption():
+            app.logger.warning("config.json migrado a cifrado en reposo")
+        migrated = wireguard.migrate_encryption()
+        if migrated:
+            app.logger.warning("archivos de WireGuard cifrados: %s", ", ".join(migrated))
+    except (OSError, wireguard.WireGuardError) as exc:
+        app.logger.error("no se pudo migrar el cifrado en reposo: %s", exc)
     try:
         config = state.load()
     except state.StateError as exc:

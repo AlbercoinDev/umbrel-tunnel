@@ -11,10 +11,13 @@ import base64
 import binascii
 import ipaddress
 import json
+import logging
 import os
 import re
 import subprocess
 from pathlib import Path
+
+import vault
 
 DATA_DIR = Path(os.environ.get("UMBREL_TUNNEL_DATA", "/data"))
 DATA_WG_DIR = DATA_DIR / "wireguard"
@@ -34,8 +37,17 @@ ENDPOINT_RE = re.compile(
 )
 
 
+_LOGGER = logging.getLogger("umbrel-tunnel.wireguard")
+_DECRYPT_ERROR = ""
+
+
 class WireGuardError(RuntimeError):
     pass
+
+
+def decrypt_error() -> str:
+    """Último error al descifrar la configuración persistente ("" si no hay)."""
+    return _DECRYPT_ERROR
 
 
 def _run(args: list[str], input_data: str | None = None) -> str:
@@ -204,17 +216,25 @@ def save_config(text: str) -> None:
     validate_config(text)
     DATA_WG_DIR.mkdir(parents=True, exist_ok=True)
     ETC_CONF.parent.mkdir(parents=True, exist_ok=True)
-    DATA_CONF.write_text(text.rstrip() + "\n", encoding="utf-8")
-    DATA_CONF.chmod(0o600)
+    # Disco: sobre cifrado. El archivo de /etc/wireguard vive solo en la capa
+    # efímera del contenedor porque wg-quick necesita la clave en claro.
+    vault.write_text(DATA_CONF, text.rstrip() + "\n")
     ETC_CONF.write_text(text.rstrip() + "\n", encoding="utf-8")
     ETC_CONF.chmod(0o600)
 
 
 def config_text() -> str:
+    global _DECRYPT_ERROR
     try:
-        return DATA_CONF.read_text(encoding="utf-8")
-    except OSError:
+        text = vault.read_text(DATA_CONF)
+    except FileNotFoundError:
         return ""
+    except (OSError, vault.SecretsError) as exc:
+        _DECRYPT_ERROR = str(exc)
+        _LOGGER.error("no se puede descifrar wg0.conf: %s", exc)
+        return ""
+    _DECRYPT_ERROR = ""
+    return text
 
 
 def redacted_config() -> str:
@@ -265,9 +285,11 @@ def subnet() -> str | None:
 
 def private_key() -> str:
     try:
-        value = DATA_KEY.read_text(encoding="ascii").strip()
+        value = vault.read_text(DATA_KEY).strip()
         if valid_key(value):
             return value
+    except vault.SecretsError as exc:
+        _LOGGER.error("no se puede descifrar private.key: %s", exc)
     except OSError:
         pass
     match = re.search(r"^\s*PrivateKey\s*=\s*(\S+)", config_text(), re.MULTILINE)
@@ -288,25 +310,19 @@ def save_private_key(private: str) -> None:
     if not valid_key(private):
         raise WireGuardError("clave privada inválida")
     DATA_WG_DIR.mkdir(parents=True, exist_ok=True)
-    DATA_KEY.write_text(private + "\n", encoding="ascii")
-    DATA_KEY.chmod(0o600)
+    vault.write_text(DATA_KEY, private + "\n")
 
 
 def save_pending_rotation(data: dict) -> None:
     DATA_WG_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = PENDING_ROTATION.with_suffix(".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w", encoding="utf-8") as handle:
-        json.dump(data, handle)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(tmp, PENDING_ROTATION)
+    # Guarda la clave privada anterior: también debe ir cifrada.
+    vault.write_text(PENDING_ROTATION, json.dumps(data) + "\n")
 
 
 def pending_rotation() -> dict:
     try:
-        data = json.loads(PENDING_ROTATION.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        data = json.loads(vault.read_text(PENDING_ROTATION))
+    except (OSError, ValueError, vault.SecretsError):
         return {}
     return data if isinstance(data, dict) else {}
 
@@ -322,6 +338,13 @@ def ensure_keypair() -> tuple[str, str]:
     """Return the persistent keypair, generating it on first use."""
     private = private_key()
     if not private:
+        if DATA_KEY.exists():
+            # Existe una clave que no se puede descifrar: generar otra borraría
+            # el emparejamiento en silencio. Mejor fallar y avisar.
+            raise WireGuardError(
+                "la clave privada existe pero no se puede descifrar; "
+                "revisa data/secrets.key"
+            )
         private, _ = generate_keypair()
         save_private_key(private)
     public = _run(["wg", "pubkey"], input_data=private + "\n").strip()
@@ -413,3 +436,14 @@ def status() -> dict:
         "connected": any(p["latest_handshake"] > 0 for p in peers),
         "peers": peers,
     }
+
+def migrate_encryption() -> list[str]:
+    """Cifra los archivos heredados en texto plano. Devuelve los migrados."""
+    migrated: list[str] = []
+    for path in (DATA_KEY, DATA_CONF, PENDING_ROTATION):
+        try:
+            if vault.rewrite_if_plaintext(path):
+                migrated.append(path.name)
+        except (OSError, vault.SecretsError) as exc:
+            _LOGGER.warning("no se pudo cifrar %s: %s", path, exc)
+    return migrated

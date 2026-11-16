@@ -12,6 +12,13 @@ from proxy import ProxyError
 class UDPRelayTests(unittest.TestCase):
     def setUp(self):
         udp.stop()
+        # Los tests usan loopback real; la app bloquea loopback a propósito.
+        self._validate = mock.patch.object(udp.targets, "validate", side_effect=lambda host: host)
+        self._pin = mock.patch.object(udp.targets, "pin", side_effect=lambda host: "127.0.0.1")
+        self._validate.start()
+        self._pin.start()
+        self.addCleanup(self._pin.stop)
+        self.addCleanup(self._validate.stop)
         self.server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.server.bind(("127.0.0.1", 0))
         self.server.settimeout(.1)

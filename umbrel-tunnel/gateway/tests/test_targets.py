@@ -15,6 +15,9 @@ def _resolve(*addresses):
 
 
 class TargetValidationTests(unittest.TestCase):
+    def setUp(self):
+        targets.clear_cache()
+        self.addCleanup(targets.clear_cache)
     def assertBlocked(self, host):
         with self.assertRaises(targets.TargetError, msg=host):
             targets.validate(host)
@@ -53,6 +56,42 @@ class TargetValidationTests(unittest.TestCase):
         self.assertEqual(targets.validate("172.17.0.2"), "172.17.0.2")
         self.assertEqual(targets.validate("192.168.1.10"), "192.168.1.10")
 
+    def test_cgnat_and_metadata_ranges_are_blocked(self):
+        for host in ("100.64.0.1", "100.100.100.200", "100.127.255.254"):
+            self.assertBlocked(host)
+        with mock.patch.object(
+            targets.socket, "getaddrinfo", return_value=_resolve("100.100.100.200")
+        ):
+            self.assertBlocked("metadata.internal")
+
+    def test_dns_rebinding_is_caught_on_revalidation(self):
+        with mock.patch.object(
+            targets.socket, "getaddrinfo", return_value=_resolve("10.21.0.7")
+        ):
+            self.assertEqual(targets.validate("app_web_1"), "app_web_1")
+        with mock.patch.object(
+            targets.socket, "getaddrinfo", return_value=_resolve("127.0.0.1")
+        ):
+            self.assertBlocked("app_web_1")
+
+    def test_pin_returns_an_approved_ip(self):
+        with mock.patch.object(
+            targets.socket, "getaddrinfo", return_value=_resolve("10.21.0.7")
+        ):
+            self.assertEqual(targets.pin("app_web_1"), "10.21.0.7")
+            # Dentro del TTL no vuelve a resolver: la IP queda fijada.
+            with mock.patch.object(
+                targets.socket, "getaddrinfo", return_value=_resolve("127.0.0.1")
+            ):
+                self.assertEqual(targets.pin("app_web_1"), "10.21.0.7")
+
+    def test_pin_fails_closed_when_unresolved(self):
+        with mock.patch.object(
+            targets.socket, "getaddrinfo", side_effect=socket.gaierror("not yet")
+        ):
+            with self.assertRaises(targets.TargetError):
+                targets.pin("new_app_web_1")
+
     def test_public_address_is_not_blocked(self):
         # Un servicio externo puede ser un caso legítimo; el objetivo es impedir
         # loopback/link-local, no convertirse en una allowlist de red privada.
@@ -67,3 +106,21 @@ class TargetValidationTests(unittest.TestCase):
     def test_malformed_hosts_are_rejected(self):
         for host in ("", "   ", "http://10.0.0.2", "user@host", "host name"):
             self.assertBlocked(host)
+
+    def test_sync_skips_only_the_rebound_target(self):
+        import sync
+
+        result = {"errors": []}
+        good = {"target_ip": "10.21.0.7", "target_port": 80, "enabled": True}
+        bad = {"target_ip": "rebind.example", "target_port": 80, "enabled": True}
+
+        def fake(host):
+            if host == "rebind.example":
+                raise targets.TargetError("blocked_target")
+            return host
+
+        with mock.patch.object(targets, "validate", side_effect=fake):
+            safe = sync._targets_valid([good, bad], result)
+        self.assertEqual(safe, [good])
+        self.assertEqual(len(result["errors"]), 1)
+        self.assertIn("rebind.example", result["errors"][0])

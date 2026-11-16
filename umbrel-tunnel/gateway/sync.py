@@ -11,6 +11,7 @@ import re
 import time
 
 import proxy
+import targets
 import udp
 import wireguard
 from vps import VPSClient, VPSError
@@ -250,11 +251,32 @@ def sync(config: dict) -> dict:
     return result
 
 
+def _targets_valid(exposures: list[dict], result: dict) -> list[dict]:
+    """Descarta destinos que ahora resuelven a una red bloqueada (rebinding).
+
+    Se revalida en cada sincronización, no solo al guardar el servicio. El
+    resto de publicaciones sigue funcionando.
+    """
+    safe: list[dict] = []
+    for exposure in exposures:
+        host = str(exposure.get("target_ip") or "")
+        try:
+            targets.validate(host)
+        except targets.TargetError as exc:
+            message = f"proxy local: destino bloqueado {host or '?'} ({exc})"
+            result["errors"].append(message)
+            _mark_proxy_error(exposure, message)
+            continue
+        safe.append(exposure)
+    return safe
+
+
 def _apply_proxy(config: dict, result: dict) -> None:
     udp_enabled = [e for e in config.get("exposures", [])
                    if e.get("enabled", True) and e.get("protocol") == "udp"]
     for exposure in udp_enabled:
         _strip_proxy_error(exposure)
+    udp_enabled = _targets_valid(udp_enabled, result)
     try:
         udp.apply(udp_enabled, wireguard.address() or "10.0.0.2")
     except (proxy.ProxyError, OSError, ValueError) as exc:
@@ -271,6 +293,7 @@ def _apply_proxy(config: dict, result: dict) -> None:
     # A previous local proxy failure must not survive a successful apply.
     for exposure in enabled:
         _strip_proxy_error(exposure)
+    enabled = _targets_valid(enabled, result)
     if not enabled:
         try:
             proxy.stop()

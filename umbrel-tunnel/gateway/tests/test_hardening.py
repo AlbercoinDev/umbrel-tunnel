@@ -40,6 +40,24 @@ class TunnelAccessTests(Base):
             self.assertTrue(gateway.from_tunnel("10.9.0.1"))
         self.assertFalse(gateway.from_tunnel("not-an-ip"))
 
+    def test_widget_is_public_but_secret_free(self):
+        response = self.client.get("/api/widget", environ_base={"REMOTE_ADDR": "172.17.0.1"})
+        self.assertEqual(response.status_code, 200)
+        data = response.get_json()
+        self.assertEqual(data["type"], "three-stats")
+        self.assertEqual(data["refresh"], "30s")
+        self.assertEqual(len(data["items"]), 3)
+        self.assertEqual(
+            {item["icon"] for item in data["items"]}, {"route", "server-2", "world"}
+        )
+        body = response.get_data(as_text=True)
+        self.assertNotIn("token", body)
+        self.assertNotIn("private", body.lower())
+
+    def test_widget_rejects_tunnel_requests(self):
+        response = self.client.get("/api/widget", environ_base={"REMOTE_ADDR": "10.0.0.1"})
+        self.assertEqual(response.status_code, 403)
+
 
 class ContainerPrivilegeTests(fixtures.unittest.TestCase):
     def test_gateway_drops_all_capabilities_and_adds_only_required_ones(self):

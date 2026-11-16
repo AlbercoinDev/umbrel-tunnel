@@ -6,8 +6,9 @@
   sistema operativo están actualizados y que solo root accede por SSH.
 - **Red de Docker de Umbrel**: no es de confianza. Cualquier contenedor de
   cualquier app puede intentar hablar con el gateway o con la API del VPS.
-- **Navegador**: se accede a la app a través de `app_proxy` (login de Umbrel) y
-  del login propio con `APP_PASSWORD`.
+- **Navegador**: se accede a la app a través del proxy autenticado de Umbrel
+  (`app_proxy` en 1.x, gateway in-process en 2.x) y del login propio con
+  `APP_PASSWORD`.
 - **Código `ut1`**: se trata como entrada no confiable.
 
 ## Superficie expuesta
@@ -35,9 +36,12 @@
 
 ### App de Umbrel
 
-- `app_proxy` mantiene el login de Umbrel activo. La app añade su propio login
-  con `APP_PASSWORD` para que el control del túnel no dependa solo de la sesión
-  de Umbrel.
+- Umbrel mantiene su login (`app_proxy` en 1.x; gateway in-process en 2.x) y
+  la app añade su propio login con `APP_PASSWORD` para que el control del túnel
+  no dependa de una pieza que cambia entre versiones de umbrelOS.
+- `/api/widget` es el único endpoint sin sesión: umbreld lo consulta sin cookies
+  para el widget de la pantalla de inicio. Devuelve solo estado del túnel,
+  número de servicios sanos y dominio base; nunca tokens, claves ni destinos.
 - La cookie de sesión es HttpOnly, SameSite=Strict y firmada con un secreto
   persistente (`session.key`).
 - Las peticiones mutantes exigen CSRF (`X-CSRF-Token` o campo de formulario).
@@ -48,11 +52,39 @@
   contenedor de la red de Docker saltarse el límite.
 - El panel rechaza con 403 las peticiones cuyo origen está en la subred del
   túnel: ni el VPS ni otros peers WireGuard pueden usarlo aunque `10.0.0.2:8081`
-  sea alcanzable por `wg0`. Solo se sirve a través de `app_proxy`.
+  sea alcanzable por `wg0`. El resto de orígenes pasa por el login propio.
 - La CSP es `script-src 'self'`; la configuración de la UI se pasa como JSON en
   un bloque `application/json`, no como script inline.
 - Los errores no incluyen secretos; la configuración de WireGuard se muestra
   con `PrivateKey = <redacted>`.
+
+### Cifrado en reposo
+
+- `config.json` (token de la API, bootstrap y estado), la clave privada de
+  WireGuard (`wireguard/private.key`), la copia persistente de `wg0.conf` y
+  `rotation-pending.json` se guardan como sobres AES-256-GCM.
+- La clave de 256 bits está en `data/secrets.key` (`0600`) y se deriva con
+  scrypt (N=2^14, r=8, p=1, maxmem 64 MiB). Se calcula una vez por proceso.
+- La clave viaja con el directorio de datos: una restauración de Umbrel sigue
+  funcionando. Una copia completa del directorio también incluye la clave; el
+  cifrado protege archivos sueltos, copias parciales y lectura accidental, no
+  a quien controle todo el almacenamiento.
+- `wg0.conf` en `/etc/wireguard` (capa efímera del contenedor) sigue en claro
+  porque `wg-quick` lo necesita; nunca se escribe en `${APP_DATA_DIR}`.
+- Al arrancar se migran solos los archivos heredados en texto plano. Si
+  `secrets.key` falta o no coincide, la app falla de forma cerrada y no genera
+  claves nuevas en silencio.
+
+### Destinos publicados (anti-SSRF)
+
+- Se rechazan loopback, link-local (incluidos metadatos cloud), CGNAT
+  (`100.64/10`), multicast, benchmarking y direcciones reservadas.
+- Las direcciones privadas y los nombres de contenedor Docker se permiten para
+  no romper servicios legítimos.
+- Cada sincronización revalida el destino; si un nombre pasa a resolver a una
+  red bloqueada se descarta solo esa publicación (rebinding).
+- El relay UDP fija la IP aprobada al abrir la sesión (TTL 30 s) y no vuelve a
+  resolver durante la sesión.
 
 ## Privilegios del contenedor
 

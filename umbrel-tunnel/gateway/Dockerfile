@@ -8,6 +8,7 @@ RUN apk add --no-cache \
     py3-flask \
     py3-yaml \
     py3-waitress \
+    py3-cryptography \
     bash \
     ca-certificates \
     haproxy \
@@ -17,7 +18,7 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
-COPY app.py audit.py catalog.py detect.py i18n.py proxy.py reachability.py scan.py targets.py udp.py serve.py state.py sync.py vps.py wireguard.py ./
+COPY app.py audit.py catalog.py detect.py i18n.py proxy.py reachability.py scan.py targets.py udp.py serve.py state.py sync.py vault.py vps.py wireguard.py ./
 COPY i18n ./i18n
 COPY templates ./templates
 COPY static ./static

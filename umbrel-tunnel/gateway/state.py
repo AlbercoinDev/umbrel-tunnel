@@ -9,6 +9,8 @@ import tempfile
 import threading
 from pathlib import Path
 
+import vault
+
 DATA_DIR = Path(os.environ.get("UMBREL_TUNNEL_DATA", "/data"))
 CONFIG_FILE = DATA_DIR / "config.json"
 BACKUP_FILE = DATA_DIR / "config.json.bak"
@@ -51,7 +53,10 @@ class StateError(RuntimeError):
 
 
 def _read(path: Path) -> dict:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    text = path.read_text(encoding="utf-8")
+    if vault.is_envelope(text):
+        text = vault.decrypt(text)
+    data = json.loads(text)
     if not isinstance(data, dict):
         raise ValueError("config.json no es un objeto JSON")
     return data
@@ -69,11 +74,11 @@ def load() -> dict:
             return _merge_defaults(_read(CONFIG_FILE))
         except FileNotFoundError:
             return _merge_defaults({})
-        except (OSError, ValueError) as exc:  # JSONDecodeError is a ValueError
+        except (OSError, ValueError, vault.SecretsError) as exc:  # JSONDecodeError is a ValueError
             primary = exc
         try:
             return _merge_defaults(_read(BACKUP_FILE))
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, vault.SecretsError) as exc:
             raise StateError(
                 f"{CONFIG_FILE} no se puede leer ({primary}) y no hay copia válida "
                 f"en {BACKUP_FILE} ({exc}); revisa el archivo antes de continuar"
@@ -100,9 +105,26 @@ def save(config: dict) -> None:
     with LOCK:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         text = json.dumps(config, indent=2, ensure_ascii=False) + "\n"
-        _atomic_write(CONFIG_FILE, text)
+        vault.write_text(CONFIG_FILE, text)
         # Last known-good copy, used by load() if config.json gets corrupted.
-        _atomic_write(BACKUP_FILE, text)
+        vault.write_text(BACKUP_FILE, text)
+
+
+def migrate_encryption() -> bool:
+    """Cifra un config.json heredado en texto plano. Devuelve True si migró."""
+    with LOCK:
+        if not CONFIG_FILE.exists():
+            return False
+        try:
+            migrated = vault.rewrite_if_plaintext(CONFIG_FILE)
+        except (OSError, vault.SecretsError):
+            return False
+        if migrated:
+            try:
+                vault.rewrite_if_plaintext(BACKUP_FILE)
+            except (OSError, vault.SecretsError):
+                pass
+        return migrated
 
 
 def session_secret() -> str:

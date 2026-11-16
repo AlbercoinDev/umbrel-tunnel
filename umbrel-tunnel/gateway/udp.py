@@ -10,6 +10,7 @@ import socket
 import threading
 import time
 
+import targets
 from proxy import ProxyError, _valid_bind_ip, _valid_target
 
 IDLE_SECONDS = 60
@@ -42,9 +43,12 @@ def _run():
                             if len(_sessions) >= MAX_SESSIONS:
                                 continue
                             host, port = event.data[1]
-                            # Resolve outside configuration parsing; failed DNS must
-                            # not take down other listeners or the relay thread.
-                            address = socket.gethostbyname(host)
+                            # Fija una IP ya validada al abrir la sesión: una
+                            # segunda resolución DNS no puede desviarla.
+                            try:
+                                address = targets.pin(host)
+                            except targets.TargetError:
+                                continue
                             upstream = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                             try:
                                 upstream.connect((address, port))

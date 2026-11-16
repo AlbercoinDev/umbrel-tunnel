@@ -57,6 +57,8 @@ puerto por `wg0`; `--public-api` es una excepción explícita y no recomendada.
   por sí mismo.
 - `proxy.py`: renderizado, validación y recarga de HAProxy.
 - `udp.py`: relay de datagramas con sesiones independientes, límites y caducidad.
+- `vault.py`: cifrado en reposo AES-256-GCM de `config.json` y de los archivos
+  de WireGuard; clave en `data/secrets.key` y migración de texto plano.
 - `wireguard.py`: generación/validación estricta de `wg0.conf`, claves y estado.
 - `sync.py`: reconciliación declarativa de exposiciones y forwards.
 - `vps.py`: cliente HTTP de la API del VPS.
