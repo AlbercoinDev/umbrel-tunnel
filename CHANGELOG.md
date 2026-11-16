@@ -1,5 +1,18 @@
 # Cambios
 
+## 1.6.2
+
+- Salud real por publicación: sonda TCP cada 60 s desde el gateway, con
+  latencia y detalle del error. Las publicaciones web comprueban además que el
+  destino responde HTTP; un servicio no HTTP sigue contando como sano.
+- UDP se muestra como "sin datos": no existe una sonda fiable sin conocer el
+  protocolo, así que no se finge un estado.
+- El panel, `/api/diagnostics` y el widget usan el resultado real. Si aún no
+  hay datos, el widget muestra `—` en vez de un cero engañoso.
+- Las sondas corren en segundo plano (`UMBREL_TUNNEL_HEALTH=0` las desactiva) y
+  nunca hacen red en el camino de una petición.
+- VPS sin cambios; no hace falta actualizarlo.
+
 ## 1.6.1
 
 - `data/secrets.key` falla de forma cerrada si existe pero está corrupto o no

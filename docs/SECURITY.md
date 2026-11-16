@@ -75,6 +75,14 @@
   `secrets.key` falta o no coincide, la app falla de forma cerrada y no genera
   claves nuevas en silencio.
 
+### Salud de las publicaciones
+
+- Las sondas TCP/HTTP salen del gateway hacia destinos ya validados (mismos
+  controles anti-SSRF) y corren en un hilo aparte con concurrencia limitada.
+- Nunca se ejecutan en el camino de una petición del panel: la API solo lee una
+  caché en memoria.
+- No se guarda el resultado en `config.json`; un reinicio vuelve a medir.
+
 ### Destinos publicados (anti-SSRF)
 
 - Se rechazan loopback, link-local (incluidos metadatos cloud), CGNAT

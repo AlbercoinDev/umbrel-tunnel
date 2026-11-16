@@ -39,6 +39,7 @@ from flask import (
 
 import audit
 import detect
+import health as probes
 import i18n
 import proxy
 import reachability
@@ -51,7 +52,7 @@ from vps import VPSClient, VPSError
 
 # Release of this gateway; must match vps/VERSION (tests enforce it). The VPS
 # installer and binaries offered to the user are pinned to this tag.
-RELEASE_VERSION = "1.6.1"
+RELEASE_VERSION = "1.6.2"
 VERSION = os.environ.get("APP_VERSION", RELEASE_VERSION)
 RESERVED_PUBLIC_PORTS = {22}
 APP_PASSWORD = os.environ.get("APP_PASSWORD", "").strip()
@@ -917,6 +918,8 @@ def exposure_view(exposure: dict) -> dict:
         **exposure,
         "vps_name": sync.vps_name(exposure),
         "sync_ok": not exposure.get("sync_error"),
+        "health": probes.snapshot().get(str(exposure.get("id")))
+        or {"state": "unknown", "detail": "", "latency_ms": None, "checked_at": 0},
     }
     if exposure.get("sync_error"):
         view["sync_error_detail"] = exposure["sync_error"]
@@ -1098,8 +1101,11 @@ def widget():
     except state.StateError:
         config = {}
     wg = wireguard.status()
-    exposures = [e for e in (config.get("exposures") or []) if e.get("enabled", True)]
-    healthy = sum(1 for e in exposures if not e.get("sync_error"))
+    counts = probes.summary(config)
+    if counts["total"] and counts["unknown"] == counts["total"]:
+        healthy_text = "\u2014"
+    else:
+        healthy_text = f"{counts['ok']}/{counts['total']}"
     domain = str((config.get("settings") or {}).get("base_domain") or "").strip()
 
     handshake = max(
@@ -1124,7 +1130,7 @@ def widget():
                 {"icon": "route", "text": tunnel_text, "subtext": tunnel_sub},
                 {
                     "icon": "server-2",
-                    "text": f"{healthy}/{len(exposures)}",
+                    "text": healthy_text,
                     "subtext": "services healthy",
                 },
                 {
@@ -1166,6 +1172,8 @@ def status():
             "services": len(detect_cached()),
             "manual_services": len(config.get("manual_services", [])),
             "last_sync": present_sync(_last_sync),
+            "health": probes.summary(config),
+            "health_probe": probes.state(),
         }
     )
 
@@ -1287,6 +1295,21 @@ def diagnostics():
             "detail": audit_status["reason"],
         }
     )
+    health_summary = probes.summary(config)
+    health_failed = [
+        item for item in probes.snapshot().values() if item.get("state") == "fail"
+    ]
+    checks.append(
+        {
+            "id": "health",
+            "ok": not health_failed,
+            "detail": (
+                f"{health_summary['ok']}/{health_summary['total']} responden"
+                if health_summary["enabled"]
+                else "sonda desactivada"
+            ),
+        }
+    )
 
     return jsonify(
         {
@@ -1299,6 +1322,11 @@ def diagnostics():
             "proxy": proxy_status,
             "udp": udp_status,
             "audit": audit_status,
+            "health": {
+                "summary": health_summary,
+                "items": probes.snapshot(),
+                "probe": probes.state(),
+            },
             "checks": checks,
             "exposures": [
                 {
@@ -1308,6 +1336,7 @@ def diagnostics():
                     "enabled": bool(exposure.get("enabled", True)),
                     "sync_ok": not exposure.get("sync_error"),
                     "sync_error": exposure.get("sync_error") or "",
+                    "health": probes.snapshot().get(str(exposure.get("id"))),
                     "vps_forward_id": exposure.get("vps_forward_id"),
                 }
                 for exposure in config.get("exposures", [])
@@ -2399,4 +2428,5 @@ def startup() -> None:
 if __name__ == "__main__":
     startup()
     threading.Thread(target=background_sync, daemon=True).start()
+    health.start()
     app.run(host="0.0.0.0", port=8081, threaded=True)

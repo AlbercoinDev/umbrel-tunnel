@@ -78,7 +78,7 @@ ejecutar en el VPS. No tienes que copiar claves a mano.
 El comando tiene esta forma (la app rellena todos los valores):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.1/vps/install.sh \
+curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.2/vps/install.sh \
   | sudo bash -s -- \
       --endpoint 203.0.113.10 \
       --token '<TOKEN>' \
@@ -89,7 +89,7 @@ curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.1/v
       --api-port 8080 \
       --wg-port 51820 \
       --mtu 1420 \
-      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.1
+      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.2
 ```
 
 `--binary-base` descarga `umbrel-tunnel-linux-amd64` o
@@ -133,10 +133,10 @@ El ejemplo usa la red predeterminada; si el asistente muestra otra, copia tambi�
 ```bash
 cd vps
 make dist
-scp dist/umbrel-tunnel-1.6.1-linux-amd64.tar.gz root@203.0.113.10:/tmp/
+scp dist/umbrel-tunnel-1.6.2-linux-amd64.tar.gz root@203.0.113.10:/tmp/
 ssh root@203.0.113.10
-tar -xzf /tmp/umbrel-tunnel-1.6.1-linux-amd64.tar.gz -C /tmp
-cd /tmp/umbrel-tunnel-1.6.1-linux-amd64
+tar -xzf /tmp/umbrel-tunnel-1.6.2-linux-amd64.tar.gz -C /tmp
+cd /tmp/umbrel-tunnel-1.6.2-linux-amd64
 sudo ./install.sh --endpoint 203.0.113.10 \
   --umbrel-pubkey '<CLAVE_PUBLICA_DE_LA_APP>' --token '<TOKEN_DE_LA_APP>'
 ```
@@ -504,6 +504,16 @@ Un forward usa `public_port`:
 }
 ```
 
+### Salud de las publicaciones
+
+El gateway comprueba cada 60 s que el destino real acepta conexiones TCP y
+muestra el resultado en el panel, en `/api/diagnostics` y en el widget de
+umbrelOS. Las publicaciones web responden además a un `HEAD` HTTP; que un
+servicio no hable HTTP no lo marca como caído si el TCP funciona. UDP aparece
+como «sin datos» porque no existe una sonda fiable sin conocer el protocolo.
+Las sondas corren en segundo plano y no intervienen en las peticiones del panel;
+`UMBREL_TUNNEL_HEALTH=0` las desactiva.
+
 ### Panel web del VPS
 
 Desde un equipo conectado al túnel abre `http://10.0.0.1:8080`. La página pide
@@ -647,9 +657,9 @@ propio `install.sh`, reinstala con el instalador (es idempotente y conserva la
 configuración):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.1/vps/install.sh \
+curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.2/vps/install.sh \
   | sudo bash -s -- --endpoint <IP> \
-      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.1
+      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.2
 ```
 
 ## Desarrollo
@@ -692,7 +702,7 @@ Variables de entorno útiles en el gateway:
 | Variable | Por defecto | Uso |
 | --- | --- | --- |
 | `APP_PASSWORD` | — | contraseña de login; Umbrel la inyecta |
-| `APP_VERSION` | `1.6.1` | versión mostrada |
+| `APP_VERSION` | `1.6.2` | versión mostrada |
 | `UMBREL_TUNNEL_DATA` | `/data` | estado, claves y configuración |
 | `UMBREL_APP_DATA` | `/umbrel-app-data` | manifiestos de apps (solo lectura) |
 | `NETWORK_IP` | `10.21.0.0` | red de Umbrel para detectar solapes |

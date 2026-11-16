@@ -4,7 +4,7 @@ storage:
   dataRoot: data
 category: networking
 name: Umbrel Tunnel
-version: "1.6.1"
+version: "1.6.2"
 tagline: Expose Umbrel services through your own VPS over WireGuard
 icon: "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj4KICA8ZGVmcz4KICAgIDxsaW5lYXJHcmFkaWVudCBpZD0iZyIgeDE9IjAlIiB5MT0iMCUiIHgyPSIxMDAlIiB5Mj0iMTAwJSI+CiAgICAgIDxzdG9wIG9mZnNldD0iMCUiIHN0eWxlPSJzdG9wLWNvbG9yOiMzOGJkZjgiLz4KICAgICAgPHN0b3Agb2Zmc2V0PSIxMDAlIiBzdHlsZT0ic3RvcC1jb2xvcjojNjM2NmYxIi8+CiAgICA8L2xpbmVhckdyYWRpZW50PgogIDwvZGVmcz4KICA8cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgcng9IjIwIiBmaWxsPSJ1cmwoI2cpIi8+CiAgPHBhdGggZD0iTTMwIDUwIEw1MCAzMCBMNzAgNTAgTDUwIDcwIFoiIGZpbGw9Im5vbmUiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iNCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCIvPgogIDxjaXJjbGUgY3g9IjUwIiBjeT0iNTAiIHI9IjgiIGZpbGw9IndoaXRlIi8+CiAgPGxpbmUgeDE9IjUwIiB5MT0iMzAiIHgyPSI1MCIgeTI9IjIwIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgogIDxsaW5lIHgxPSI1MCIgeTE9IjcwIiB4Mj0iNTAiIHkyPSI4MCIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIzIiBzdHJva2UtbGluZWNhcD0icm91bmQiLz4KICA8bGluZSB4MT0iMzAiIHkxPSI1MCIgeDI9IjIwIiB5Mj0iNTAiIHN0cm9rZT0id2hpdGUiIHN0cm9rZS13aWR0aD0iMyIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIi8+CiAgPGxpbmUgeDE9IjcwIiB5MT0iNTAiIHgyPSI4MCIgeTI9IjUwIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjMiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIvPgo8L3N2Zz4K"
 description: >-
@@ -20,17 +20,13 @@ description: >-
   with a fixed public IP. Run the one-line installer on the VPS, then paste the
   pairing code in the app.
 releaseNotes: >-
-  Security and umbrelOS 2.x update. Secrets at rest (config.json, the
-  WireGuard private key, the persistent wg0.conf copy and pending rotations)
-  are now encrypted with AES-256-GCM; the key lives in data/secrets.key and
-  travels with app data, so restores keep working. Existing plaintext files
-  are migrated automatically on first start. Manual targets are revalidated on
-  every sync and the UDP relay pins an approved IP per session to stop DNS
-  rebinding. Adds a home-screen widget with tunnel status, healthy services
-  and the public domain, and marks regenerable haproxy.cfg as backup-ignored.
-  The app works behind umbrelOS 2.x's in-process gateway without app_proxy.
-  No changes to pairing, publications or VPS binaries; the VPS does not need
-  to be updated.
+  Adds real per-publication health checks: the panel and the home widget show
+  whether each target responds instead of assuming it from a successful sync.
+  TCP is probed every 60 s; web targets also answer an HTTP HEAD; UDP is
+  reported as "no data" because there is no reliable probe. Checks run in the
+  background and never block the UI. Keeps 1.6.x encryption at rest, DNS
+  rebinding guards, the umbrelOS 2.x widget and backupIgnore. No changes to
+  pairing, publications or VPS binaries; the VPS does not need to be updated.
 developer: AlbercoinDev
 website: https://github.com/AlbercoinDev/umbrel-tunnel
 dependencies: []

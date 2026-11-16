@@ -50,6 +50,17 @@
     return el('span', `badge ${cls || 'info'}`, text);
   }
 
+  function healthBadge(exposure) {
+    const info = exposure.health || {};
+    const state = info.state || 'unknown';
+    const labels = { ok: t('health.ok'), fail: t('health.fail'), paused: t('health.paused'), unknown: t('health.unknown') };
+    const classes = { ok: 'ok', fail: 'bad', paused: 'muted-badge', unknown: 'muted-badge' };
+    const node = badge(labels[state] || labels.unknown, classes[state] || 'muted-badge');
+    const detail = [info.detail, info.latency_ms != null ? `${info.latency_ms} ms` : ''].filter(Boolean).join(' · ');
+    if (detail) node.title = detail;
+    return node;
+  }
+
   const KIND_LABELS = {
     http: ['Web / HTTP', 'Web / HTTP'],
     tcp: ['TCP', 'TCP'],
@@ -481,6 +492,7 @@
           : `${host}:${exposure.public_port}`;
         publication.append(el('strong', '', published));
         publication.append(el('span', 'sub', `${mode === 'direct' ? say('Sin cifrado añadido', 'No added encryption') : mode.toUpperCase()} · ${exposure.enabled ? (exposure.sync_error ? say('Error', 'Error') : say('Aplicado', 'Applied')) : say('Pausado', 'Paused')}`));
+        if (exposure.enabled && !exposure.sync_error) publication.append(healthBadge(exposure));
         if (['tls','https'].includes(mode)) {
           const cert = state.certificates.find(c => c.domain === host);
           publication.append(el('span', 'sub', `${say('Certificado', 'Certificate')}: ${cert ? cert.state : 'pending'}${cert && cert.not_after ? ' · ' + new Date(cert.not_after).toLocaleDateString() : ''}`));
@@ -564,6 +576,7 @@
         }
       } else {
         statusCell.append(badge(t('open.badge.synced'), 'ok'));
+        statusCell.append(healthBadge(exposure));
         if (exposure.vps_forward_id) statusCell.append(el('span', 'sub', `VPS ${exposure.vps_forward_id}`));
       }
       tr.append(statusCell);

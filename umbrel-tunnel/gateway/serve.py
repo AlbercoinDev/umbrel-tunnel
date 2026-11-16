@@ -19,6 +19,7 @@ def main() -> None:
     threads = int(os.environ.get("WAITRESS_THREADS", "8"))
     gateway.startup()
     threading.Thread(target=gateway.background_sync, daemon=True).start()
+    gateway.probes.start()
     serve(
         gateway.app,
         host="0.0.0.0",

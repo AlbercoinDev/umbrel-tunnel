@@ -366,5 +366,9 @@
   "onboarding.shared_label": "Shared VPS: this Umbrel's domain (optional)",
   "onboarding.shared_placeholder": "office.example.com",
   "onboarding.shared_help": "Fill it in only if the VPS already serves another Umbrel. The app generates an `umbrel-tunnel peer add` command instead of the installer, and this Umbrel may only publish under that domain and its subdomains.",
-  "onboarding.shared_ip": "assigned by the VPS"
+  "onboarding.shared_ip": "assigned by the VPS",
+  "health.ok": "responding",
+  "health.fail": "down",
+  "health.paused": "paused",
+  "health.unknown": "no data"
 }
