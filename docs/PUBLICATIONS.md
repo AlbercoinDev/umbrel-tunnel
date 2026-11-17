@@ -82,7 +82,7 @@ de coordinación autenticado adicional; no se ha abierto una API nueva a Interne
 
 Actualiza el binario del VPS y la imagen del gateway conjuntamente: el gateway
 envía el campo de propiedad `managed_by`, que las API antiguas no reconocen.
-La versión 1.6.8 se distribuye con binarios amd64/arm64 y una imagen multiarch
+La versión 0.6.8 se distribuye con binarios amd64/arm64 y una imagen multiarch
 fijada por digest en la tienda. Publicar esta versión no actualiza automáticamente
 una instalación existente.
 
@@ -90,17 +90,17 @@ En Debian/Ubuntu, actualiza primero el VPS:
 
 ```sh
 sudo umbrel-tunnel backup
-# Una instalación anterior a 1.3.2 aún no tiene el update automático:
+# Una instalación anterior a 0.3.2 aún no tiene el update automático:
 sudo umbrel-tunnel update \
   --from "https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download/umbrel-tunnel-linux-$(dpkg --print-architecture)"
 umbrel-tunnel version
 sudo umbrel-tunnel doctor
 ```
 
-Desde 1.3.2 basta `sudo umbrel-tunnel update`.
+Desde 0.3.2 basta `sudo umbrel-tunnel update`.
 
 Comprueba que la copia se creó antes de continuar. `update` conserva la
-configuración y reinicia el servicio. Después actualiza la app a 1.6.8 desde la
+configuración y reinicia el servicio. Después actualiza la app a 0.6.8 desde la
 tienda de Umbrel, sin desinstalar ni volver a vincular.
 
 ## Dominios, HTTPS y TLS

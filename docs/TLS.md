@@ -204,7 +204,7 @@ es preferible la app. La API de control no se publica bajo ningún dominio HTTPS
 Actualiza **VPS y gateway conjuntamente**. Los binarios antiguos no conocen los
 campos nuevos. Antes de actualizar, haz una copia de seguridad verificable.
 
-**Primera subida a 1.3.2:** el `update` automático (sin `--from`) se estrena en
+**Primera subida a 0.3.2:** el `update` automático (sin `--from`) se estrena en
 1.3.2. Una instalación anterior responde `error: falta --from`, así que hay que
 pasar la URL una vez:
 
@@ -212,11 +212,11 @@ pasar la URL una vez:
 sudo umbrel-tunnel backup --output /root/umbrel-tunnel-before-update.tar.gz
 sudo umbrel-tunnel update \
   --from "https://github.com/AlbercoinDev/umbrel-tunnel/releases/latest/download/umbrel-tunnel-linux-$(dpkg --print-architecture)"
-umbrel-tunnel version   # 1.3.2
+umbrel-tunnel version   # 0.3.2
 sudo umbrel-tunnel doctor
 ```
 
-A partir de 1.3.2, y para las siguientes versiones:
+A partir de 0.3.2, y para las siguientes versiones:
 
 ```sh
 sudo umbrel-tunnel update
@@ -225,7 +225,7 @@ sudo umbrel-tunnel update
 Sin `--from`, `update` descarga la última release para la arquitectura del VPS,
 verifica su `.sha256`, comprueba que el binario nuevo se ejecuta antes de
 sustituirlo, actualiza las unidades systemd (`daemon-reload`) y reinicia el
-servicio. Muestra el cambio, por ejemplo `Versión: 1.3.1 → 1.3.2`. Si el binario
+servicio. Muestra el cambio, por ejemplo `Versión: 0.3.1 → 0.3.2`. Si el binario
 nuevo no arranca, restaura el anterior; si el reinicio falla, imprime las últimas
 líneas de `journalctl -u umbrel-tunnel`. Opciones: `--no-restart`, `--no-units`,
 `--from URL|RUTA` y `--sha256`.
@@ -233,7 +233,7 @@ líneas de `journalctl -u umbrel-tunnel`. Opciones: `--no-restart`, `--no-units`
 El `.sha256` de la URL `/releases/latest/download/...` se descarga junto al
 binario y se verifica sin pasar `--sha256`.
 
-Si vienes de antes de 1.2.0, usa el instalador del tarball: actualiza también
+Si vienes de antes de 0.2.0, usa el instalador del tarball: actualiza también
 `tmpfiles`, `sysctl` y la unidad con `CAP_NET_BIND_SERVICE` (permite escuchar en
 80/443 bajo el endurecimiento existente). El bloque siguiente hace backup,
 descarga el paquete de tu arquitectura, verifica su checksum y actualiza binario
@@ -246,20 +246,20 @@ Ejecuta en el VPS antes de actualizar la app de Umbrel:
 ```sh
 sudo bash <<'SH'
 set -euo pipefail
-backup="/root/umbrel-tunnel-before-1.3.2-$(date +%Y%m%d-%H%M%S).tar.gz"
+backup="/root/umbrel-tunnel-before-0.3.2-$(date +%Y%m%d-%H%M%S).tar.gz"
 umbrel-tunnel backup --output "$backup"
 test -s "$backup"
 arch="$(dpkg --print-architecture)"
 case "$arch" in amd64|arm64) ;; *) echo "Arquitectura no soportada: $arch" >&2; exit 1 ;; esac
 work="$(mktemp -d /root/umbrel-tunnel-upgrade-1.3.2.XXXXXX)"
 cd "$work"
-base="https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.3.2"
-file="umbrel-tunnel-1.3.2-linux-$arch.tar.gz"
+base="https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v0.3.2"
+file="umbrel-tunnel-0.3.2-linux-$arch.tar.gz"
 curl -fLsS --retry 2 "$base/$file" -o "$file"
 curl -fLsS --retry 2 "$base/SHA256SUMS" -o SHA256SUMS
 grep -F "  $file" SHA256SUMS | sha256sum --check --strict -
 tar -xzf "$file"
-cd "umbrel-tunnel-1.3.2-linux-$arch"
+cd "umbrel-tunnel-0.3.2-linux-$arch"
 bash ./install.sh
 umbrel-tunnel version
 umbrel-tunnel doctor
@@ -268,7 +268,7 @@ echo "Backup conservado: $backup"
 SH
 ```
 
-Después actualiza **Umbrel Tunnel a 1.3.2** desde la tienda de Umbrel. No
+Después actualiza **Umbrel Tunnel a 0.3.2** desde la tienda de Umbrel. No
 desinstales, no borres los datos y no vuelvas a vincular el VPS. En instalaciones
 con puertos de API/WireGuard personalizados, pasa los mismos valores al instalador
 (`--api-port`, `--wg-port`) para que sus comprobaciones utilicen los puertos reales.

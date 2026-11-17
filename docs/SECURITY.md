@@ -128,7 +128,7 @@ El contenedor parte de `cap_drop: ALL`. Solo recupera las capacidades que usa:
 No se monta el socket de Docker. No se usa `network_mode: host`. No se usa
 `privileged: true`. `no-new-privileges:true` está activo.
 
-La reducción se probó con una instalación nueva y con un upgrade desde 1.5.0:
+La reducción se probó con una instalación nueva y con un upgrade desde 0.5.0:
 sin `DAC_OVERRIDE` el proceso no puede crear `config.json` en un directorio
 `1000:1000`, aunque sea root. Es un requisito de umbrelOS, no del gateway.
 

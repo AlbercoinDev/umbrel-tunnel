@@ -34,7 +34,7 @@ func TestVerifySignatureAcceptsAndRejects(t *testing.T) {
 
 func TestChecksumForFindsArchitecture(t *testing.T) {
 	sums := []byte(
-		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  umbrel-tunnel-1.6.3-linux-amd64.tar.gz\n" +
+		"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  umbrel-tunnel-0.6.3-linux-amd64.tar.gz\n" +
 			"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb  umbrel-tunnel-linux-amd64\n",
 	)
 	got, err := checksumFor(sums, "umbrel-tunnel-linux-amd64")
@@ -76,7 +76,7 @@ func TestUnsignedReleaseFailsClosed(t *testing.T) {
 func TestApplyRejectsUnsignedHTTPByDefault(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/bin" {
-			_, _ = w.Write(script("1.6.3"))
+			_, _ = w.Write(script("0.6.3"))
 			return
 		}
 		http.NotFound(w, r)

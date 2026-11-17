@@ -38,14 +38,14 @@ func TestVerifyInstalledAcceptsMatchingBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := []byte("#!/bin/sh\necho 1.6.4\n")
+	binary := []byte("#!/bin/sh\necho 0.6.4\n")
 	server := signedServer(t, pub, priv, binary)
 	defer server.Close()
 	exe := filepath.Join(t.TempDir(), "umbrel-tunnel")
 	if err := os.WriteFile(exe, binary, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := verifyInstalledWith(context.Background(), "1.6.4", exe, server.URL, pub); err != nil {
+	if err := verifyInstalledWith(context.Background(), "0.6.4", exe, server.URL, pub); err != nil {
 		t.Fatalf("binario válido rechazado: %v", err)
 	}
 }
@@ -55,14 +55,14 @@ func TestVerifyInstalledRejectsTamperedBinary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := []byte("#!/bin/sh\necho 1.6.4\n")
+	binary := []byte("#!/bin/sh\necho 0.6.4\n")
 	server := signedServer(t, pub, priv, binary)
 	defer server.Close()
 	exe := filepath.Join(t.TempDir(), "umbrel-tunnel")
 	if err := os.WriteFile(exe, append(binary, 'x'), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err = verifyInstalledWith(context.Background(), "1.6.4", exe, server.URL, pub)
+	err = verifyInstalledWith(context.Background(), "0.6.4", exe, server.URL, pub)
 	if !errors.Is(err, ErrChecksum) {
 		t.Fatalf("se esperaba ErrChecksum: %v", err)
 	}
@@ -84,7 +84,7 @@ func TestVerifyInstalledRejectsBadSignature(t *testing.T) {
 	if err := os.WriteFile(exe, binary, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	err = verifyInstalledWith(context.Background(), "1.6.4", exe, server.URL, pub)
+	err = verifyInstalledWith(context.Background(), "0.6.4", exe, server.URL, pub)
 	if !errors.Is(err, ErrSignature) {
 		t.Fatalf("se esperaba ErrSignature: %v", err)
 	}

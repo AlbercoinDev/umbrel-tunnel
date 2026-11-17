@@ -82,9 +82,9 @@ Si falla:
   `umbrel-tunnel pair`. Si ya estás vinculado, basta actualizar el token en
   **Configuración y diagnóstico → Opciones avanzadas**, sin desvincular.
 
-## Rotación WireGuard o desvinculación (1.4.1)
+## Rotación WireGuard o desvinculación (0.4.1)
 
-- Actualiza primero el VPS a 1.4.1 o posterior. Los VPS anteriores no tienen la API de
+- Actualiza primero el VPS a 0.4.1 o posterior. Los VPS anteriores no tienen la API de
   rotación coordinada; la app rechaza la operación sin sustituir la clave local.
 - Durante la rotación habrá una interrupción breve. Si no se confirma el túnel
   nuevo, el VPS vuelve a la clave anterior al cabo de aproximadamente un minuto.
@@ -189,7 +189,7 @@ Mensajes habituales:
 
 ## `no se pudo aplicar nftables: ... specify 'dnat ip'`
 
-Las versiones 1.0.0 y anteriores generaban `dnat to` dentro de una tabla
+Las versiones 0.0.0 y anteriores generaban `dnat to` dentro de una tabla
 `inet`. nftables lo rechaza y el forward se revierte, así que el puerto nunca
 llega a abrirse:
 
@@ -211,7 +211,7 @@ error desaparece. Después vuelve a activar la exposición en la app (el forward
 se borró en el rollback) y comprueba:
 
 ```bash
-umbrel-tunnel version          # 1.0.1
+umbrel-tunnel version          # 0.0.1
 sudo nft list table inet umbrel_tunnel | grep dnat
 sudo umbrel-tunnel forward list
 ```

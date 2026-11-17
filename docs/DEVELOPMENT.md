@@ -90,11 +90,11 @@ publicada. El workflow `.github/workflows/gateway-image.yml` construye y publica
 `linux/amd64` + `linux/arm64` en GHCR cuando se empuja un tag `v*`:
 
 ```bash
-git tag v1.0.0
-git push origin v1.0.0
+git tag v0.6.9
+git push origin v0.6.9
 ```
 
-El workflow publica `ghcr.io/albercoindev/umbrel-tunnel-gateway:1.0.0` y
+El workflow publica `ghcr.io/albercoindev/umbrel-tunnel-gateway:0.6.9` y
 `:latest`. Después:
 
 1. Haz público el paquete en **GitHub → Packages → umbrel-tunnel-gateway →
@@ -103,13 +103,13 @@ El workflow publica `ghcr.io/albercoindev/umbrel-tunnel-gateway:1.0.0` y
 
    ```bash
    docker buildx imagetools inspect \
-     ghcr.io/albercoindev/umbrel-tunnel-gateway:1.0.0
+     ghcr.io/albercoindev/umbrel-tunnel-gateway:0.6.9
    ```
 
 3. Fija imagen + digest en `umbrel-tunnel/docker-compose.yml`:
 
    ```yaml
-   image: ghcr.io/albercoindev/umbrel-tunnel-gateway:1.0.0@sha256:<DIGEST>
+   image: ghcr.io/albercoindev/umbrel-tunnel-gateway:0.6.9@sha256:<DIGEST>
    ```
 
 4. Sube el cambio. El linter oficial de Umbrel exige etiqueta **y** digest; sin

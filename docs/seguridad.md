@@ -4,7 +4,7 @@ Estado: **aparcado**. Este documento describe el diseño acordado para que el
 VPS deje de terminar TLS y lo haga el propio Umbrel, de modo que el proveedor
 del VPS nunca vea tráfico HTTP en claro ni guarde certificados.
 
-No hay código de este plan en la versión actual (1.6.8). El modo por defecto
+No hay código de este plan en la versión actual (0.6.8). El modo por defecto
 sigue siendo el actual: **TLS termina en el VPS**.
 
 ## 1. Situación actual

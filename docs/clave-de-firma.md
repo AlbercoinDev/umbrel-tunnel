@@ -4,7 +4,7 @@ Este documento explica cómo se usa la clave Ed25519 que firma las releases de
 umbrel-tunnel, cómo guardarla, cómo restaurarla en otra máquina y cómo
 sustituirla sin dejar a los usuarios sin actualizaciones.
 
-Aplica a la versión 1.6.8 y posteriores.
+Aplica a la versión 0.6.8 y posteriores.
 
 ## 1. Qué es y por qué importa
 
@@ -67,8 +67,8 @@ El firmado lo hace el workflow; no se firma a mano en local.
 3. Haz commit y push a `main`.
 4. Crea y sube el tag:
    ```sh
-   git tag -a v1.6.9 -m "Umbrel Tunnel 1.6.9"
-   git push origin v1.6.9
+   git tag -a v0.6.9 -m "Umbrel Tunnel 0.6.9"
+   git push origin v0.6.9
    ```
 5. El workflow **VPS release**:
    - comprueba que el tag coincide con `vps/VERSION`;
@@ -79,7 +79,7 @@ El firmado lo hace el workflow; no se firma a mano en local.
    - publica `SHA256SUMS.sig` y la clave pública.
 6. Comprueba la release:
    ```sh
-   gh release view v1.6.9 --json assets --jq '[.assets[].name]'
+   gh release view v0.6.9 --json assets --jq '[.assets[].name]'
    ```
 7. Fija el digest de la imagen del gateway en Compose y actualiza la tienda.
 
@@ -106,7 +106,7 @@ Debe responder `Signature Verified Successfully`. No publica nada.
 ## 5. Verificación de una release
 
 ```sh
-base=https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.9
+base=https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v0.6.9
 curl -fsSL "$base/SHA256SUMS" -o /tmp/SHA256SUMS
 curl -fsSL "$base/SHA256SUMS.sig" -o /tmp/SHA256SUMS.sig
 openssl pkeyutl -verify -pubin \

@@ -91,7 +91,7 @@ de otro VPS no puede redirigir el túnel. Si se rota la clave local, la app llam
 a `PUT /api/peers/{id}` y el VPS recarga WireGuard; si la recarga falla, el VPS
 revierte la clave anterior.
 
-Desde 1.4.1, **rotar la clave local activa** no usa directamente ese PUT: la app
+Desde 0.4.1, **rotar la clave local activa** no usa directamente ese PUT: la app
 prepara `POST /api/peers/{id}/rotation` por el túnel anterior, recibe un ID y
 cambia la clave local. El VPS espera 2 segundos antes de aplicar la clave nueva
 sin modificar el estado persistente; `POST /api/peers/{id}/rotation/confirm`

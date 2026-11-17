@@ -51,8 +51,8 @@ func sandbox(t *testing.T, current []byte) (exe, root string) {
 }
 
 func TestApplyReplacesBinaryVerifiesVersionAndWritesUnits(t *testing.T) {
-	exe, root := sandbox(t, script("1.3.1"))
-	server := serve(t, script("1.3.2"))
+	exe, root := sandbox(t, script("0.3.1"))
+	server := serve(t, script("0.3.2"))
 	run := &execx.Fake{}
 
 	result, err := Apply(context.Background(), Options{
@@ -65,14 +65,14 @@ func TestApplyReplacesBinaryVerifiesVersionAndWritesUnits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.From != "1.3.1" || result.To != "1.3.2" {
+	if result.From != "0.3.1" || result.To != "0.3.2" {
 		t.Fatalf("versiones: %+v", result)
 	}
 	data, err := os.ReadFile(exe)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(data) != string(script("1.3.2")) {
+	if string(data) != string(script("0.3.2")) {
 		t.Fatalf("binario no sustituido: %q", data)
 	}
 	for _, file := range units.Files {
@@ -92,8 +92,8 @@ func TestApplyReplacesBinaryVerifiesVersionAndWritesUnits(t *testing.T) {
 }
 
 func TestApplyRejectsChecksumMismatchWithoutTouchingBinary(t *testing.T) {
-	exe, _ := sandbox(t, script("1.3.1"))
-	server := serve(t, script("1.3.2"))
+	exe, _ := sandbox(t, script("0.3.1"))
+	server := serve(t, script("0.3.2"))
 	_, err := Apply(context.Background(), Options{
 		Source:     server.URL + "/bin",
 		UnsignedOK: true,
@@ -104,13 +104,13 @@ func TestApplyRejectsChecksumMismatchWithoutTouchingBinary(t *testing.T) {
 		t.Fatalf("error esperado: %v", err)
 	}
 	data, _ := os.ReadFile(exe)
-	if string(data) != string(script("1.3.1")) {
+	if string(data) != string(script("0.3.1")) {
 		t.Fatalf("el binario cambió pese al checksum: %q", data)
 	}
 }
 
 func TestApplyRollsBackWhenNewBinaryCannotRun(t *testing.T) {
-	exe, _ := sandbox(t, script("1.3.1"))
+	exe, _ := sandbox(t, script("0.3.1"))
 	server := serve(t, []byte("not an executable\n"))
 	_, err := Apply(context.Background(), Options{
 		Source:     server.URL + "/bin",
@@ -121,14 +121,14 @@ func TestApplyRollsBackWhenNewBinaryCannotRun(t *testing.T) {
 		t.Fatalf("error esperado: %v", err)
 	}
 	data, _ := os.ReadFile(exe)
-	if string(data) != string(script("1.3.1")) {
+	if string(data) != string(script("0.3.1")) {
 		t.Fatalf("no se restauró el binario anterior: %q", data)
 	}
 }
 
 func TestApplyReportsJournalWhenRestartFails(t *testing.T) {
-	_, _ = sandbox(t, script("1.3.1"))
-	server := serve(t, script("1.3.2"))
+	_, _ = sandbox(t, script("0.3.1"))
+	server := serve(t, script("0.3.2"))
 	run := &execx.Fake{
 		Outputs: map[string][]byte{
 			"journalctl -u umbrel-tunnel -n 20 --no-pager": []byte("unidad en bucle de reinicio"),

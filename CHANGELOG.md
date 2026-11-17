@@ -1,11 +1,15 @@
 # Cambios
 
-## 1.6.8
+## 0.6.8
 
-- El autor de la app pasa a mostrarse como **Albercoin**.
+- Renumeración de la app: pasa de 1.x a **0.x** y se mantiene en 0.x hasta que
+  esté suficientemente probada. Esta es la 0.6.8.
+- El histórico visible se reescribe a 0.x: changelog, documentación, tags y
+  releases. Solo queda instalable la última release.
+- El autor de la app se muestra como **Albercoin**.
 - Sin cambios funcionales ni en el VPS.
 
-## 1.6.7
+## 0.6.7
 
 - Se elimina el widget de estado (`three-stats`) y su endpoint `/api/widget`.
   Queda solo el widget «Servicios» (`text-with-progress`, `/api/widget/health`),
@@ -13,7 +17,7 @@
 - Se retiran las traducciones que solo usaba el widget eliminado.
 - Sin cambios en el VPS.
 
-## 1.6.6
+## 0.6.6
 
 - Widget principal más útil: distingue «sin VPS», «sin conexión» y «conectado»,
   muestra la antigüedad del handshake en formato corto, cuántas publicaciones
@@ -23,7 +27,7 @@
 - Las sondas de salud pasan a 30 s para coincidir con el refresco del widget.
 - Sin cambios en el VPS.
 
-## 1.6.5
+## 0.6.5
 
 - Anti-rebinding completo en HAProxy: los nombres DNS externos requieren la
   casilla **Permitir DNS externo** al dar de alta un servicio manual y su IP
@@ -35,7 +39,7 @@
   SHA-256 del `install.sh` incluido y botón de descarga.
 - Sin cambios en el VPS.
 
-## 1.6.4
+## 0.6.4
 
 - El paso de instalación del VPS muestra la huella de la clave de release y el
   SHA-256 del `install.sh` incluido en la imagen, y permite descargarlo sin
@@ -43,11 +47,11 @@
 - `umbrel-tunnel doctor` verifica que el binario en ejecución coincide con el
   `SHA256SUMS` firmado de su release. Una firma inválida o un binario distinto
   son un fallo, no un aviso; sin red o en una build de desarrollo avisa.
-- Incluye la firma de releases y el rollback de firewall de 1.6.3, y la salud
+- Incluye la firma de releases y el rollback de firewall de 0.6.3, y la salud
   por publicación de 1.6.2.
-- El VPS debe actualizarse a 1.6.4 por el nuevo `doctor`.
+- El VPS debe actualizarse a 0.6.4 por el nuevo `doctor`.
 
-## 1.6.3
+## 0.6.3
 
 - Cadena de suministro: cada release publica `SHA256SUMS.sig`, una firma
   Ed25519 de `SHA256SUMS` con una clave que no vive en GitHub. `install.sh` y
@@ -62,7 +66,7 @@
 - Incluye la salud real por publicación de 1.6.2.
 - El VPS sí debe actualizarse a 1.6.3.
 
-## 1.6.2
+## 0.6.2
 
 - Salud real por publicación: sonda TCP cada 60 s desde el gateway, con
   latencia y detalle del error. Las publicaciones web comprueban además que el
@@ -75,13 +79,13 @@
   nunca hacen red en el camino de una petición.
 - VPS sin cambios; no hace falta actualizarlo.
 
-## 1.6.1
+## 0.6.1
 
 - `data/secrets.key` falla de forma cerrada si existe pero está corrupto o no
   se puede leer: no se genera otra clave que dejaría los datos ilegibles.
 - Sin cambios de comportamiento, manifiesto ni VPS respecto a 1.6.0.
 
-## 1.6.0
+## 0.6.0
 
 - Seguridad: `config.json`, la clave privada de WireGuard, la copia persistente
   de `wg0.conf` y la rotación pendiente se guardan cifrados con AES-256-GCM.
@@ -100,7 +104,7 @@
 - VPS: sin cambios de código; los binarios se recompilan con el mismo Go
   1.27.4. No hace falta actualizar el VPS.
 
-## 1.5.4
+## 0.5.4
 
 - VPS: binarios recompilados con Go 1.27.4, la rama estable actual.
 - Gateway: sin cambios de código ni de dependencias; mantiene Alpine 3.24 y
@@ -108,7 +112,7 @@
 - Sin cambios funcionales en emparejamiento, detección, publicaciones,
   certificados, capacidades ni auditoría.
 
-## 1.5.3
+## 0.5.3
 
 - Gateway: base Alpine 3.24 y Python 3.14 del sistema, con las correcciones de
   paquetes de la rama estable actual.
@@ -116,7 +120,7 @@
 - Sin cambios funcionales en emparejamiento, detección, publicaciones,
   certificados, capacidades ni auditoría.
 
-## 1.5.2
+## 0.5.2
 
 - Gateway: imagen reconstruida sobre el digest vigente de Alpine 3.22 para
   incorporar las correcciones de paquetes del sistema.
@@ -125,7 +129,7 @@
 - Sin cambios funcionales en emparejamiento, detección, publicaciones,
   certificados, capacidades ni auditoría.
 
-## 1.5.1
+## 0.5.1
 
 - Gateway: el contenedor parte de `cap_drop: ALL` y solo recupera `NET_ADMIN`,
   `SYS_MODULE` y `DAC_OVERRIDE`. `DAC_OVERRIDE` es necesario porque umbrelOS
@@ -141,7 +145,7 @@
 - CI: `govulncheck`, `bandit` (alta severidad), comprobación de sintaxis de los
   scripts y Dependabot para Go, Docker y Actions.
 
-## 1.5.0
+## 0.5.0
 
 - VPS compartido: varios Umbrel pueden usar el mismo VPS, cada uno con su
   dominio público. Dos Umbrel pueden publicar la misma app en el mismo puerto
@@ -161,7 +165,7 @@
   se pueden usar dominios fuera de él.
 - Las instalaciones de un solo Umbrel no cambian.
 
-## 1.4.2
+## 0.4.2
 
 - Gateway: el panel rechaza (403) cualquier petición que llegue por la subred
   WireGuard. Waitress escucha en todas las interfaces y, con `AllowedIPs` de la
@@ -169,7 +173,7 @@
   por `app_proxy`.
 - Instalador del VPS: verifica el binario descargado con el `.sha256` publicado
   junto a él y se detiene si falta o no coincide. El comando generado por la app
-  fija script y binario al tag de la release (`v1.4.2`) en lugar de `main` y
+  fija script y binario al tag de la release (`v0.4.2`) en lugar de `main` y
   `releases/latest`.
 - Estado: un `config.json` corrupto ya no se sustituye por valores por defecto
   (lo que borraba vinculación, token y publicaciones al siguiente guardado). Se
@@ -180,7 +184,7 @@
 - Rotación WireGuard: si el gateway se reinicia entre preparar y confirmar, al
   arrancar confirma la rotación o restaura la clave anterior.
 
-## 1.4.1
+## 0.4.1
 
 - Rotación WireGuard coordinada entre Umbrel y VPS: preparación por el túnel
   anterior, confirmación por el nuevo y rollback automático si no se confirma.
@@ -200,7 +204,7 @@
 
 ### Actualización
 
-Actualiza **primero el VPS**, después la app de Umbrel a 1.4.1:
+Actualiza **primero el VPS**, después la app de Umbrel a 0.4.1:
 
 ```sh
 sudo umbrel-tunnel backup --output /root/umbrel-tunnel-before-1.4.1.tar.gz
@@ -209,7 +213,7 @@ umbrel-tunnel version
 sudo umbrel-tunnel doctor
 ```
 
-Desde un VPS anterior a 1.3.2, usa `update --from` con la URL del binario de su
+Desde un VPS anterior a 0.3.2, usa `update --from` con la URL del binario de su
 arquitectura, como explica el README. No desinstales, borres datos ni vuelvas a
 vincular para actualizar. El gateway anterior sigue funcionando con el VPS nuevo;
-rotar desde el gateway 1.4.1 requiere el VPS 1.4.1.
+rotar desde el gateway 0.4.1 requiere el VPS 1.4.1.

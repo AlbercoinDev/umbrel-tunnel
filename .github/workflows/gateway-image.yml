@@ -6,7 +6,7 @@ on:
       tag:
         description: Image tag
         required: true
-        default: "1.0.0"
+        default: "0.6.8"
       push:
         description: Push the image to GHCR (false builds only)
         type: boolean
@@ -43,7 +43,7 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/umbrel-tunnel-gateway
           tags: |
             type=semver,pattern={{version}}
-            type=raw,value=${{ inputs.tag || '1.0.0' }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            type=raw,value=${{ inputs.tag || '0.6.8' }},enable=${{ github.event_name == 'workflow_dispatch' }}
             type=raw,value=latest,enable=${{ github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.push) }}
 
       - name: Build and push
