@@ -208,3 +208,9 @@ completo: es una ayuda de trazabilidad y detección, no un WORM. La rotación a
 
 Abre un issue privado o contacta al mantenedor del repositorio. No publiques
 detalles explotables antes de que haya un parche.
+
+## Documentos relacionados
+
+- [Manual de la clave de firma](clave-de-firma.md): custodia, restauración en
+  otra máquina y rotación planificada o de emergencia.
+- [Plan de TLS local](seguridad.md): apartado C, TLS terminado en Umbrel.
