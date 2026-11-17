@@ -55,7 +55,7 @@ from vps import VPSClient, VPSError
 
 # Release of this gateway; must match vps/VERSION (tests enforce it). The VPS
 # installer and binaries offered to the user are pinned to this tag.
-RELEASE_VERSION = "1.6.7"
+RELEASE_VERSION = "1.6.8"
 VERSION = os.environ.get("APP_VERSION", RELEASE_VERSION)
 # Huella SHA-256 de la clave Ed25519 que firma SHA256SUMS en cada release.
 RELEASE_SIGNING_FINGERPRINT = (

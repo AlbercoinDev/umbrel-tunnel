@@ -233,6 +233,9 @@ class ReleasePinTests(fixtures.unittest.TestCase):
         self.assertIn(f"/v{version}/vps/install.sh", gateway.DEFAULT_INSTALL_URL)
         self.assertTrue(gateway.DEFAULT_BINARY_BASE.endswith(f"/releases/download/v{version}"))
         self.assertNotIn("/main/", gateway.DEFAULT_INSTALL_URL)
+        manifest = yaml.safe_load((root / "umbrel-tunnel/umbrel-app.yml").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["version"], version)
+        self.assertEqual(manifest["developer"], "Albercoin")
 
     def test_installer_verifies_signed_checksums(self):
         script = (Path(__file__).resolve().parents[3] / "vps/install.sh").read_text()

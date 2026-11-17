@@ -1,5 +1,10 @@
 # Cambios
 
+## 1.6.8
+
+- El autor de la app pasa a mostrarse como **Albercoin**.
+- Sin cambios funcionales ni en el VPS.
+
 ## 1.6.7
 
 - Se elimina el widget de estado (`three-stats`) y su endpoint `/api/widget`.
