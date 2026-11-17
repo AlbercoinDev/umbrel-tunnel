@@ -55,7 +55,7 @@ from vps import VPSClient, VPSError
 
 # Release of this gateway; must match vps/VERSION (tests enforce it). The VPS
 # installer and binaries offered to the user are pinned to this tag.
-RELEASE_VERSION = "1.6.6"
+RELEASE_VERSION = "1.6.7"
 VERSION = os.environ.get("APP_VERSION", RELEASE_VERSION)
 # Huella SHA-256 de la clave Ed25519 que firma SHA256SUMS en cada release.
 RELEASE_SIGNING_FINGERPRINT = (
@@ -230,7 +230,7 @@ def authenticate():
     g.t = lambda key, **params: i18n.translate(g.lang, key, **params)
     if from_tunnel(request.remote_addr):
         return api_error("tunnel_forbidden", 403)
-    if request.endpoint in {"static", "login", "login_post", "health", "widget", "widget_health", "set_language"}:
+    if request.endpoint in {"static", "login", "login_post", "health", "widget_health", "set_language"}:
         return None
     if request.path.startswith("/static/"):
         return None
@@ -1126,106 +1126,9 @@ def install_script():
     )
 
 
-def _short_age(seconds: int) -> str:
-    if seconds < 60:
-        return f"{max(0, seconds)}s"
-    if seconds < 3600:
-        return f"{seconds // 60}m"
-    if seconds < 86400:
-        return f"{seconds // 3600}h"
-    return f"{seconds // 86400}d"
-
-
 def _widget_translator():
     lang = i18n.resolve(request)
     return lambda key, **params: i18n.translate(lang, key, **params)
-
-
-def _widget_state(config: dict) -> dict:
-    """Datos comunes a todos los widgets; nunca incluye secretos."""
-    wg = wireguard.status()
-    counts = probes.summary(config)
-    handshake = max(
-        (int(peer.get("latest_handshake") or 0) for peer in wg.get("peers") or []),
-        default=0,
-    )
-    return {
-        "paired": state.paired(config),
-        "wg": wg,
-        "counts": counts,
-        "age": max(0, int(time.time()) - handshake) if handshake else None,
-        "domain": str((config.get("settings") or {}).get("base_domain") or "").strip(),
-    }
-
-
-@app.get("/api/widget")
-def widget():
-    """Widget principal (``three-stats``): túnel, salud y dominio.
-
-    umbreld lo consulta sin cookies, tanto en 1.x como en el gateway in-process
-    de 2.x. Devuelve ``refresh`` en el cuerpo: umbreld lo exige para no mostrar
-    guiones. Las etiquetas se traducen con ``Accept-Language`` y el endpoint no
-    expone tokens, claves ni destinos.
-    """
-    t = _widget_translator()
-    try:
-        config = state.load()
-    except state.StateError:
-        config = {}
-    info = _widget_state(config)
-    counts = info["counts"]
-
-    if not info["paired"]:
-        tunnel_text = t("widget.not_paired")
-        tunnel_sub = t("widget.no_vps")
-    elif info["wg"].get("connected"):
-        tunnel_text = t("widget.connected")
-        tunnel_sub = (
-            t("widget.handshake_ago", ago=_short_age(info["age"]))
-            if info["age"] is not None
-            else t("widget.waiting_handshake")
-        )
-    elif info["wg"].get("running"):
-        tunnel_text = t("widget.not_connected")
-        tunnel_sub = t("widget.waiting_handshake")
-    else:
-        tunnel_text = t("widget.not_connected")
-        tunnel_sub = t("widget.wg_down")
-
-    if not counts["total"]:
-        healthy_text = "\u2014"
-        healthy_sub = t("widget.no_publications")
-    elif counts["unknown"] == counts["total"]:
-        healthy_text = "\u2014"
-        healthy_sub = t("widget.no_data")
-    else:
-        healthy_text = f"{counts['ok']}/{counts['total']}"
-        healthy_sub = (
-            t("widget.services_down", count=counts["fail"])
-            if counts["fail"]
-            else t("widget.all_healthy")
-        )
-
-    return jsonify(
-        {
-            "type": "three-stats",
-            "refresh": "30s",
-            "link": "",
-            "items": [
-                {"icon": "route", "text": tunnel_text, "subtext": tunnel_sub},
-                {"icon": "server-2", "text": healthy_text, "subtext": healthy_sub},
-                {
-                    "icon": "world",
-                    "text": info["domain"] or "\u2014",
-                    "subtext": (
-                        t("widget.public_services", count=counts["total"])
-                        if info["domain"]
-                        else t("widget.no_domain")
-                    ),
-                },
-            ],
-        }
-    )
 
 
 @app.get("/api/widget/health")
@@ -1236,7 +1139,7 @@ def widget_health():
         config = state.load()
     except state.StateError:
         config = {}
-    counts = _widget_state(config)["counts"]
+    counts = probes.summary(config)
     total = counts["total"]
     ok = counts["ok"]
     progress = (ok / total) if total else 0.0

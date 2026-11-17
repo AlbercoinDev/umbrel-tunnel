@@ -1,5 +1,13 @@
 # Cambios
 
+## 1.6.7
+
+- Se elimina el widget de estado (`three-stats`) y su endpoint `/api/widget`.
+  Queda solo el widget «Servicios» (`text-with-progress`, `/api/widget/health`),
+  que aporta salud verificada y barra de progreso.
+- Se retiran las traducciones que solo usaba el widget eliminado.
+- Sin cambios en el VPS.
+
 ## 1.6.6
 
 - Widget principal más útil: distingue «sin VPS», «sin conexión» y «conectado»,

@@ -99,62 +99,9 @@ class HealthWidgetTests(fixtures.unittest.TestCase):
         self.assertIn("health", data)
         self.assertIn("health_probe", data)
 
-    def test_widget_shows_dashes_without_health_data(self):
-        with health._LOCK:
-            health._CACHE.clear()
-        response = self.client.get("/api/widget", environ_base={"REMOTE_ADDR": "172.17.0.1"})
-        self.assertEqual(response.status_code, 200)
-        services = response.get_json()["items"][1]
-        self.assertIn(services["text"], {"—", "0/0"})
-
-    def test_widget_counts_only_verified_ok(self):
-        with mock.patch.object(
-            health,
-            "summary",
-            return_value={"total": 3, "ok": 2, "fail": 1, "unknown": 0, "checked_at": 1, "enabled": True},
-        ), mock.patch.object(health, "snapshot", return_value={}):
-            response = self.client.get("/api/widget", environ_base={"REMOTE_ADDR": "172.17.0.1"})
-        data = response.get_json()
-        self.assertEqual(data["items"][1]["text"], "2/3")
-        self.assertIn("1", data["items"][1]["subtext"])
-
-    def test_widget_shows_handshake_and_domain(self):
-        status = {
-            "running": True,
-            "connected": True,
-            "peers": [{"latest_handshake": int(__import__("time").time()) - 300}],
-        }
-        summary = {"total": 3, "ok": 3, "fail": 0, "unknown": 0, "checked_at": 1, "enabled": True}
-        state.save({
-            "vps": {"api": "http://10.0.0.1:8080", "token": "secret-token"},
-            "settings": {"base_domain": "example.com"},
-            "exposures": [],
-        })
-        self.addCleanup(state.CONFIG_FILE.unlink, missing_ok=True)
-        self.addCleanup(state.BACKUP_FILE.unlink, missing_ok=True)
-        with mock.patch.object(health, "summary", return_value=summary), \
-                mock.patch.object(gateway.wireguard, "status", return_value=status):
-            data = self.client.get("/api/widget", environ_base={"REMOTE_ADDR": "172.17.0.1"}).get_json()
-        self.assertIn("5m", data["items"][0]["subtext"])
-        self.assertEqual(data["items"][1]["text"], "3/3")
-        self.assertEqual(data["items"][2]["text"], "example.com")
-
-    def test_widget_localizes_with_accept_language(self):
-        status = {"running": True, "connected": False, "peers": []}
-        with mock.patch.object(gateway.wireguard, "status", return_value=status):
-            english = self.client.get(
-                "/api/widget?lang=en", environ_base={"REMOTE_ADDR": "172.17.0.1"}
-            ).get_json()
-            spanish = self.client.get(
-                "/api/widget?lang=es", environ_base={"REMOTE_ADDR": "172.17.0.1"}
-            ).get_json()
-        self.assertEqual(english["items"][0]["text"], "Not connected")
-        self.assertEqual(spanish["items"][0]["text"], "Sin conexión")
-
     def test_health_widget_reports_progress(self):
         summary = {"total": 4, "ok": 3, "fail": 1, "unknown": 0, "checked_at": 1, "enabled": True}
-        with mock.patch.object(health, "summary", return_value=summary), \
-                mock.patch.object(gateway.wireguard, "status", return_value={"running": True, "peers": []}):
+        with mock.patch.object(health, "summary", return_value=summary):
             response = self.client.get(
                 "/api/widget/health", environ_base={"REMOTE_ADDR": "172.17.0.1"}
             )
@@ -166,22 +113,48 @@ class HealthWidgetTests(fixtures.unittest.TestCase):
         self.assertEqual(data["progressLabel"], "75%")
         self.assertEqual(data["refresh"], "30s")
 
-    def test_widgets_are_public_without_a_session(self):
+    def test_health_widget_handles_no_publications(self):
+        summary = {"total": 0, "ok": 0, "fail": 0, "unknown": 0, "checked_at": 0, "enabled": True}
+        with mock.patch.object(health, "summary", return_value=summary):
+            data = self.client.get(
+                "/api/widget/health", environ_base={"REMOTE_ADDR": "172.17.0.1"}
+            ).get_json()
+        self.assertEqual(data["text"], "—")
+        self.assertEqual(data["progress"], 0.0)
+        self.assertIn(data["subtext"], {"sin publicaciones", "no publications"})
+
+    def test_health_widget_localizes(self):
+        summary = {"total": 4, "ok": 3, "fail": 1, "unknown": 0, "checked_at": 1, "enabled": True}
+        with mock.patch.object(health, "summary", return_value=summary):
+            english = self.client.get(
+                "/api/widget/health?lang=en", environ_base={"REMOTE_ADDR": "172.17.0.1"}
+            ).get_json()
+            spanish = self.client.get(
+                "/api/widget/health?lang=es", environ_base={"REMOTE_ADDR": "172.17.0.1"}
+            ).get_json()
+        self.assertEqual(english["title"], "Services")
+        self.assertIn("1", english["subtext"])
+        self.assertEqual(spanish["title"], "Servicios")
+
+    def test_health_widget_is_public_without_a_session(self):
         anon = gateway.app.test_client()
-        for path in ("/api/widget", "/api/widget/health"):
-            response = anon.get(path, environ_base={"REMOTE_ADDR": "172.17.0.1"})
-            self.assertEqual(response.status_code, 200, path)
+        response = anon.get("/api/widget/health", environ_base={"REMOTE_ADDR": "172.17.0.1"})
+        self.assertEqual(response.status_code, 200)
 
-    def test_widgets_reject_tunnel_requests(self):
-        for path in ("/api/widget", "/api/widget/health"):
-            response = self.client.get(path, environ_base={"REMOTE_ADDR": "10.0.0.1"})
-            self.assertEqual(response.status_code, 403, path)
+    def test_health_widget_rejects_tunnel_requests(self):
+        response = self.client.get(
+            "/api/widget/health", environ_base={"REMOTE_ADDR": "10.0.0.1"}
+        )
+        self.assertEqual(response.status_code, 403)
 
-    def test_widgets_do_not_leak_secrets(self):
-        status = {"running": True, "connected": True, "peers": [{"latest_handshake": 1}]}
-        for path in ("/api/widget", "/api/widget/health"):
-            with mock.patch.object(gateway.wireguard, "status", return_value=status):
-                body = self.client.get(path, environ_base={"REMOTE_ADDR": "172.17.0.1"}).get_data(as_text=True)
-            self.assertNotIn("token", body.lower())
-            self.assertNotIn("private", body.lower())
-            self.assertNotIn("secret-token", body)
+    def test_status_widget_is_gone(self):
+        response = self.client.get("/api/widget")
+        self.assertEqual(response.status_code, 404)
+
+    def test_health_widget_does_not_leak_secrets(self):
+        body = self.client.get(
+            "/api/widget/health", environ_base={"REMOTE_ADDR": "172.17.0.1"}
+        ).get_data(as_text=True)
+        self.assertNotIn("token", body.lower())
+        self.assertNotIn("private", body.lower())
+        self.assertNotIn("secret-token", body)
