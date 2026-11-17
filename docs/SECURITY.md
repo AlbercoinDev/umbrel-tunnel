@@ -55,9 +55,10 @@
 - Umbrel mantiene su login (`app_proxy` en 1.x; gateway in-process en 2.x) y
   la app añade su propio login con `APP_PASSWORD` para que el control del túnel
   no dependa de una pieza que cambia entre versiones de umbrelOS.
-- `/api/widget` es el único endpoint sin sesión: umbreld lo consulta sin cookies
-  para el widget de la pantalla de inicio. Devuelve solo estado del túnel,
-  número de servicios sanos y dominio base; nunca tokens, claves ni destinos.
+- `/api/widget` y `/api/widget/health` son los únicos endpoints sin sesión:
+  umbreld los consulta sin cookies para los widgets de la pantalla de inicio.
+  Devuelven solo estado del túnel, salud agregada, número de servicios y dominio
+  base; nunca tokens, claves ni destinos.
 - La cookie de sesión es HttpOnly, SameSite=Strict y firmada con un secreto
   persistente (`session.key`).
 - Las peticiones mutantes exigen CSRF (`X-CSRF-Token` o campo de formulario).

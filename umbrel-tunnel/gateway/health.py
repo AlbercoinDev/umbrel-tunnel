@@ -21,7 +21,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 
 ENABLED = os.environ.get("UMBREL_TUNNEL_HEALTH", "1") != "0"
-INTERVAL = max(15, int(os.environ.get("UMBREL_TUNNEL_HEALTH_INTERVAL", "60") or 60))
+INTERVAL = max(15, int(os.environ.get("UMBREL_TUNNEL_HEALTH_INTERVAL", "30") or 60))
 TIMEOUT = max(0.5, float(os.environ.get("UMBREL_TUNNEL_HEALTH_TIMEOUT", "2.5") or 2.5))
 WORKERS = 4
 

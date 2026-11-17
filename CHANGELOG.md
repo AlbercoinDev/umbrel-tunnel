@@ -1,5 +1,15 @@
 # Cambios
 
+## 1.6.6
+
+- Widget principal más útil: distingue «sin VPS», «sin conexión» y «conectado»,
+  muestra la antigüedad del handshake en formato corto, cuántas publicaciones
+  no responden y cuántos servicios hay bajo el dominio.
+- Nuevo widget «Servicios» (`text-with-progress`) con barra de salud agregada.
+- Etiquetas traducidas según `Accept-Language` (español por defecto).
+- Las sondas de salud pasan a 30 s para coincidir con el refresco del widget.
+- Sin cambios en el VPS.
+
 ## 1.6.5
 
 - Anti-rebinding completo en HAProxy: los nombres DNS externos requieren la

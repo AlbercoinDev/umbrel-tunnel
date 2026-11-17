@@ -20,13 +20,12 @@ description: >-
   with a fixed public IP. Run the one-line installer on the VPS, then paste the
   pairing code in the app.
 releaseNotes: >-
-  Closes the remaining DNS-rebinding gap in local HAProxy. Manual services can
-  still use Docker names and IP literals as before; external DNS names now
-  require an explicit "Allow external DNS" opt-in, and their validated IP is
-  written into HAProxy on every sync instead of being resolved at connect time.
-  Adds a Diagnostics card with the version, release signing fingerprint, the
-  bundled install.sh SHA-256 and a download button. No VPS changes; update the
-  app only.
+  Widget update. The home-screen widget now says whether the VPS is paired,
+  shows a human-readable handshake age, how many publications are down instead
+  of a bare fraction, and how many services are public under the domain. Labels
+  follow the request language (Spanish by default). A second widget,
+  "Services", shows health as a progress bar. Health checks now run every 30 s
+  to match the widget refresh. No VPS changes; update the app only.
 developer: AlbercoinDev
 website: https://github.com/AlbercoinDev/umbrel-tunnel
 dependencies: []
@@ -46,14 +45,27 @@ widgets:
       link: ""
       items:
         - icon: "route"
-          text: "Connected"
-          subtext: "handshake 42s ago"
+          text: "Conectado"
+          subtext: "handshake hace 42s"
         - icon: "server-2"
           text: "2/3"
-          subtext: "services healthy"
+          subtext: "1 sin responder"
         - icon: "world"
           text: "example.com"
-          subtext: "public domain"
+          subtext: "3 servicios públicos"
+  - id: "health"
+    type: "text-with-progress"
+    refresh: "30s"
+    endpoint: "gateway:8081/api/widget/health"
+    link: ""
+    example:
+      type: "text-with-progress"
+      link: ""
+      title: "Servicios"
+      text: "2/3"
+      subtext: "1 sin responder"
+      progress: 0.67
+      progressLabel: "67%"
 gallery: []
 path: ""
 deterministicPassword: true

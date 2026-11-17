@@ -3,6 +3,7 @@
 from unittest import mock
 
 import test_gateway as fixtures
+import app as gateway
 import health
 import state
 
@@ -111,6 +112,76 @@ class HealthWidgetTests(fixtures.unittest.TestCase):
             health,
             "summary",
             return_value={"total": 3, "ok": 2, "fail": 1, "unknown": 0, "checked_at": 1, "enabled": True},
-        ):
+        ), mock.patch.object(health, "snapshot", return_value={}):
             response = self.client.get("/api/widget", environ_base={"REMOTE_ADDR": "172.17.0.1"})
-        self.assertEqual(response.get_json()["items"][1]["text"], "2/3")
+        data = response.get_json()
+        self.assertEqual(data["items"][1]["text"], "2/3")
+        self.assertIn("1", data["items"][1]["subtext"])
+
+    def test_widget_shows_handshake_and_domain(self):
+        status = {
+            "running": True,
+            "connected": True,
+            "peers": [{"latest_handshake": int(__import__("time").time()) - 300}],
+        }
+        summary = {"total": 3, "ok": 3, "fail": 0, "unknown": 0, "checked_at": 1, "enabled": True}
+        state.save({
+            "vps": {"api": "http://10.0.0.1:8080", "token": "secret-token"},
+            "settings": {"base_domain": "example.com"},
+            "exposures": [],
+        })
+        self.addCleanup(state.CONFIG_FILE.unlink, missing_ok=True)
+        self.addCleanup(state.BACKUP_FILE.unlink, missing_ok=True)
+        with mock.patch.object(health, "summary", return_value=summary), \
+                mock.patch.object(gateway.wireguard, "status", return_value=status):
+            data = self.client.get("/api/widget", environ_base={"REMOTE_ADDR": "172.17.0.1"}).get_json()
+        self.assertIn("5m", data["items"][0]["subtext"])
+        self.assertEqual(data["items"][1]["text"], "3/3")
+        self.assertEqual(data["items"][2]["text"], "example.com")
+
+    def test_widget_localizes_with_accept_language(self):
+        status = {"running": True, "connected": False, "peers": []}
+        with mock.patch.object(gateway.wireguard, "status", return_value=status):
+            english = self.client.get(
+                "/api/widget?lang=en", environ_base={"REMOTE_ADDR": "172.17.0.1"}
+            ).get_json()
+            spanish = self.client.get(
+                "/api/widget?lang=es", environ_base={"REMOTE_ADDR": "172.17.0.1"}
+            ).get_json()
+        self.assertEqual(english["items"][0]["text"], "Not connected")
+        self.assertEqual(spanish["items"][0]["text"], "Sin conexión")
+
+    def test_health_widget_reports_progress(self):
+        summary = {"total": 4, "ok": 3, "fail": 1, "unknown": 0, "checked_at": 1, "enabled": True}
+        with mock.patch.object(health, "summary", return_value=summary), \
+                mock.patch.object(gateway.wireguard, "status", return_value={"running": True, "peers": []}):
+            response = self.client.get(
+                "/api/widget/health", environ_base={"REMOTE_ADDR": "172.17.0.1"}
+            )
+        data = response.get_json()
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(data["type"], "text-with-progress")
+        self.assertEqual(data["text"], "3/4")
+        self.assertAlmostEqual(data["progress"], 0.75, places=2)
+        self.assertEqual(data["progressLabel"], "75%")
+        self.assertEqual(data["refresh"], "30s")
+
+    def test_widgets_are_public_without_a_session(self):
+        anon = gateway.app.test_client()
+        for path in ("/api/widget", "/api/widget/health"):
+            response = anon.get(path, environ_base={"REMOTE_ADDR": "172.17.0.1"})
+            self.assertEqual(response.status_code, 200, path)
+
+    def test_widgets_reject_tunnel_requests(self):
+        for path in ("/api/widget", "/api/widget/health"):
+            response = self.client.get(path, environ_base={"REMOTE_ADDR": "10.0.0.1"})
+            self.assertEqual(response.status_code, 403, path)
+
+    def test_widgets_do_not_leak_secrets(self):
+        status = {"running": True, "connected": True, "peers": [{"latest_handshake": 1}]}
+        for path in ("/api/widget", "/api/widget/health"):
+            with mock.patch.object(gateway.wireguard, "status", return_value=status):
+                body = self.client.get(path, environ_base={"REMOTE_ADDR": "172.17.0.1"}).get_data(as_text=True)
+            self.assertNotIn("token", body.lower())
+            self.assertNotIn("private", body.lower())
+            self.assertNotIn("secret-token", body)

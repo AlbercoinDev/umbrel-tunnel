@@ -48,8 +48,9 @@ La app funciona en ambos. En 1.x el panel se sirve a través del contenedor
 `app_proxy` de Umbrel. En 2.x ese contenedor ya no existe: umbreld ejecuta el
 gateway de apps en proceso y enruta las peticiones al contenedor directamente.
 La app no depende de `app_proxy` para autenticar, porque mantiene su propio
-login con `APP_PASSWORD`; el widget de la pantalla de inicio (`/api/widget`) se
-sirve sin sesión y sin secretos, como espera umbreld. `data/haproxy.cfg` es
+login con `APP_PASSWORD`; los widgets de la pantalla de inicio
+(`/api/widget` y `/api/widget/health`) se sirven sin sesión y sin secretos, como
+espera umbreld. `data/haproxy.cfg` es
 regenerable y queda fuera de las copias de seguridad de Umbrel.
 
 ## Flujo recomendado: primero la app, después el VPS
@@ -78,7 +79,7 @@ ejecutar en el VPS. No tienes que copiar claves a mano.
 El comando tiene esta forma (la app rellena todos los valores):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.5/vps/install.sh \
+curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.6/vps/install.sh \
   | sudo bash -s -- \
       --endpoint 203.0.113.10 \
       --token '<TOKEN>' \
@@ -89,7 +90,7 @@ curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.5/v
       --api-port 8080 \
       --wg-port 51820 \
       --mtu 1420 \
-      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.5
+      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.6
 ```
 
 `--binary-base` descarga `umbrel-tunnel-linux-amd64` o
@@ -133,10 +134,10 @@ El ejemplo usa la red predeterminada; si el asistente muestra otra, copia tambi�
 ```bash
 cd vps
 make dist
-scp dist/umbrel-tunnel-1.6.5-linux-amd64.tar.gz root@203.0.113.10:/tmp/
+scp dist/umbrel-tunnel-1.6.6-linux-amd64.tar.gz root@203.0.113.10:/tmp/
 ssh root@203.0.113.10
-tar -xzf /tmp/umbrel-tunnel-1.6.5-linux-amd64.tar.gz -C /tmp
-cd /tmp/umbrel-tunnel-1.6.5-linux-amd64
+tar -xzf /tmp/umbrel-tunnel-1.6.6-linux-amd64.tar.gz -C /tmp
+cd /tmp/umbrel-tunnel-1.6.6-linux-amd64
 sudo ./install.sh --endpoint 203.0.113.10 \
   --umbrel-pubkey '<CLAVE_PUBLICA_DE_LA_APP>' --token '<TOKEN_DE_LA_APP>'
 ```
@@ -548,7 +549,7 @@ Un forward usa `public_port`:
 
 ### Salud de las publicaciones
 
-El gateway comprueba cada 60 s que el destino real acepta conexiones TCP y
+El gateway comprueba cada 30 s que el destino real acepta conexiones TCP y
 muestra el resultado en el panel, en `/api/diagnostics` y en el widget de
 umbrelOS. Las publicaciones web responden además a un `HEAD` HTTP; que un
 servicio no hable HTTP no lo marca como caído si el TCP funciona. UDP aparece
@@ -699,9 +700,9 @@ propio `install.sh`, reinstala con el instalador (es idempotente y conserva la
 configuración):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.5/vps/install.sh \
+curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.6/vps/install.sh \
   | sudo bash -s -- --endpoint <IP> \
-      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.5
+      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.6
 ```
 
 ## Desarrollo
@@ -744,7 +745,7 @@ Variables de entorno útiles en el gateway:
 | Variable | Por defecto | Uso |
 | --- | --- | --- |
 | `APP_PASSWORD` | — | contraseña de login; Umbrel la inyecta |
-| `APP_VERSION` | `1.6.5` | versión mostrada |
+| `APP_VERSION` | `1.6.6` | versión mostrada |
 | `UMBREL_TUNNEL_DATA` | `/data` | estado, claves y configuración |
 | `UMBREL_APP_DATA` | `/umbrel-app-data` | manifiestos de apps (solo lectura) |
 | `NETWORK_IP` | `10.21.0.0` | red de Umbrel para detectar solapes |

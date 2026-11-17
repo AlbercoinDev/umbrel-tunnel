@@ -382,5 +382,19 @@
   "advanced.release_fingerprint": "Release key fingerprint",
   "advanced.install_sha": "install.sh SHA-256",
   "advanced.download_install": "Download install.sh",
-  "advanced.firewall_hint": "If the installer left a firewall rollback pending, confirm it on the VPS with: umbrel-tunnel firewall confirm"
+  "advanced.firewall_hint": "If the installer left a firewall rollback pending, confirm it on the VPS with: umbrel-tunnel firewall confirm",
+  "widget.connected": "Connected",
+  "widget.not_connected": "Not connected",
+  "widget.not_paired": "No VPS",
+  "widget.handshake_ago": "handshake {ago} ago",
+  "widget.waiting_handshake": "waiting for handshake",
+  "widget.wg_down": "WireGuard down",
+  "widget.no_vps": "no VPS paired",
+  "widget.all_healthy": "all responding",
+  "widget.services_down": "{count} down",
+  "widget.no_publications": "no publications",
+  "widget.no_data": "no data yet",
+  "widget.public_services": "{count} public services",
+  "widget.no_domain": "no domain",
+  "widget.health_title": "Services"
 }
