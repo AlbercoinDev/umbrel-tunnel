@@ -202,6 +202,9 @@ mostrada corresponde exactamente al que se ejecuta. `umbrel-tunnel doctor`
 comprueba además que el binario en ejecución coincide con el `SHA256SUMS`
 firmado de su release.
 
+Custodia, copia offline, restauración en otra máquina y rotación de la clave:
+[manual de la clave de firma](docs/clave-de-firma.md).
+
 ### Rollback de firewall y SSH
 
 Antes de aplicar reglas nuevas, el instalador guarda la tabla
@@ -763,6 +766,8 @@ Documentación adicional:
 - [docs/SECURITY.md](docs/SECURITY.md)
 - [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+- [docs/clave-de-firma.md](docs/clave-de-firma.md): custodia, restauración y rotación de la clave de firma
+- [docs/seguridad.md](docs/seguridad.md): plan aparcado de TLS terminado en Umbrel
 
 ## Limitaciones actuales
 
