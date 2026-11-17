@@ -105,6 +105,9 @@
   (`100.64/10`), multicast, benchmarking y direcciones reservadas.
 - Las direcciones privadas y los nombres de contenedor Docker se permiten para
   no romper servicios legítimos.
+- Los nombres DNS externos requieren confirmación explícita en el alta y su IP
+  se fija en la configuración de HAProxy; no se deja que HAProxy resuelva el
+  nombre en el momento de conectar.
 - Cada sincronización revalida el destino; si un nombre pasa a resolver a una
   red bloqueada se descarta solo esa publicación (rebinding).
 - El relay UDP fija la IP aprobada al abrir la sesión (TTL 30 s) y no vuelve a

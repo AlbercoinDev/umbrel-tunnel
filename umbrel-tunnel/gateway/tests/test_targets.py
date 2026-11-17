@@ -3,6 +3,9 @@
 import socket
 from unittest import mock
 
+import test_gateway as fixtures
+import proxy
+import state
 import targets
 from test_gateway import unittest
 
@@ -107,6 +110,60 @@ class TargetValidationTests(unittest.TestCase):
         for host in ("", "   ", "http://10.0.0.2", "user@host", "host name"):
             self.assertBlocked(host)
 
+    def test_external_names_are_classified(self):
+        self.assertFalse(targets.is_external_name("10.0.0.5"))
+        self.assertFalse(targets.is_external_name("demo_web_1"))
+        self.assertTrue(targets.is_external_name("example.com"))
+        self.assertTrue(targets.is_external_name("sub.example.com"))
+
+    def test_pin_refresh_uses_the_new_resolution(self):
+        with mock.patch.object(
+            targets.socket, "getaddrinfo", return_value=_resolve("10.21.0.7")
+        ):
+            self.assertEqual(targets.pin("app.example", refresh=True), "10.21.0.7")
+        with mock.patch.object(
+            targets.socket, "getaddrinfo", return_value=_resolve("10.21.0.8")
+        ):
+            self.assertEqual(targets.pin("app.example"), "10.21.0.7")
+            self.assertEqual(targets.pin("app.example", refresh=True), "10.21.0.8")
+
+    def test_external_name_resolving_to_loopback_is_blocked(self):
+        with mock.patch.object(
+            targets.socket, "getaddrinfo", return_value=_resolve("127.0.0.1")
+        ):
+            with self.assertRaises(targets.TargetError):
+                targets.pin("rebind.example", refresh=True)
+
+    def test_external_dns_is_pinned_in_haproxy(self):
+        forwards = [{
+            "id": "a1",
+            "name": "demo",
+            "tunnel_port": 20000,
+            "target_ip": "app.example.com",
+            "target_port": 8080,
+            "enabled": True,
+        }]
+        with mock.patch.object(
+            targets.socket, "getaddrinfo", return_value=_resolve("203.0.113.10")
+        ):
+            config = proxy.render(forwards, "10.0.0.2")
+        server = next(line for line in config.splitlines() if "server s1" in line)
+        self.assertIn("203.0.113.10:8080", server)
+        self.assertNotIn("resolvers docker", server)
+
+    def test_docker_names_keep_the_dynamic_resolver(self):
+        forwards = [{
+            "id": "b1",
+            "name": "demo",
+            "tunnel_port": 20001,
+            "target_ip": "demo_web_1",
+            "target_port": 8080,
+            "enabled": True,
+        }]
+        config = proxy.render(forwards, "10.0.0.2")
+        server = next(line for line in config.splitlines() if "server s1" in line)
+        self.assertIn("resolvers docker", server)
+
     def test_sync_skips_only_the_rebound_target(self):
         import sync
 
@@ -124,3 +181,43 @@ class TargetValidationTests(unittest.TestCase):
         self.assertEqual(safe, [good])
         self.assertEqual(len(result["errors"]), 1)
         self.assertIn("rebind.example", result["errors"][0])
+
+
+class ExternalDnsApiTests(fixtures.unittest.TestCase):
+    setUp = fixtures.ManualServiceApiTests.setUp
+    _login = fixtures.ManualServiceApiTests._login
+    _csrf = fixtures.ManualServiceApiTests._csrf
+    _post = fixtures.ManualServiceApiTests._post
+
+    def _payload(self, **overrides):
+        data = {"name": "Ext", "host": "app.example.com", "port": 8080, "protocol": "tcp"}
+        data.update(overrides)
+        return data
+
+    def test_external_dns_requires_opt_in(self):
+        with mock.patch.object(
+            targets.socket, "getaddrinfo", return_value=_resolve("203.0.113.10")
+        ):
+            response = self._post("/api/manual-services", self._payload())
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["code"], "external_dns_opt_in")
+
+    def test_external_dns_opt_in_is_stored(self):
+        with mock.patch.object(
+            targets.socket, "getaddrinfo", return_value=_resolve("203.0.113.10")
+        ):
+            response = self._post(
+                "/api/manual-services", self._payload(allow_external=True)
+            )
+        self.assertEqual(response.status_code, 201, response.get_json())
+        entry = next(
+            item for item in state.load()["manual_services"] if item["host"] == "app.example.com"
+        )
+        self.assertTrue(entry["allow_external"])
+
+    def test_docker_targets_do_not_need_the_flag(self):
+        response = self._post(
+            "/api/manual-services",
+            self._payload(host="demo_web_1", name="Docker"),
+        )
+        self.assertEqual(response.status_code, 201, response.get_json())

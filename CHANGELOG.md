@@ -1,5 +1,17 @@
 # Cambios
 
+## 1.6.5
+
+- Anti-rebinding completo en HAProxy: los nombres DNS externos requieren la
+  casilla **Permitir DNS externo** al dar de alta un servicio manual y su IP
+  validada se escribe en la configuración; HAProxy ya no resuelve el nombre al
+  conectar. Los nombres de contenedor Docker y las IP siguen igual.
+- La comprobación se repite en cada sincronización; si el nombre deja de
+  resolver o pasa a una red bloqueada, solo esa publicación se marca en error.
+- Nueva tarjeta en **Diagnóstico** con versión, huella de la clave de release,
+  SHA-256 del `install.sh` incluido y botón de descarga.
+- Sin cambios en el VPS.
+
 ## 1.6.4
 
 - El paso de instalación del VPS muestra la huella de la clave de release y el

@@ -55,7 +55,7 @@ from vps import VPSClient, VPSError
 
 # Release of this gateway; must match vps/VERSION (tests enforce it). The VPS
 # installer and binaries offered to the user are pinned to this tag.
-RELEASE_VERSION = "1.6.4"
+RELEASE_VERSION = "1.6.5"
 VERSION = os.environ.get("APP_VERSION", RELEASE_VERSION)
 # Huella SHA-256 de la clave Ed25519 que firma SHA256SUMS en cada release.
 RELEASE_SIGNING_FINGERPRINT = (
@@ -901,6 +901,7 @@ def manual_service_view(item: dict, config: dict | None = None) -> dict:
     )
     return {
         **item,
+        "external": targets.is_external_name(str(item.get("host") or "")),
         "target": f"{item.get('host')}:{item.get('port')}",
         "exposure": exposure_view(exposure) if exposure else None,
         "exposures": [exposure_view(e) for e in config.get("exposures", []) if str(e.get("service_id", "")).startswith(prefix)],
@@ -2238,6 +2239,10 @@ def add_manual_service():
     except targets.TargetError as exc:
         return api_error("invalid_manual_service", 400, detail=str(exc))
 
+    external = targets.is_external_name(host)
+    if external and not bool(body.get("allow_external")):
+        return api_error("external_dns_opt_in", 400)
+
     wants_open = bool(body.get("open"))
     if wants_open and protocol not in {"tcp", "udp"}:
         return api_error("unsupported_protocol", 400)
@@ -2268,6 +2273,8 @@ def add_manual_service():
                     "port": port,
                     "protocol": protocol,
                 }
+                if external:
+                    entry["allow_external"] = True
                 config.setdefault("manual_services", []).append(entry)
                 state.save(config)
 

@@ -84,6 +84,22 @@ def _is_blocked(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
     return any(address in network for network in _BLOCKED_NETWORKS)
 
 
+def is_ip_literal(host: str) -> bool:
+    try:
+        return _parse_ip(_normalize(host)) is not None
+    except TargetError:
+        return False
+
+
+def is_external_name(host: str) -> bool:
+    """Un nombre DNS externo (no IP, no nombre de contenedor Docker)."""
+    try:
+        value = _normalize(host)
+    except TargetError:
+        return False
+    return _parse_ip(value) is None and "." in value
+
+
 def _resolved_addresses(host: str) -> list[ipaddress.IPv4Address | ipaddress.IPv6Address]:
     """Resuelve un nombre, sin convertirlo en un requisito.
 
@@ -129,7 +145,7 @@ def validate(host: str) -> str:
     return value
 
 
-def pin(host: str) -> str:
+def pin(host: str, refresh: bool = False) -> str:
     """Valida ``host`` y fija una IPv4 aprobada durante ``_PIN_TTL`` segundos.
 
     Se usa al abrir una sesión UDP: la conexión posterior no vuelve a resolver,
@@ -137,10 +153,11 @@ def pin(host: str) -> str:
     """
     value = _normalize(host)
     now = time.monotonic()
-    with _PIN_LOCK:
-        cached = _PINNED.get(value)
-        if cached and cached[0] > now and cached[1]:
-            return cached[1][0]
+    if not refresh:
+        with _PIN_LOCK:
+            cached = _PINNED.get(value)
+            if cached and cached[0] > now and cached[1]:
+                return cached[1][0]
 
     # Sin una IP fijada vigente, valida de nuevo antes de aceptar el nombre.
     validate(value)

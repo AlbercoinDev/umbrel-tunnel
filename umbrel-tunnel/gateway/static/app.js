@@ -289,6 +289,11 @@
     $('stat-services').textContent = String(st.services || 0);
     $('stat-sync').textContent = formatAgo(sync.at);
 
+    const release = st.release || {};
+    if ($('diag-release-version')) $('diag-release-version').textContent = release.version || t('common.dash');
+    if ($('diag-release-fingerprint')) $('diag-release-fingerprint').textContent = release.fingerprint || t('common.dash');
+    if ($('diag-install-sha')) $('diag-install-sha').textContent = release.install_sha256 || t('common.dash');
+
     const vps = st.vps || {};
     $('pair-api').textContent = vps.api || t('common.dash');
     $('pair-endpoint').textContent = vps.endpoint || t('common.dash');
@@ -1414,6 +1419,7 @@
           body: JSON.stringify({
             name: $('manual-service-name').value.trim(),
             host: $('manual-service-host').value.trim(),
+            allow_external: $('manual-service-external').checked,
             port: Number($('manual-service-port').value),
             protocol: selected,
             public_port: requested,
@@ -1474,6 +1480,7 @@
     });
 
     $('run-diagnostics').addEventListener('click', () => runDiagnostics($('run-diagnostics')));
+    $('diag-download-install').addEventListener('click', () => { window.location.href = '/api/install-script'; });
 
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible') refreshAll().catch(() => {});

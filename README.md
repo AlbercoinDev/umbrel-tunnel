@@ -78,7 +78,7 @@ ejecutar en el VPS. No tienes que copiar claves a mano.
 El comando tiene esta forma (la app rellena todos los valores):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.4/vps/install.sh \
+curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.5/vps/install.sh \
   | sudo bash -s -- \
       --endpoint 203.0.113.10 \
       --token '<TOKEN>' \
@@ -89,7 +89,7 @@ curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.4/v
       --api-port 8080 \
       --wg-port 51820 \
       --mtu 1420 \
-      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.4
+      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.5
 ```
 
 `--binary-base` descarga `umbrel-tunnel-linux-amd64` o
@@ -133,10 +133,10 @@ El ejemplo usa la red predeterminada; si el asistente muestra otra, copia tambi�
 ```bash
 cd vps
 make dist
-scp dist/umbrel-tunnel-1.6.4-linux-amd64.tar.gz root@203.0.113.10:/tmp/
+scp dist/umbrel-tunnel-1.6.5-linux-amd64.tar.gz root@203.0.113.10:/tmp/
 ssh root@203.0.113.10
-tar -xzf /tmp/umbrel-tunnel-1.6.4-linux-amd64.tar.gz -C /tmp
-cd /tmp/umbrel-tunnel-1.6.4-linux-amd64
+tar -xzf /tmp/umbrel-tunnel-1.6.5-linux-amd64.tar.gz -C /tmp
+cd /tmp/umbrel-tunnel-1.6.5-linux-amd64
 sudo ./install.sh --endpoint 203.0.113.10 \
   --umbrel-pubkey '<CLAVE_PUBLICA_DE_LA_APP>' --token '<TOKEN_DE_LA_APP>'
 ```
@@ -373,6 +373,11 @@ puerto, protocolo y, si quieres, un puerto público concreto:
 - **Añadir y abrir** crea el servicio y abre el puerto en el VPS en un solo paso.
 - **Solo añadir** guarda el servicio sin abrirlo; luego puedes pulsar **Abrir**
   en su fila.
+
+Los nombres DNS externos (por ejemplo `nas.midominio.lan`) requieren marcar
+**Permitir DNS externo**: su IP se resuelve, se valida y se fija en HAProxy en
+cada sincronización, de modo que un rebinding posterior no puede desviar la
+conexión. Los nombres de contenedor Docker siguen resolviéndose dinámicamente.
 
 Si el puerto público solicitado ya está ocupado en el VPS, la app reintenta una
 vez en un puerto libre y te avisa del cambio. Los errores se muestran como
@@ -694,9 +699,9 @@ propio `install.sh`, reinstala con el instalador (es idempotente y conserva la
 configuración):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.4/vps/install.sh \
+curl -fsSL https://raw.githubusercontent.com/AlbercoinDev/umbrel-tunnel/v1.6.5/vps/install.sh \
   | sudo bash -s -- --endpoint <IP> \
-      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.4
+      --binary-base https://github.com/AlbercoinDev/umbrel-tunnel/releases/download/v1.6.5
 ```
 
 ## Desarrollo
@@ -739,7 +744,7 @@ Variables de entorno útiles en el gateway:
 | Variable | Por defecto | Uso |
 | --- | --- | --- |
 | `APP_PASSWORD` | — | contraseña de login; Umbrel la inyecta |
-| `APP_VERSION` | `1.6.4` | versión mostrada |
+| `APP_VERSION` | `1.6.5` | versión mostrada |
 | `UMBREL_TUNNEL_DATA` | `/data` | estado, claves y configuración |
 | `UMBREL_APP_DATA` | `/umbrel-app-data` | manifiestos de apps (solo lectura) |
 | `NETWORK_IP` | `10.21.0.0` | red de Umbrel para detectar solapes |

@@ -373,5 +373,14 @@
   "health.unknown": "sin datos",
   "onboarding.download_script": "Descargar install.sh",
   "onboarding.script_sha": "SHA-256 del script",
-  "onboarding.release_fingerprint": "Huella de la clave de release"
+  "onboarding.release_fingerprint": "Huella de la clave de release",
+  "advanced.manual_external": "Permitir DNS externo (se fija la IP)",
+  "error.external_dns_opt_in": "Un nombre DNS externo requiere marcar «Permitir DNS externo».",
+  "advanced.release_title": "Firma y script de instalación",
+  "advanced.release_help": "Comprueba que el binario y el instalador proceden de una release firmada.",
+  "advanced.release_version": "Versión",
+  "advanced.release_fingerprint": "Huella de la clave de release",
+  "advanced.install_sha": "SHA-256 de install.sh",
+  "advanced.download_install": "Descargar install.sh",
+  "advanced.firewall_hint": "Si el instalador dejó un rollback de firewall pendiente, confírmalo en el VPS con: umbrel-tunnel firewall confirm"
 }

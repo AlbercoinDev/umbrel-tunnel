@@ -262,8 +262,14 @@ def _targets_valid(exposures: list[dict], result: dict) -> list[dict]:
         host = str(exposure.get("target_ip") or "")
         try:
             targets.validate(host)
+            if targets.is_external_name(host):
+                # Fija la IP en cada sincronización; si el DNS cambió a algo
+                # bloqueado o dejó de resolver, se corta la publicación.
+                exposure["resolved_ip"] = targets.pin(host, refresh=True)
+            else:
+                exposure.pop("resolved_ip", None)
         except targets.TargetError as exc:
-            message = f"proxy local: destino bloqueado {host or '?'} ({exc})"
+            message = f"proxy local: destino no válido {host or '?'} ({exc})"
             result["errors"].append(message)
             _mark_proxy_error(exposure, message)
             continue

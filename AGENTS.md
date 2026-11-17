@@ -28,6 +28,7 @@
 ## Constraints to preserve
 - Discovery parses other apps' `exports.sh`, `.env`, and Compose as data only: never source or execute them, and do not add a Docker socket mount.
 - WireGuard configuration is structured/allowlisted in `gateway/wireguard.py`; new directives need validation and tests, not arbitrary config passthrough. Pairing codes must not transport private keys; their API URL must stay within the tunnel subnet.
+- Manual services accept Docker names and IP literals by default; external DNS names require the `allow_external` opt-in and are pinned to a validated IP in HAProxy. Keep that behaviour when touching `targets.py`, `proxy.py` or `sync.py`.
 - Keep the VPS API tunnel-only by default and public port 22 reserved for VPS SSH. Installer/deployment commands modify host networking and systemd; use unit tests for ordinary verification, not a live install.
 - Gateway UI strings live in `gateway/i18n/es.json` and `en.json`; update both catalogs together (tests enforce identical keys).
 - For publication ownership/conflicts and applied-vs-reachable status, consult `docs/PUBLICATIONS.md`; for certificate/routing changes, `docs/TLS.md`; for deployment privileges, `docs/SECURITY.md`.

@@ -373,5 +373,14 @@
   "health.unknown": "no data",
   "onboarding.download_script": "Download install.sh",
   "onboarding.script_sha": "Script SHA-256",
-  "onboarding.release_fingerprint": "Release key fingerprint"
+  "onboarding.release_fingerprint": "Release key fingerprint",
+  "advanced.manual_external": "Allow external DNS (IP is pinned)",
+  "error.external_dns_opt_in": "An external DNS name requires “Allow external DNS”.",
+  "advanced.release_title": "Signing and install script",
+  "advanced.release_help": "Verify that the binary and installer come from a signed release.",
+  "advanced.release_version": "Version",
+  "advanced.release_fingerprint": "Release key fingerprint",
+  "advanced.install_sha": "install.sh SHA-256",
+  "advanced.download_install": "Download install.sh",
+  "advanced.firewall_hint": "If the installer left a firewall rollback pending, confirm it on the VPS with: umbrel-tunnel firewall confirm"
 }

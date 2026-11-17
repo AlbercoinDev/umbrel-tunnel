@@ -328,6 +328,7 @@
       <form id="manual-service-form" class="grid-form">
         <label>{{ t('advanced.manual_name') }}<input id="manual-service-name" placeholder="{{ t('common.optional') }}"></label>
         <label>{{ t('advanced.manual_host') }}<input id="manual-service-host" placeholder="myapp_web_1" required></label>
+        <label class="inline-field checkbox"><input id="manual-service-external" type="checkbox"> {{ t('advanced.manual_external') }}</label>
         <label>{{ t('advanced.manual_port') }}<input id="manual-service-port" type="number" min="1" max="65535" required></label>
         <label>{{ t('advanced.manual_protocol') }}
           <select id="manual-service-protocol">
@@ -358,6 +359,20 @@
       </div>
       <p id="manual-services-empty" class="muted empty" hidden>{{ t('advanced.manual_empty') }}</p>
       <button id="cancel-add-service" class="ghost" type="button">{{ t('common.close') }}</button>
+    </section>
+
+    <section class="card">
+      <h2>{{ t('advanced.release_title') }}</h2>
+      <p class="muted">{{ t('advanced.release_help') }}</p>
+      <dl class="kv">
+        <div><dt>{{ t('advanced.release_version') }}</dt><dd id="diag-release-version">—</dd></div>
+        <div><dt>{{ t('advanced.release_fingerprint') }}</dt><dd><code id="diag-release-fingerprint">—</code></dd></div>
+        <div><dt>{{ t('advanced.install_sha') }}</dt><dd><code id="diag-install-sha">—</code></dd></div>
+      </dl>
+      <div class="row">
+        <button id="diag-download-install" class="ghost small" type="button">{{ t('advanced.download_install') }}</button>
+      </div>
+      <p class="sub">{{ t('advanced.firewall_hint') }}</p>
     </section>
 
     <section class="card">

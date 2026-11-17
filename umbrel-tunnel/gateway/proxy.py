@@ -91,14 +91,26 @@ def render(forwards: list[dict], bind_ip: str = BIND_IP) -> str:
         if not (1 <= tunnel_port <= 65535):
             raise ProxyError(f"puerto del túnel fuera de rango en {name}")
         host, port = _valid_target(str(fwd.get("target_ip") or ""), int(fwd.get("target_port") or 0))
+        if targets.is_external_name(host):
+            # DNS externo: fija la IP validada en la configuración. HAProxy no
+            # vuelve a resolver, así que un rebinding posterior no la cambia.
+            try:
+                host = targets.pin(host)
+            except targets.TargetError as exc:
+                raise ProxyError(f"destino DNS externo no resuelve: {host!r} ({exc})") from exc
+            server_line = f"    server s1 {host}:{port} check inter 10s fall 3 rise 2"
+        else:
+            server_line = (
+                f"    server s1 {host}:{port} check inter 10s fall 3 rise 2 "
+                "resolvers docker resolve-prefer ipv4 init-addr last,libc,none"
+            )
         lines += [
             f"frontend f_{name}_{unique}",
             f"    bind {bind_ip}:{tunnel_port}",
             f"    default_backend {backend}",
             "",
             f"backend {backend}",
-            f"    server s1 {host}:{port} check inter 10s fall 3 rise 2 "
-            "resolvers docker resolve-prefer ipv4 init-addr last,libc,none",
+            server_line,
             "",
         ]
     return "\n".join(lines).rstrip() + "\n"
